@@ -225,7 +225,11 @@ function ModelItem({ data, type, onDelete, onInput, onConfig }) {
             initTemplate();
         }
     };
-    const showAsrTtsTypes = ['azure_openai', 'openai', 'qwen', 'qianfan'];
+    // Backend registers ASR clients for these providers; TTS additionally
+    // supports minimax (MiniMaxTTSClient, F045). qianfan stays as-is (legacy
+    // UI/backend mismatch, see features/v2.7.0/045-minimax-tts-adapter/design.md §5).
+    const showAsrTypes = ['azure_openai', 'openai', 'qwen', 'qianfan'];
+    const showTtsTypes = ['azure_openai', 'openai', 'qwen', 'qianfan', 'minimax'];
     return (
         <div className="group w-full border rounded-sm p-4 mb-2">
             <div className="flex items-center justify-between">
@@ -314,11 +318,11 @@ function ModelItem({ data, type, onDelete, onInput, onConfig }) {
                                 <SelectItem value="llm">LLM</SelectItem>
                                 <SelectItem value="embedding">Embedding</SelectItem>
                                 <SelectItem value="rerank">Rerank</SelectItem>
-                                {showAsrTtsTypes.includes(type) && (
-                                    <>
-                                        <SelectItem value="asr">ASR</SelectItem>
-                                        <SelectItem value="tts">TTS</SelectItem>
-                                    </>
+                                {showAsrTypes.includes(type) && (
+                                    <SelectItem value="asr">ASR</SelectItem>
+                                )}
+                                {showTtsTypes.includes(type) && (
+                                    <SelectItem value="tts">TTS</SelectItem>
                                 )}
                             </SelectGroup>
                         </SelectContent>

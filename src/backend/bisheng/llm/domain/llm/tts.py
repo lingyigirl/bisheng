@@ -1,15 +1,22 @@
+from typing import Self
+
 import httpx
 from pydantic import Field
-from typing_extensions import Self
 
-from bisheng.common.errcode.server import NoTtsModelConfigError, TtsModelConfigDeletedError, \
-    TtsModelTypeError, TtsProviderDeletedError, TtsModelOfflineError
-from bisheng.core.ai import BaseTTSClient, OpenAITTSClient, \
-    AliyunTTSClient, AzureOpenAITTSClient
+from bisheng.common.errcode.server import (
+    NoTtsModelConfigError,
+    TtsModelConfigDeletedError,
+    TtsModelOfflineError,
+    TtsModelTypeError,
+    TtsProviderDeletedError,
+)
+from bisheng.core.ai import AliyunTTSClient, AzureOpenAITTSClient, BaseTTSClient, OpenAITTSClient
+from bisheng.core.ai.tts.minimax_tts_client import MiniMaxTTSClient
 from bisheng.llm.domain.const import LLMModelType, LLMServerType
-from bisheng.llm.domain.models import LLMServer, LLMModel
-from .base import BishengBase
+from bisheng.llm.domain.models import LLMModel, LLMServer
+
 from ..utils import wrapper_bisheng_model_limit_check_async
+from .base import BishengBase
 
 
 async def _get_openai_params(params: dict, server_info: LLMServer, model_info: LLMModel) -> dict:
@@ -49,7 +56,25 @@ async def _get_qwen_params(params: dict, server_info: LLMServer, model_info: LLM
     return new_params
 
 
+async def _get_minimax_params(params: dict, server_info: LLMServer, model_info: LLMModel) -> dict:
+    new_params = {
+        "api_key": params.get("openai_api_key") or params.get("api_key"),
+        "model": model_info.model_name,
+        "base_url": (params.get("openai_api_base") or params.get("base_url") or "").rstrip("/"),
+        "endpoint": params.get("endpoint") or "/audio/speech",
+    }
+    if params.get("voice"):
+        new_params["voice"] = params["voice"]
+    if params.get("openai_proxy"):
+        new_params["http_client"] = httpx.AsyncClient(proxy=params["openai_proxy"])
+    return new_params
+
+
 _tts_client_type = {
+    LLMServerType.MINIMAX.value: {
+        "client": MiniMaxTTSClient,
+        "params_handler": _get_minimax_params
+    },
     LLMServerType.OPENAI.value: {
         "client": OpenAITTSClient,
         "params_handler": _get_openai_params
