@@ -160,6 +160,11 @@ export const changeLLmServerStatus = async (model_id: string, online: number) =>
     return await axios.post(`/api/v1/llm/online`, { model_id, online })
 }
 
+// 测试模型连接：真实调用一次模型，成功/失败都会刷新模型状态（F046）
+export const testModelConnectionApi = async (model_id: number): Promise<any> => {
+    return unwrap(await axios.post(`/api/v1/llm/${model_id}/test`))
+}
+
 // 获取模型详情
 export const getLLmServerDetail = async (server_id: string): Promise<any> => {
     return await axios.get(`/api/v1/llm/info?server_id=${server_id}`)
@@ -260,6 +265,16 @@ export const getAssistantModelList = async (): Promise<any> => {
 }
 
 // 创建数据集
+// 获取预置数据集内容（预览）
+export const getPresetFileContentApi = async (file_id: string): Promise<{ id: string, name: string, content: string }> => {
+    return await axios.get(`/api/v1/finetune/job/file/preset/${file_id}/content`);
+};
+
+// 保存预置数据集内容
+export const savePresetFileContentApi = async (file_id: string, content: string): Promise<void> => {
+    await axios.put(`/api/v1/finetune/job/file/preset/${file_id}/content`, { content });
+};
+
 export const createDatasetApi = async (data: { name: string, files: string, qa_list: string[] }): Promise<any> => {
     return await axios.post(`/api/v1/finetune/job/file/preset `, data);
 }

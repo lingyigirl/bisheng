@@ -117,7 +117,7 @@
 }
 
 .bs-mkdown :where(a):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
-    color: #1677ff;
+    color: #216CB6;
     text-decoration: none;
     font-weight: 500;
 }

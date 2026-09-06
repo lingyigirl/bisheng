@@ -62,7 +62,7 @@ function StatusBadge({ status, instanceStatus, scope, localize }: { status?: str
   // Task scope: if my task is approved but instance execution failed, surface the failure.
   const effective = scope === "task" && s === "approved" && is === "execute_failed" ? "execute_failed" : s;
   const TASK_MAP: Record<string, { text: string; cls: string }> = {
-    pending:        { text: localize("com_approval_task_badge_pending"),    cls: "bg-[#e8f3ff] text-[#165dff]" },
+    pending:        { text: localize("com_approval_task_badge_pending"),    cls: "bg-[#E8F7FF] text-[#004DA4]" },
     approved:       { text: localize("com_approval_task_badge_approved"),   cls: "bg-[#e8ffea] text-[#00b42a]" },
     rejected:       { text: localize("com_approval_task_badge_rejected"),   cls: "bg-[#fff2f0] text-[#f53f3f]" },
     cancelled:      { text: localize("com_approval_status_cancelled"),      cls: "bg-fill-1 text-text-3" },
@@ -71,7 +71,7 @@ function StatusBadge({ status, instanceStatus, scope, localize }: { status?: str
     exception:      { text: localize("com_approval_badge_exception"),       cls: "bg-[#fff7e8] text-[#ff7d00]" },
   };
   const INSTANCE_MAP: Record<string, { text: string; cls: string }> = {
-    pending:        { text: localize("com_approval_status_pending"),        cls: "bg-[#e8f3ff] text-[#165dff]" },
+    pending:        { text: localize("com_approval_status_pending"),        cls: "bg-[#E8F7FF] text-[#004DA4]" },
     approved:       { text: localize("com_approval_status_approved"),       cls: "bg-[#e8ffea] text-[#00b42a]" },
     executed:       { text: localize("com_approval_status_approved"),       cls: "bg-[#e8ffea] text-[#00b42a]" },
     rejected:       { text: localize("com_approval_status_rejected"),       cls: "bg-[#fff2f0] text-[#f53f3f]" },
@@ -770,7 +770,7 @@ function TaskDetailPanel({ detail, localize, onBack }: { detail: ApprovalTaskDet
               const nodeBadgeMap: Record<string, { text: string; cls: string }> = {
                 approved:  { text: localize("com_approval_status_approved"),  cls: "bg-[#e8ffea] text-[#00b42a]" },
                 rejected:  { text: localize("com_approval_status_rejected"),  cls: "bg-[#fff2f0] text-[#f53f3f]" },
-                pending:   { text: localize("com_approval_status_pending"),   cls: "bg-[#e8f3ff] text-[#165dff]" },
+                pending:   { text: localize("com_approval_status_pending"),   cls: "bg-[#E8F7FF] text-[#004DA4]" },
                 skipped:   { text: localize("com_approval_status_skipped"),   cls: "bg-fill-1 text-text-3" },
                 cancelled: { text: localize("com_approval_status_cancelled"), cls: "bg-fill-1 text-text-3" },
               };
@@ -943,7 +943,7 @@ function RequestDetailPanel({ detail, localize, onBack }: { detail: ApprovalInst
               const nodeBadgeMap: Record<string, { text: string; cls: string }> = {
                 approved:  { text: localize("com_approval_status_approved"),  cls: "bg-[#e8ffea] text-[#00b42a]" },
                 rejected:  { text: localize("com_approval_status_rejected"),  cls: "bg-[#fff2f0] text-[#f53f3f]" },
-                pending:   { text: localize("com_approval_status_pending"),   cls: "bg-[#e8f3ff] text-[#165dff]" },
+                pending:   { text: localize("com_approval_status_pending"),   cls: "bg-[#E8F7FF] text-[#004DA4]" },
                 skipped:   { text: localize("com_approval_status_skipped"),   cls: "bg-fill-1 text-text-3" },
                 cancelled: { text: localize("com_approval_status_cancelled"), cls: "bg-fill-1 text-text-3" },
               };

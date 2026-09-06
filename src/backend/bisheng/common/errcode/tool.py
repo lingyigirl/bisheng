@@ -54,3 +54,8 @@ class ToolMcpSchemaError(BaseErrorCode):
 class ToolMcpStdioError(BaseErrorCode):
     Code: int = 15025
     Msg: str = 'mcpTool not support stdio mode'
+
+
+class ToolMcpConnectError(BaseErrorCode):
+    Code: int = 15026
+    Msg: str = 'MCP service connection failed: {exception}'

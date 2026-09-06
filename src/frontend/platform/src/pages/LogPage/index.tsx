@@ -2,6 +2,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/bs-ui/tab
 import { useTranslation } from "react-i18next";
 import SystemLog from "./systemLog";
 import AppUseLog from "./useAppLog";
+import { AgentMonitor } from "./agentMonitor";
 
 export default function index() {
     const { t } = useTranslation()
@@ -11,12 +12,16 @@ export default function index() {
             <TabsList className="">
                 <TabsTrigger value="app">{t('log.appUsage')}</TabsTrigger>
                 <TabsTrigger value="system">{t('log.systemOperations')}</TabsTrigger>
+                <TabsTrigger value="monitor">{t('log.agentMonitor')}</TabsTrigger>
             </TabsList>
             <TabsContent value="app">
                 <AppUseLog />
             </TabsContent>
             <TabsContent value="system">
                 <SystemLog />
+            </TabsContent>
+            <TabsContent value="monitor">
+                <AgentMonitor />
             </TabsContent>
         </Tabs>
     </div>

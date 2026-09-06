@@ -14,6 +14,7 @@ from bisheng.common.constants.enums.telemetry import BaseTelemetryTypeEnum
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.flow import NotFoundVersionError, CurVersionDelError, VersionNameExistsError, \
     WorkFlowOnlineEditError
+from bisheng.common.utils.flow_version_diff import compare_flow_versions
 from bisheng.common.errcode.http_error import NotFoundError, UnAuthorizedError
 from bisheng.common.services import telemetry_service
 from bisheng.common.services.base import BaseService
@@ -53,6 +54,41 @@ class FlowService(BaseService):
         """
         data = FlowVersionDao.get_version_by_id(version_id)
         return resp_200(data=data)
+
+    @classmethod
+    async def compare_versions(
+        cls, user: UserPayload, flow_id: str, from_version_id: int, to_version_id: int
+    ) -> UnifiedResponseModel[Dict]:
+        """
+        Compare two versions of a flow and return a structured diff
+        (F051: node added/removed/modified + field-level old/new values).
+        Read-only — no writes to flow / flow_version.
+        """
+        # Same permission口径 as get_one_flow (design.md 决策 3): view_app or use_app
+        if not await ApplicationPermissionService.has_any_permission_async(
+            user, 'workflow', str(flow_id), ['view_app', 'use_app']
+        ):
+            raise UnAuthorizedError()
+
+        version_from = FlowVersionDao.get_version_by_id(from_version_id)
+        version_to = FlowVersionDao.get_version_by_id(to_version_id)
+        if not version_from or not version_to or version_from.flow_id != flow_id or version_to.flow_id != flow_id:
+            return NotFoundVersionError.return_resp()
+
+        diff = compare_flow_versions(version_from.data or {}, version_to.data or {})
+
+        def _version_meta(version: FlowVersion) -> dict:
+            return {'id': version.id, 'name': version.name, 'update_time': version.update_time}
+
+        return resp_200(
+            data={
+                'from_version': _version_meta(version_from),
+                'to_version': _version_meta(version_to),
+                'changed': diff['changed'],
+                'node_changes': diff['node_changes'],
+                'edge_changes': diff['edge_changes'],
+            }
+        )
 
     @classmethod
     def delete_version(cls, user: UserPayload, version_id: int) -> UnifiedResponseModel[None]:

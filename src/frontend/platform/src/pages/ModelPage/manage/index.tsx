@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next"
 import { LoadingIcon } from "@/components/bs-icons/loading"
 import { useToast } from "@/components/bs-ui/toast/use-toast"
 import { QuestionTooltip } from "@/components/bs-ui/tooltip"
-import { changeLLmServerStatus, getAssistantModelList, getModelListApi } from "@/controllers/API/finetune"
+import { changeLLmServerStatus, getAssistantModelList, getModelListApi, testModelConnectionApi } from "@/controllers/API/finetune"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
 import { CircleMinus, CirclePlus } from "lucide-react"
 import { useQuery } from "react-query"
@@ -22,7 +22,7 @@ import { canManageModelSettings } from "./permissions"
 import { ScopeBar } from "./ScopeBar"
 import SystemModelConfig from "./SystemModelConfig"
 
-function CustomTableRow({ data, index, user, onModel, onCheck }) {
+function CustomTableRow({ data, index, user, onModel, onCheck, onTest, testingModelId }) {
     const { t } = useTranslation()
     const { appConfig } = useContext(locationContext)
     const [expand, setExpand] = useState(false)
@@ -69,6 +69,7 @@ function CustomTableRow({ data, index, user, onModel, onCheck }) {
                             <TableHead className="w-[200px] min-w-[100px]">{t('model.modelType')}</TableHead>
                             <TableHead className="w-[200px] min-w-[100px]">{t('model.status')}</TableHead>
                             <TableHead className="w-[100px] min-w-[100px]">{t('model.onlineOfflineOperation')}</TableHead>
+                            <TableHead className="w-[140px] min-w-[100px]">{t('model.actions')}</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -89,12 +90,24 @@ function CustomTableRow({ data, index, user, onModel, onCheck }) {
                                         onCheckedChange={(bool) => onCheck(index, bool, m.id)}
                                     />
                                 </TableCell>
+                                <TableCell>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!canEdit || testingModelId === m.id}
+                                        onClick={() => onTest(m)}
+                                    >
+                                        {testingModelId === m.id
+                                            && <LoadingIcon className="mr-1 size-3.5 animate-spin" />}
+                                        {t('model.testConnection')}
+                                    </Button>
+                                </TableCell>
                             </TableRow>
                         ))}
                     </TableBody>
                     {!data.models.length && <TableFooter>
                         <TableRow>
-                            <TableCell colSpan={9} className="text-center text-gray-400">{t('model.empty')}</TableCell>
+                            <TableCell colSpan={10} className="text-center text-gray-400">{t('model.empty')}</TableCell>
                         </TableRow>
                     </TableFooter>}
                 </Table>
@@ -165,6 +178,26 @@ export default function Management() {
         setData([...data])
     }
 
+    // 测试连接：真实调用一次模型，成功后模型状态自动恢复为可用
+    const [testingModelId, setTestingModelId] = useState(null)
+    const handleTestModel = async (m) => {
+        setTestingModelId(m.id)
+        try {
+            const res = await captureAndAlertRequestErrorHoc(testModelConnectionApi(m.id))
+            if (res) {
+                message({
+                    variant: res.ok ? 'success' : 'error',
+                    description: res.ok
+                        ? t('model.testConnectionSuccess', { ms: res.elapsed_ms })
+                        : `${t('model.testConnectionFailed')}：${res.detail || res.remark}`
+                })
+            }
+        } finally {
+            setTestingModelId(null)
+            reload()
+        }
+    }
+
     if (modelId) return <ModelConfig
         id={modelId}
         onGetName={handleGetRepeatName}
@@ -221,6 +254,8 @@ export default function Management() {
                             index={index}
                             onCheck={handleCheck}
                             onModel={setModelId}
+                            onTest={handleTestModel}
+                            testingModelId={testingModelId}
                         />)
                     }
                 </div>

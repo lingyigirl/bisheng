@@ -110,6 +110,25 @@ function buildVersion(): string {
   return `v${pkg.version} (${stamp})`;
 }
 
+// Optional HTTPS for the dev server. getUserMedia (microphone) only exists in
+// secure contexts, and over plain HTTP only localhost counts as trustworthy —
+// LAN IP access (http://172.19.x.x:4001) fails instantly with "Microphone
+// access denied". Opt in with VITE_DEV_HTTPS=true; the cert defaults to
+// src/frontend/certs/{dev.crt,dev.key} (see scripts/dev-cert.sh). The
+// self-signed cert triggers a browser warning testers click through once per
+// origin.
+function devHttpsConfig(env: Record<string, string>, certDir: string) {
+  if (env.VITE_DEV_HTTPS !== 'true') return undefined;
+  const cert = env.VITE_DEV_HTTPS_CERT || path.join(certDir, 'dev.crt');
+  const key = env.VITE_DEV_HTTPS_KEY || path.join(certDir, 'dev.key');
+  try {
+    return { cert: readFileSync(cert), key: readFileSync(key) };
+  } catch {
+    console.warn(`[vite] VITE_DEV_HTTPS=true but no cert under ${certDir} — serving HTTP. Run scripts/dev-cert.sh first.`);
+    return undefined;
+  }
+}
+
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, path.join(__dirname, '..'));
   // MinIO object proxy for bucket paths (/bisheng/...): these must reach MinIO,
@@ -120,10 +139,18 @@ export default defineConfig(({ command, mode }) => {
   const minioTarget = env.VITE_DEV_MINIO_TARGET || 'http://192.168.106.105:3001/';
   const apiTarget = env.VITE_DEV_API_TARGET || 'http://192.168.106.105:3001/';
 
+  // Login redirect target: in local dev the workbench (:4001) and admin
+  // panel (:3001) are different origins, so the relative BISHENG_HOST path
+  // /admin falls back to location.origin (:4001) inside
+  // getPlatformAdminPanelUrl() — the client router then can't match /admin
+  // (basename /workspace) and renders a blank page. Set VITE_PLATFORM_ORIGIN
+  // to the admin panel origin (see src/frontend/.env.development).
+  const _app_env = { ...app_env, PLATFORM_ORIGIN: env.VITE_PLATFORM_ORIGIN || '' };
+
   return {
     base: app_env.BASE_URL || '/',
     define: {
-      __APP_ENV__: JSON.stringify(app_env),
+      __APP_ENV__: JSON.stringify(_app_env),
       // vconsole ships ONLY when explicitly requested (npm run build:vconsole,
       // which sets VITE_ENABLE_VCONSOLE=true). A plain `npm run build` never
       // bundles the debug console — do not hardcode this back to 'true'.
@@ -138,6 +165,7 @@ export default defineConfig(({ command, mode }) => {
       port: 4001,
       // Pin to 4001: fail loudly if the port is taken instead of drifting to 4002+.
       strictPort: true,
+      https: devHttpsConfig(env, path.join(__dirname, '../certs')),
       proxy: {
         '^(/workspace)?/bisheng': {
           target: minioTarget,

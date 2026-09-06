@@ -24,7 +24,7 @@ const defaultTheme = {
     '--card-foreground': { h: 222.2, s: 0.474, l: 0.112 },
     '--border': { h: 214.3, s: 0.218, l: 0.914 },
     '--input': { h: 223, s: 0.48, l: 0.44 },
-    '--primary': { h: 220, s: 0.98, l: 0.45 },
+    '--primary': { h: 211.83, s: 1, l: 0.3216 },
     '--primary-foreground': { h: 210, s: 0.4, l: 0.98 },
     '--secondary': { h: 210, s: 0.4, l: 0.961 },
     '--secondary-foreground': { h: 222.2, s: 0.474, l: 0.112 },

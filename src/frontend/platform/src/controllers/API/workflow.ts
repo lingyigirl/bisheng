@@ -112,6 +112,58 @@ export async function changeWorkflowCurrentVersion({ flow_id, version_id }: { fl
     return await axios.post(`/api/v1/workflow/change_version?flow_id=${flow_id}&version_id=${version_id}`);
 }
 
+// ─── F051 flow version compare ─────────────────────────────────────────────
+
+/** A single field-level difference inside a modified node. */
+export interface FlowVersionCompareField {
+    /** Dotted path, list segments as [key], e.g. `group_params[0].params[model].value`. */
+    path: string;
+    old_value: unknown;
+    new_value: unknown;
+}
+
+export interface FlowVersionCompareNodeChange {
+    node_id: string;
+    node_name: string | null;
+    node_type: string | null;
+    change: 'added' | 'removed' | 'modified';
+    /** Present only for `modified` nodes. */
+    fields?: FlowVersionCompareField[];
+}
+
+export interface FlowVersionCompareEdgeChange {
+    source: string;
+    target: string;
+    sourceHandle: string | null;
+    targetHandle: string | null;
+    change: 'added' | 'removed';
+}
+
+export interface FlowVersionCompareResult {
+    from_version: { id: number; name: string; update_time: string };
+    to_version: { id: number; name: string; update_time: string };
+    changed: boolean;
+    node_changes: FlowVersionCompareNodeChange[];
+    edge_changes: FlowVersionCompareEdgeChange[];
+}
+
+/**
+ * Compare two versions of a workflow — read-only structure diff (F051).
+ */
+export async function compareWorkFlowVersions(params: {
+    flow_id: string;
+    from_version_id: number;
+    to_version_id: number;
+}): Promise<FlowVersionCompareResult> {
+    return await axios.get(`/api/v1/workflow/versions/compare`, {
+        params: {
+            flow_id: params.flow_id,
+            from_version_id: params.from_version_id,
+            to_version_id: params.to_version_id,
+        },
+    });
+}
+
 
 /** 上线工作流 & 修改信息 
  * status: 2 上线 1 下线

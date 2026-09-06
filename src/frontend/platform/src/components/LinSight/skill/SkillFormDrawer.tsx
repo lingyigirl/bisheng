@@ -143,7 +143,7 @@ export function SkillFormDrawer({ open, editing, onOpenChange, onSaved }: SkillF
             <SheetContent className="sm:max-w-[680px] w-[92vw] p-0 gap-0 flex flex-col bg-background">
                 {/* header — mirrors the detail sheet so edit reads as the panel flipping into its form */}
                 <div className="shrink-0 flex items-start gap-3 px-6 py-5 pr-12 border-b">
-                    <div className="size-9 mt-0.5 shrink-0 rounded-xl grid place-items-center text-primary bg-gradient-to-br from-[#EEF2FF] to-[#E2EAFF]">
+                    <div className="size-9 mt-0.5 shrink-0 rounded-xl grid place-items-center text-primary bg-gradient-to-br from-[#E8F7FF] to-[#E2EAFF]">
                         {editing ? <Pencil className="size-[18px]" /> : <Plus className="size-5" />}
                     </div>
                     <div className="min-w-0">

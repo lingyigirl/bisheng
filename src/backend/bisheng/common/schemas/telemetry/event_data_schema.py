@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from bisheng.common.constants.enums.telemetry import BaseTelemetryTypeEnum, StatusEnum, ApplicationTypeEnum
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
 
 
 class BaseEventData(BaseModel):
@@ -83,7 +83,7 @@ class FileParseEventData(BaseEventData):
     _event_name: BaseTelemetryTypeEnum = BaseTelemetryTypeEnum.FILE_PARSE
 
     parse_type: str
-    status: Literal['success', 'failed', 'parse_failed']
+    status: Literal["success", "failed", "parse_failed"]
     app_type: ApplicationTypeEnum
 
 
@@ -93,7 +93,7 @@ class MessageFeedbackEventData(BaseEventData):
     _event_name: BaseTelemetryTypeEnum = BaseTelemetryTypeEnum.MESSAGE_FEEDBACK
 
     message_id: int
-    operation_type: Literal['like', 'dislike', 'copy']
+    operation_type: Literal["like", "dislike", "copy"]
 
     app_id: str
     app_name: str
@@ -156,3 +156,10 @@ class ApplicationProcessEventData(BaseEventData):
     start_time: int
     end_time: int
     process_time: int
+    # F046: success/failed of the run — required by the agent monitoring
+    # dashboard (success rate). Historical events lack this field.
+    status: StatusEnum
+    # F052: text snapshot of the run's user input (question text / form
+    # values), <=200 chars — the transaction identifier in the agent-monitor
+    # tab. Historical events lack this field.
+    input_snapshot: str | None = None

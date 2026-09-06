@@ -1,13 +1,25 @@
 from bisheng.core.database import get_async_db_session, get_database_connection
 from bisheng.telemetry_search.domain.models.dashboard import DashboardType
 from bisheng.telemetry_search.domain.models.dashboard_dao import DashboardDao
-from bisheng.telemetry_search.domain.models.dashboard_dataset import DashboardDataset, SchemaConfig, MetricConfig, \
-    DimensionConfig, FormulaEnum
-from bisheng.telemetry_search.domain.repositories.implementations.dataset_repository_impl import \
-    DashboardDatasetRepositoryImpl
-from bisheng.telemetry_search.domain.schemas.query_builder import AggregationExpression, AggsTypeEnum, PipelineTypeEnum, \
-    FilterExpression, TermOp, \
-    MatchAllOp
+from bisheng.telemetry_search.domain.models.dashboard_dataset import (
+    DashboardDataset,
+    DimensionConfig,
+    FormulaEnum,
+    MetricConfig,
+    SchemaConfig,
+)
+from bisheng.telemetry_search.domain.repositories.implementations.dataset_repository_impl import (
+    DashboardDatasetRepositoryImpl,
+)
+from bisheng.telemetry_search.domain.schemas.query_builder import (
+    AggregationExpression,
+    AggsTypeEnum,
+    FilterExpression,
+    MatchAllOp,
+    PipelineTypeEnum,
+    TermOp,
+    TermsOp,
+)
 
 DASHBOARD_DATASET = [
     DashboardDataset(
@@ -23,58 +35,84 @@ DASHBOARD_DATASET = [
                     name="总用户数",
                     is_virtual=True,
                     aggregations=[
+                        AggregationExpression(name="user_count", type=AggsTypeEnum.CARDINALITY, field="user_id"),
                         AggregationExpression(
-                            name="user_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="user_id"
+                            name="total_user_count", type=PipelineTypeEnum.CUMULATIVE_SUM, field="user_count"
                         ),
-                        AggregationExpression(
-                            name="total_user_count",
-                            type=PipelineTypeEnum.CUMULATIVE_SUM,
-                            field="user_count"
-                        )
                     ],
                     index=1,
-                    sum_field="user_id"
+                    sum_field="user_id",
                 ),
                 MetricConfig(
                     field="new_user_count",
                     is_virtual=True,
                     name="新增用户数",
                     aggregations=[
-                        AggregationExpression(
-                            name="new_user_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="user_id"
-                        )
-                    ]
-                )
+                        AggregationExpression(name="new_user_count", type=AggsTypeEnum.CARDINALITY, field="user_id")
+                    ],
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+            ],
+        ).model_dump(),
+    ),
+    DashboardDataset(
+        dataset_name="数据集存量表",
+        dataset_code="mid_dataset_increment",
+        es_index_name="mid_dataset_increment",
+        description="数据集数量指标数据表",
+        is_commercial_only=False,
+        schema_config=SchemaConfig(
+            metrics=[
+                MetricConfig(
+                    field="total_dataset_count",
+                    name="数据集数量",
+                    is_virtual=True,
+                    aggregations=[
+                        AggregationExpression(name="dataset_count", type=AggsTypeEnum.CARDINALITY, field="dataset_id"),
+                        AggregationExpression(
+                            name="total_dataset_count", type=PipelineTypeEnum.CUMULATIVE_SUM, field="dataset_count"
+                        ),
+                    ],
+                    index=1,
+                    sum_field="dataset_id",
                 ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
+                MetricConfig(
+                    field="new_dataset_count",
+                    is_virtual=True,
+                    name="新增数据集数",
+                    aggregations=[
+                        AggregationExpression(
+                            name="new_dataset_count", type=AggsTypeEnum.CARDINALITY, field="dataset_id"
+                        )
+                    ],
                 ),
+            ],
+            dimensions=[
                 DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
+                    name="时间",
+                    field="timestamp",
+                    time_granularitys=["year", "month", "week", "day"],
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="活跃用户表",
@@ -89,12 +127,8 @@ DASHBOARD_DATASET = [
                     name="活跃用户数",
                     is_virtual=True,
                     aggregations=[
-                        AggregationExpression(
-                            name="active_user_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="user_id"
-                        )
-                    ]
+                        AggregationExpression(name="active_user_count", type=AggsTypeEnum.CARDINALITY, field="user_id")
+                    ],
                 )
             ],
             dimensions=[
@@ -102,26 +136,14 @@ DASHBOARD_DATASET = [
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="应用数量表",
@@ -136,39 +158,29 @@ DASHBOARD_DATASET = [
                     name="总应用数",
                     is_virtual=True,
                     aggregations=[
+                        AggregationExpression(name="app_count", type=AggsTypeEnum.CARDINALITY, field="app_id"),
                         AggregationExpression(
-                            name="app_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="app_id"
+                            name="total_app_count", type=PipelineTypeEnum.CUMULATIVE_SUM, field="app_count"
                         ),
-                        AggregationExpression(
-                            name="total_app_count",
-                            type=PipelineTypeEnum.CUMULATIVE_SUM,
-                            field="app_count"
-                        )
                     ],
                     index=1,
-                    sum_field="app_id"
+                    sum_field="app_id",
                 ),
                 MetricConfig(
                     field="new_app_count",
                     name="新增应用数",
                     is_virtual=True,
                     aggregations=[
-                        AggregationExpression(
-                            name="new_app_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="app_id"
-                        )
-                    ]
-                )
+                        AggregationExpression(name="new_app_count", type=AggsTypeEnum.CARDINALITY, field="app_id")
+                    ],
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
                 DimensionConfig(
                     name="用户ID",
@@ -178,28 +190,13 @@ DASHBOARD_DATASET = [
                     name="用户名称",
                     field="user_name",
                 ),
-                DimensionConfig(
-                    name="应用类型",
-                    field="app_type"
-                ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="应用类型", field="app_type"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="会话数量表",
@@ -214,89 +211,48 @@ DASHBOARD_DATASET = [
                     name="会话次数",
                     is_virtual=True,
                     aggregations=[
-                        AggregationExpression(
-                            name="session_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="session_id"
-                        )
-                    ]
+                        AggregationExpression(name="session_count", type=AggsTypeEnum.CARDINALITY, field="session_id")
+                    ],
                 ),
                 MetricConfig(
                     field="platform_user_count",
                     name="使用人数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="source", value="platform")
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="source", value="platform")]),
                     aggregations=[
                         AggregationExpression(
-                            name="platform_user_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="user_id"
+                            name="platform_user_count", type=AggsTypeEnum.CARDINALITY, field="user_id"
                         )
-                    ]
+                    ],
                 ),
                 MetricConfig(
                     field="api_call_count",
                     name="API调用次数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="source", value="api")
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="source", value="api")]),
                     aggregations=[
-                        AggregationExpression(
-                            name="api_call_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="session_id"
-                        )
-                    ]
-                )
+                        AggregationExpression(name="api_call_count", type=AggsTypeEnum.CARDINALITY, field="session_id")
+                    ],
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
-                ),
-                DimensionConfig(
-                    name="用户名称",
-                    field="user_name"
-                ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                ),
-                DimensionConfig(
-                    name="应用ID",
-                    field="app_id"
-                ),
-                DimensionConfig(
-                    name="应用名称",
-                    field="app_name"
-                ),
-                DimensionConfig(
-                    name="来源类型（平台/API）",
-                    field="source"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+                DimensionConfig(name="应用ID", field="app_id"),
+                DimensionConfig(name="应用名称", field="app_name"),
+                DimensionConfig(name="来源类型（平台/API）", field="source"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="会话运行时长表",
@@ -310,84 +266,49 @@ DASHBOARD_DATASET = [
                     field="duration_seconds",
                     name="会话运行时长",
                     is_virtual=False,
-                    filter=FilterExpression(bool_operator="must_not", filters=[
-                        TermOp(field="duration_seconds", value=0)
-                    ])
+                    filter=FilterExpression(
+                        bool_operator="must_not", filters=[TermOp(field="duration_seconds", value=0)]
+                    ),
                 ),
                 MetricConfig(
                     field="max_concurrent_sessions",
                     name="最大同时在线会话数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="duration_seconds", value=0)
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="duration_seconds", value=0)]),
                     aggregations=[
                         AggregationExpression(
                             name="per_minute",
                             type=AggsTypeEnum.DATE_HISTOGRAM,
                             field="minute_ts",
-                            custom_params={
-                                "fixed_interval": "1m",
-                                "min_doc_count": 1
-                            },
+                            custom_params={"fixed_interval": "1m", "min_doc_count": 1},
                             aggs=[
-                                AggregationExpression(
-                                    name="online",
-                                    type=AggsTypeEnum.CARDINALITY,
-                                    field="event_id"
-                                )
-                            ]
+                                AggregationExpression(name="online", type=AggsTypeEnum.CARDINALITY, field="event_id")
+                            ],
                         ),
                         AggregationExpression(
-                            name="max_online",
-                            type=PipelineTypeEnum.MAX_BUCKET,
-                            field="per_minute>online"
-                        )
+                            name="max_online", type=PipelineTypeEnum.MAX_BUCKET, field="per_minute>online"
+                        ),
                     ],
-                    index=1
-                )
+                    index=1,
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day", "hour"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
-                ),
-                DimensionConfig(
-                    name="用户名称",
-                    field="user_name"
-                ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                ),
-                DimensionConfig(
-                    name="应用ID",
-                    field="app_id"
-                ),
-                DimensionConfig(
-                    name="应用名称",
-                    field="app_name"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+                DimensionConfig(name="应用ID", field="app_id"),
+                DimensionConfig(name="应用名称", field="app_name"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="工具调用时长表",
@@ -402,102 +323,58 @@ DASHBOARD_DATASET = [
                     name="工具调用次数",
                     is_virtual=True,
                     aggregations=[
-                        AggregationExpression(
-                            name="tool_call_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
-                    ]
+                        AggregationExpression(name="tool_call_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
                 ),
                 MetricConfig(
                     field="tool_call_success_count",
                     name="工具调用成功次数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="status", value="success")
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="status", value="success")]),
                     aggregations=[
                         AggregationExpression(
-                            name="tool_call_success_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
+                            name="tool_call_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
                         )
-                    ]
+                    ],
                 ),
                 MetricConfig(
                     field="tool_call_success_rate",
                     name="工具调用成功率",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must",
-                                            filters=[TermOp(field="status", value="success"), MatchAllOp(field="")]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="status", value="success"), MatchAllOp(field="")]
+                    ),
                     aggregations=[
                         AggregationExpression(
-                            name="tool_call_success_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        ), AggregationExpression(
-                            name="tool_call_total_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
+                            name="tool_call_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
+                        ),
+                        AggregationExpression(
+                            name="tool_call_total_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
+                        ),
                     ],
-                    formula=FormulaEnum.DIVIDE
-                )
+                    formula=FormulaEnum.DIVIDE,
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
-                ),
-                DimensionConfig(
-                    name="用户名称",
-                    field="user_name"
-                ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                ),
-                DimensionConfig(
-                    name="工具名称",
-                    field="tool_name"
-                ),
-                DimensionConfig(
-                    name="工具ID",
-                    field="tool_id"
-                ),
-                DimensionConfig(
-                    name="工具类型",
-                    field="tool_type"
-                ),
-                DimensionConfig(
-                    name="应用名称",
-                    field="app_type"
-                ),
-                DimensionConfig(
-                    name="应用ID",
-                    field="app_id"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+                DimensionConfig(name="工具名称", field="tool_name"),
+                DimensionConfig(name="工具ID", field="tool_id"),
+                DimensionConfig(name="工具类型", field="tool_type"),
+                DimensionConfig(name="应用名称", field="app_type"),
+                DimensionConfig(name="应用ID", field="app_id"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="知识库存量表",
@@ -511,110 +388,99 @@ DASHBOARD_DATASET = [
                     field="total_document_knowledge_base_count",
                     name="总文档知识库数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="knowledge_type", value=0)
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="knowledge_type", value=0)]),
                     aggregations=[
                         AggregationExpression(
-                            name="document_knowledge_base_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="knowledge_id"
+                            name="document_knowledge_base_count", type=AggsTypeEnum.CARDINALITY, field="knowledge_id"
                         ),
                         AggregationExpression(
                             name="total_document_knowledge_base_count",
                             type=PipelineTypeEnum.CUMULATIVE_SUM,
-                            field="document_knowledge_base_count"
-                        )
+                            field="document_knowledge_base_count",
+                        ),
                     ],
                     index=1,
-                    sum_field="knowledge_id"
+                    sum_field="knowledge_id",
                 ),
                 MetricConfig(
                     field="total_qa_knowledge_base_count",
                     name="总QA知识库数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="knowledge_type", value=1)
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="knowledge_type", value=1)]),
                     aggregations=[
                         AggregationExpression(
-                            name="qa_knowledge_base_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="knowledge_id"
+                            name="qa_knowledge_base_count", type=AggsTypeEnum.CARDINALITY, field="knowledge_id"
                         ),
                         AggregationExpression(
                             name="total_qa_knowledge_base_count",
                             type=PipelineTypeEnum.CUMULATIVE_SUM,
-                            field="qa_knowledge_base_count"
-                        )
+                            field="qa_knowledge_base_count",
+                        ),
                     ],
                     index=1,
-                    sum_field="knowledge_id"
+                    sum_field="knowledge_id",
                 ),
                 MetricConfig(
                     field="new_document_knowledge_base_count",
                     name="新增文档知识库数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="knowledge_type", value=0)
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="knowledge_type", value=0)]),
                     aggregations=[
                         AggregationExpression(
                             name="new_document_knowledge_base_count",
                             type=AggsTypeEnum.CARDINALITY,
-                            field="knowledge_id"
+                            field="knowledge_id",
                         )
-                    ]
+                    ],
                 ),
                 MetricConfig(
                     field="new_qa_knowledge_base_count",
                     name="新增QA知识库数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="knowledge_type", value=1)
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="knowledge_type", value=1)]),
                     aggregations=[
                         AggregationExpression(
-                            name="new_qa_knowledge_base_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="knowledge_id"
+                            name="new_qa_knowledge_base_count", type=AggsTypeEnum.CARDINALITY, field="knowledge_id"
                         )
-                    ]
-                )
+                    ],
+                ),
+                MetricConfig(
+                    field="total_knowledge_base_count",
+                    name="总知识库数",
+                    is_virtual=True,
+                    filter=FilterExpression(
+                        bool_operator="must",
+                        filters=[
+                            FilterExpression(bool_operator="must", filters=[TermOp(field="knowledge_type", value=0)]),
+                            FilterExpression(bool_operator="must", filters=[TermOp(field="knowledge_type", value=1)]),
+                        ],
+                    ),
+                    aggregations=[
+                        AggregationExpression(
+                            name="document_knowledge_base_count", type=AggsTypeEnum.CARDINALITY, field="knowledge_id"
+                        ),
+                        AggregationExpression(
+                            name="qa_knowledge_base_count", type=AggsTypeEnum.CARDINALITY, field="knowledge_id"
+                        ),
+                    ],
+                    formula=FormulaEnum.ADD,
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
-                ),
-                DimensionConfig(
-                    name="用户名称",
-                    field="user_name"
-                ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="知识库文件存量表",
@@ -628,88 +494,58 @@ DASHBOARD_DATASET = [
                     field="total_file_count",
                     name="总文件数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="knowledge_base_type", value="文档知识库")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="knowledge_base_type", value="文档知识库")]
+                    ),
                     aggregations=[
+                        AggregationExpression(name="file_count", type=AggsTypeEnum.VALUE_COUNT, field="file_id"),
                         AggregationExpression(
-                            name="file_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="file_id"
+                            name="total_file_count", type=PipelineTypeEnum.CUMULATIVE_SUM, field="file_count"
                         ),
-                        AggregationExpression(
-                            name="total_file_count",
-                            type=PipelineTypeEnum.CUMULATIVE_SUM,
-                            field="file_count"
-                        )
                     ],
                     index=1,
-                    sum_field="file_id"
+                    sum_field="file_id",
                 ),
                 MetricConfig(
                     field="total_qa_count",
                     name="总QA对数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="knowledge_base_type", value="QA知识库")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="knowledge_base_type", value="QA知识库")]
+                    ),
                     aggregations=[
+                        AggregationExpression(name="qa_count", type=AggsTypeEnum.VALUE_COUNT, field="file_id"),
                         AggregationExpression(
-                            name="qa_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="file_id"
+                            name="total_qa_count", type=PipelineTypeEnum.CUMULATIVE_SUM, field="qa_count"
                         ),
-                        AggregationExpression(
-                            name="total_qa_count",
-                            type=PipelineTypeEnum.CUMULATIVE_SUM,
-                            field="qa_count"
-                        )
                     ],
                     index=1,
-                    sum_field="file_id"
+                    sum_field="file_id",
                 ),
                 MetricConfig(
                     field="file_size",
                     name="文件大小",
                     is_virtual=False,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="knowledge_base_type", value="文档知识库")
-                    ])
-                )
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="knowledge_base_type", value="文档知识库")]
+                    ),
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
-                ),
-                DimensionConfig(
-                    name="用户名称",
-                    field="user_name"
-                ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="文件解析事件表",
@@ -724,119 +560,96 @@ DASHBOARD_DATASET = [
                     name="文档上传次数",
                     is_virtual=True,
                     aggregations=[
-                        AggregationExpression(
-                            name="doc_parse_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
-                    ]
+                        AggregationExpression(name="doc_parse_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
                 ),
                 MetricConfig(
                     field="doc_parse_success_count",
                     name="文档入库成功次数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="status", value="success")
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="status", value="success")]),
                     aggregations=[
                         AggregationExpression(
-                            name="doc_parse_success_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
+                            name="doc_parse_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
                         )
-                    ]
+                    ],
                 ),
                 MetricConfig(
                     field="doc_parse_success_rate",
                     name="文档入库成功率",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="status", value="success"),
-                        MatchAllOp(field="")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="status", value="success"), MatchAllOp(field="")]
+                    ),
                     aggregations=[
                         AggregationExpression(
-                            name="doc_parse_success_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
+                            name="doc_parse_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
                         ),
                         AggregationExpression(
-                            name="doc_parse_total_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
+                            name="doc_parse_total_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
+                        ),
                     ],
-                    formula=FormulaEnum.DIVIDE
+                    formula=FormulaEnum.DIVIDE,
                 ),
                 MetricConfig(
                     field="etl_parse_count",
                     name="ETL处理次数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="parse_type", value="etl4lm")
-                    ]),
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="parse_type", value="etl4lm")]),
                     aggregations=[
-                        AggregationExpression(
-                            name="etl_parse_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
-                    ]
-
+                        AggregationExpression(name="etl_parse_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
                 ),
                 MetricConfig(
                     field="etl_parse_success_count",
                     name="ETL处理成功次数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="parse_type", value="etl4lm"),
-                        TermOp(field="status", value="success")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must",
+                        filters=[TermOp(field="parse_type", value="etl4lm"), TermOp(field="status", value="success")],
+                    ),
                     aggregations=[
                         AggregationExpression(
-                            name="etl_parse_success_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
+                            name="etl_parse_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
                         )
-                    ]
+                    ],
                 ),
                 MetricConfig(
                     name="ETL处理成功率",
                     field="etl_parse_success_rate",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        FilterExpression(bool_operator="must", filters=[
+                    filter=FilterExpression(
+                        bool_operator="must",
+                        filters=[
+                            FilterExpression(
+                                bool_operator="must",
+                                filters=[
+                                    TermOp(field="parse_type", value="etl4lm"),
+                                    TermOp(field="status", value="success"),
+                                ],
+                            ),
                             TermOp(field="parse_type", value="etl4lm"),
-                            TermOp(field="status", value="success")
-                        ]),
-                        TermOp(field="parse_type", value="etl4lm"),
-                    ]),
+                        ],
+                    ),
                     aggregations=[
                         AggregationExpression(
-                            name="etl_parse_success_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
+                            name="etl_parse_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
                         ),
                         AggregationExpression(
-                            name="etl_parse_total_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
+                            name="etl_parse_total_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"
+                        ),
                     ],
-                    formula=FormulaEnum.DIVIDE
-                )
+                    formula=FormulaEnum.DIVIDE,
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
-                ),
+                DimensionConfig(name="用户ID", field="user_id"),
                 DimensionConfig(
                     name="用户名称",
                     field="user_name",
@@ -845,32 +658,14 @@ DASHBOARD_DATASET = [
                     name="用户组ID",
                     field="user_group_infos.user_group_id",
                 ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                ),
-                DimensionConfig(
-                    name="解析类型",
-                    field="parse_type"
-                ),
-                DimensionConfig(
-                    name="文件最终状态",
-                    field="status"
-                ),
-                DimensionConfig(
-                    name="文件来源",
-                    field="app_type"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+                DimensionConfig(name="解析类型", field="parse_type"),
+                DimensionConfig(name="文件最终状态", field="status"),
+                DimensionConfig(name="文件来源", field="app_type"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="模型调用事件表",
@@ -880,44 +675,31 @@ DASHBOARD_DATASET = [
         is_commercial_only=True,
         schema_config=SchemaConfig(
             metrics=[
-                MetricConfig(
-                    field="total_token",
-                    name="Token消耗量",
-                    is_virtual=False
-                ),
+                MetricConfig(field="total_token", name="Token消耗量", is_virtual=False),
                 MetricConfig(
                     field="model_call_count",
                     name="模型调用次数",
                     is_virtual=True,
                     aggregations=[
-                        AggregationExpression(
-                            name="model_call_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="event_id"
-                        )
-                    ]
+                        AggregationExpression(name="model_call_count", type=AggsTypeEnum.CARDINALITY, field="event_id")
+                    ],
                 ),
                 MetricConfig(
                     field="model_call_success_rate",
                     name="模型调用成功率",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="status", value="success"),
-                        MatchAllOp(field="")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="status", value="success"), MatchAllOp(field="")]
+                    ),
                     aggregations=[
                         AggregationExpression(
-                            name="model_call_success_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="event_id"
+                            name="model_call_success_count", type=AggsTypeEnum.CARDINALITY, field="event_id"
                         ),
                         AggregationExpression(
-                            name="model_call_total_count",
-                            type=AggsTypeEnum.CARDINALITY,
-                            field="event_id"
-                        )
+                            name="model_call_total_count", type=AggsTypeEnum.CARDINALITY, field="event_id"
+                        ),
                     ],
-                    formula=FormulaEnum.DIVIDE
+                    formula=FormulaEnum.DIVIDE,
                 ),
                 MetricConfig(
                     field="max_concurrent_llm_sessions",
@@ -928,25 +710,18 @@ DASHBOARD_DATASET = [
                             name="per_minute",
                             type=AggsTypeEnum.DATE_HISTOGRAM,
                             field="minute_ts",
-                            custom_params={
-                                "fixed_interval": "1m",
-                                "min_doc_count": 1
-                            },
+                            custom_params={"fixed_interval": "1m", "min_doc_count": 1},
                             aggs=[
-                                AggregationExpression(
-                                    name="online",
-                                    type=AggsTypeEnum.CARDINALITY,
-                                    field="event_id"
-                                )
-                            ]
+                                AggregationExpression(name="online", type=AggsTypeEnum.CARDINALITY, field="event_id")
+                            ],
                         ),
                         AggregationExpression(
                             name="max_concurrent_llm_sessions",
                             type=PipelineTypeEnum.MAX_BUCKET,
-                            field="per_minute>online"
-                        )
+                            field="per_minute>online",
+                        ),
                     ],
-                    index=1
+                    index=1,
                 ),
                 MetricConfig(
                     field="avg_first_token_cost_time",
@@ -954,82 +729,35 @@ DASHBOARD_DATASET = [
                     is_virtual=True,
                     aggregations=[
                         AggregationExpression(
-                            name="first_token_cost_time",
-                            type=AggsTypeEnum.AVG,
-                            field="first_token_cost_time"
+                            name="first_token_cost_time", type=AggsTypeEnum.AVG, field="first_token_cost_time"
                         )
-                    ]
-                )
+                    ],
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day", "hour"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
-                ),
-                DimensionConfig(
-                    name="用户名称",
-                    field="user_name"
-                ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
-                ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
-                ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
-                ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
-                ),
-                DimensionConfig(
-                    name="角色ID",
-                    field="user_role_infos.role_id"
-                ),
-                DimensionConfig(
-                    name="角色名称",
-                    field="user_role_infos.role_name"
-                ),
-                DimensionConfig(
-                    name="应用ID",
-                    field="app_id"
-                ),
-                DimensionConfig(
-                    name="应用名称",
-                    field="app_name"
-                ),
-                DimensionConfig(
-                    name="模型ID",
-                    field="model_id"
-                ),
-                DimensionConfig(
-                    name="模型类型",
-                    field="model_type"
-                ),
-                DimensionConfig(
-                    name="模型名称",
-                    field="model_name"
-                ),
-                DimensionConfig(
-                    name="服务方ID",
-                    field="model_server_id"
-                ),
-                DimensionConfig(
-                    name="服务方名称",
-                    field="model_server_name"
-                )
-            ]
-        ).model_dump()
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+                DimensionConfig(name="角色ID", field="user_role_infos.role_id"),
+                DimensionConfig(name="角色名称", field="user_role_infos.role_name"),
+                DimensionConfig(name="应用ID", field="app_id"),
+                DimensionConfig(name="应用名称", field="app_name"),
+                DimensionConfig(name="模型ID", field="model_id"),
+                DimensionConfig(name="模型类型", field="model_type"),
+                DimensionConfig(name="模型名称", field="model_name"),
+                DimensionConfig(name="服务方ID", field="model_server_id"),
+                DimensionConfig(name="服务方名称", field="model_server_name"),
+            ],
+        ).model_dump(),
     ),
     DashboardDataset(
         dataset_name="用户反馈指标表",
@@ -1043,106 +771,159 @@ DASHBOARD_DATASET = [
                     field="like_count",
                     name="点赞次数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="interact_type", value="like")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="interact_type", value="like")]
+                    ),
                     aggregations=[
-                        AggregationExpression(
-                            name="like_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
-                    ]
+                        AggregationExpression(name="like_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
                 ),
                 MetricConfig(
                     name="点踩次数",
                     field="dislike_count",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="interact_type", value="dislike")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="interact_type", value="dislike")]
+                    ),
                     aggregations=[
-                        AggregationExpression(
-                            name="dislike_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
-                    ]
+                        AggregationExpression(name="dislike_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
                 ),
                 MetricConfig(
                     field="copy_count",
                     name="复制次数",
                     is_virtual=True,
-                    filter=FilterExpression(bool_operator="must", filters=[
-                        TermOp(field="interact_type", value="copy")
-                    ]),
+                    filter=FilterExpression(
+                        bool_operator="must", filters=[TermOp(field="interact_type", value="copy")]
+                    ),
                     aggregations=[
-                        AggregationExpression(
-                            name="copy_count",
-                            type=AggsTypeEnum.VALUE_COUNT,
-                            field="event_id"
-                        )
-                    ]
-                )
-
+                        AggregationExpression(name="copy_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
+                ),
             ],
             dimensions=[
                 DimensionConfig(
                     name="时间",
                     field="timestamp",
                     time_granularitys=["year", "month", "week", "day"],
-                    field_type="date"
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="用户ID",
-                    field="user_id"
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+                DimensionConfig(name="应用ID", field="app_id"),
+                DimensionConfig(name="应用名称", field="app_name"),
+            ],
+        ).model_dump(),
+    ),
+    # F046: 智能体运行监控（一次智能体运行一行；指标在查询时聚合）
+    DashboardDataset(
+        dataset_name="智能体运行明细表",
+        dataset_code="mid_agent_run_dtl",
+        es_index_name="mid_agent_run_dtl",
+        description="智能体（工作流/助手/灵思）运行明细：调用量、成功率、响应时间",
+        is_commercial_only=False,
+        schema_config=SchemaConfig(
+            metrics=[
+                MetricConfig(
+                    field="run_count",
+                    name="调用总量",
+                    is_virtual=True,
+                    aggregations=[
+                        AggregationExpression(name="run_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
                 ),
-                DimensionConfig(
-                    name="用户名称",
-                    field="user_name"
+                MetricConfig(
+                    field="run_success_count",
+                    name="调用成功数",
+                    is_virtual=True,
+                    filter=FilterExpression(bool_operator="must", filters=[TermOp(field="status", value="success")]),
+                    aggregations=[
+                        AggregationExpression(name="run_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id")
+                    ],
                 ),
-                DimensionConfig(
-                    name="用户组ID",
-                    field="user_group_infos.user_group_id"
+                MetricConfig(
+                    field="run_success_rate",
+                    name="调用成功率",
+                    is_virtual=True,
+                    # 分母 = status 存在的记录（TermsOp 双值 = exists 语义）；
+                    # 历史事件 status=None 不纳入成功率分母
+                    filter=FilterExpression(
+                        bool_operator="must",
+                        filters=[
+                            TermOp(field="status", value="success"),
+                            TermsOp(field="status", value=["success", "failed"]),
+                        ],
+                    ),
+                    aggregations=[
+                        AggregationExpression(name="run_success_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"),
+                        AggregationExpression(name="run_total_count", type=AggsTypeEnum.VALUE_COUNT, field="event_id"),
+                    ],
+                    formula=FormulaEnum.DIVIDE,
                 ),
-                DimensionConfig(
-                    name="用户组名称",
-                    field="user_group_infos.user_group_name"
+                MetricConfig(
+                    field="avg_process_time",
+                    name="平均响应时间",
+                    is_virtual=True,
+                    aggregations=[
+                        AggregationExpression(name="avg_process_time", type=AggsTypeEnum.AVG, field="process_time")
+                    ],
                 ),
-                DimensionConfig(
-                    name="部门ID",
-                    field="user_department_infos.department_id"
+                MetricConfig(
+                    field="max_process_time",
+                    name="最大响应时间",
+                    is_virtual=True,
+                    aggregations=[
+                        AggregationExpression(name="max_process_time", type=AggsTypeEnum.MAX, field="process_time")
+                    ],
                 ),
-                DimensionConfig(
-                    name="部门名称",
-                    field="user_department_infos.department_name"
+                MetricConfig(
+                    field="last_active_time",
+                    name="最后活跃时间",
+                    is_virtual=True,
+                    aggregations=[
+                        AggregationExpression(name="last_active_time", type=AggsTypeEnum.MAX, field="timestamp")
+                    ],
                 ),
+            ],
+            dimensions=[
                 DimensionConfig(
-                    name="应用ID",
-                    field="app_id"
+                    name="时间",
+                    field="timestamp",
+                    time_granularitys=["year", "month", "week", "day"],
+                    field_type="date",
                 ),
-                DimensionConfig(
-                    name="应用名称",
-                    field="app_name"
-                )
-            ]
-        ).model_dump()
-    )
+                DimensionConfig(name="用户ID", field="user_id"),
+                DimensionConfig(name="用户名称", field="user_name"),
+                DimensionConfig(name="用户组ID", field="user_group_infos.user_group_id"),
+                DimensionConfig(name="用户组名称", field="user_group_infos.user_group_name"),
+                DimensionConfig(name="部门ID", field="user_department_infos.department_id"),
+                DimensionConfig(name="部门名称", field="user_department_infos.department_name"),
+                DimensionConfig(name="应用ID", field="app_id"),
+                DimensionConfig(name="应用名称", field="app_name"),
+                DimensionConfig(name="应用类型", field="app_type"),
+                DimensionConfig(name="状态", field="status"),
+            ],
+        ).model_dump(),
+    ),
 ]
 
 preset_oss_dashboard_sql = """
-INSERT INTO dashboard (title, description, status, dashboard_type, layout_config, style_config, user_id, id) VALUES ('统计看板', '', 'published', 'preset_oss', '{"layouts": [{"h": 8, "i": "0c7ed6d5556249b18675400aeb83d6fb", "w": 12, "x": 12, "y": 13, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}, {"h": 3, "i": "136ef227d31749a3bc36ab2129d6fa48", "w": 5, "x": 15, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 3, "i": "1c6c4d30b7964c93810814feb966b0b8", "w": 5, "x": 5, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 8, "i": "6e383953d2104888aa3bfa4bd2c84a15", "w": 12, "x": 0, "y": 13, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}, {"h": 8, "i": "83690982e64d490798f4d350f3c429a4", "w": 12, "x": 0, "y": 5, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}, {"h": 2, "i": "94408421c2514745b7eeeb4ed007ff8d", "w": 24, "x": 0, "y": 0, "maxH": 24, "maxW": 24, "minH": 2, "minW": 7, "static": false}, {"h": 3, "i": "9f08afec754a44749ad410893055c472", "w": 4, "x": 20, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 8, "i": "ce4949a29c77479eb7d9a46654ebb972", "w": 12, "x": 12, "y": 5, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}, {"h": 3, "i": "dfe10a4967c5428d8d5eb23130689c73", "w": 5, "x": 10, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 3, "i": "2dc1af", "w": 5, "x": 0, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}]}', '{"theme": "light"}', 1, 10);
+INSERT INTO dashboard (title, description, status, dashboard_type, layout_config, style_config, user_id, id) VALUES ('统计看板', '', 'published', 'preset_oss', '{"layouts": [{"h": 3, "i": "136ef227d31749a3bc36ab2129d6fa48", "w": 5, "x": 15, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 3, "i": "1c6c4d30b7964c93810814feb966b0b8", "w": 5, "x": 5, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 8, "i": "6e383953d2104888aa3bfa4bd2c84a15", "w": 12, "x": 0, "y": 13, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}, {"h": 8, "i": "83690982e64d490798f4d350f3c429a4", "w": 12, "x": 0, "y": 5, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}, {"h": 2, "i": "94408421c2514745b7eeeb4ed007ff8d", "w": 24, "x": 0, "y": 0, "maxH": 24, "maxW": 24, "minH": 2, "minW": 7, "static": false}, {"h": 8, "i": "ce4949a29c77479eb7d9a46654ebb972", "w": 12, "x": 12, "y": 5, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}, {"h": 3, "i": "dfe10a4967c5428d8d5eb23130689c73", "w": 5, "x": 10, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 3, "i": "2dc1af", "w": 5, "x": 0, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 3, "i": "15b72c4d878c4364a5a9ce49d589d2e7", "w": 4, "x": 20, "y": 2, "maxH": 24, "maxW": 24, "minH": 2, "minW": 3, "static": false}, {"h": 8, "i": "a9d67e7517334bc185e58811d8f67ab0", "w": 12, "x": 12, "y": 13, "maxH": 24, "maxW": 24, "minH": 5, "minW": 3, "static": false}]}', '{"theme": "light"}', 1, 10);
 
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总QA知识库数', 'metric', 'mid_knowledge_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_qa_knowledge_base_count", "fieldName": "总QA知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总QA知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_qa_knowledge_base_count", "fieldType": "metric", "displayName": "总QA知识库数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总QA知识库数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '136ef227d31749a3bc36ab2129d6fa48');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总应用数', 'metric', 'mid_app_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_app_count", "fieldName": "总应用数", "isVirtual": true, "aggregation": "sum", "displayName": "总应用数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_app_count", "fieldType": "metric", "displayName": "总应用数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总应用数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "1111", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '1c6c4d30b7964c93810814feb966b0b8');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总文档知识库数', 'metric', 'mid_knowledge_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_document_knowledge_base_count", "fieldName": "总文档知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总文档知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_document_knowledge_base_count", "fieldType": "metric", "displayName": "总文档知识库数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总文档知识库数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'dfe10a4967c5428d8d5eb23130689c73');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总用户数', 'metric', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_user_count", "isDivide": null, "fieldName": "总用户数", "isVirtual": true, "aggregation": "sum", "displayName": "总用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_user_count", "fieldType": "metric", "displayName": "总用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总用户数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "1111", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '2dc1af');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总知识库数', 'stacked-bar', 'mid_knowledge_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_qa_knowledge_base_count", "fieldName": "总QA知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总QA知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}, {"sort": null, "fieldId": "total_document_knowledge_base_count", "fieldName": "总文档知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总文档知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(月)", "displayName": "时间(月)", "timeGranularity": "month"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(月)"}, {"fieldId": "total_qa_knowledge_base_count", "fieldType": "metric", "displayName": "总QA知识库数"}, {"fieldId": "total_document_knowledge_base_count", "fieldType": "metric", "displayName": "总文档知识库数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总知识库数", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "right", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '6e383953d2104888aa3bfa4bd2c84a15');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '新增应用数', 'area', 'mid_app_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "new_app_count", "fieldName": "新增应用数", "isVirtual": true, "aggregation": "sum", "displayName": "新增应用数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(月)", "displayName": "时间(月)", "timeGranularity": "month"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(月)"}, {"fieldId": "new_app_count", "fieldType": "metric", "displayName": "新增应用数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "新增应用数", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'ce4949a29c77479eb7d9a46654ebb972');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '新增用户数', 'area', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "new_user_count", "fieldName": "新增用户数", "isVirtual": true, "aggregation": "sum", "displayName": "新增用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(月)", "displayName": "时间(月)", "timeGranularity": "month"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(月)"}, {"fieldId": "new_user_count", "fieldType": "metric", "displayName": "新增用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "新增用户数", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '83690982e64d490798f4d350f3c429a4');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '点赞次数', 'grouped-bar', 'mid_user_interact_dtl', '{"filters": [], "metrics": [{"sort": null, "fieldId": "like_count", "fieldName": "点赞次数", "isVirtual": true, "aggregation": "sum", "displayName": "点赞次数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}, {"sort": null, "fieldId": "dislike_count", "fieldName": "点踩次数", "isVirtual": true, "aggregation": "sum", "displayName": "点踩次数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "app_name", "fieldName": "应用名称", "displayName": "应用名称", "timeGranularity": null}], "fieldOrder": [{"fieldId": "like_count", "fieldType": "metric", "displayName": "点赞次数"}, {"fieldId": "app_name", "fieldType": "dimension", "displayName": "应用名称"}, {"fieldId": "dislike_count", "fieldType": "metric", "displayName": "点踩次数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "点赞次数", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "right", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '0c7ed6d5556249b18675400aeb83d6fb');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '点赞次数', 'metric', 'mid_user_interact_dtl', '{"filters": [], "metrics": [{"sort": null, "fieldId": "like_count", "isDivide": null, "fieldName": "点赞次数", "isVirtual": true, "aggregation": "sum", "displayName": "点赞次数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "like_count", "fieldType": "metric", "displayName": "点赞次数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "点赞次数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "1111", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '9f08afec754a44749ad410893055c472');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '选择日期', 'query', '', '{"queryConditions": {"id": "32d5", "displayType": "range", "defaultValue": {"mode": "dynamic", "type": "recent_days", "endDate": 1769529599, "startDate": 1753891200, "recentDays": 180, "shortcutKey": 180}, "hasDefaultValue": true, "timeGranularity": "year_month_day"}, "linkedComponentIds": ["83690982e64d490798f4d350f3c429a4", "0c7ed6d5556249b18675400aeb83d6fb", "136ef227d31749a3bc36ab2129d6fa48", "6e383953d2104888aa3bfa4bd2c84a15", "dfe10a4967c5428d8d5eb23130689c73", "ce4949a29c77479eb7d9a46654ebb972", "9f08afec754a44749ad410893055c472", "1c6c4d30b7964c93810814feb966b0b8", "f6c896a87d554f21a30d0f1cd5b569d7"]}', '{"titleColor": ""}', '94408421c2514745b7eeeb4ed007ff8d');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '智能体数', 'metric', 'mid_app_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_app_count", "fieldName": "智能体数", "isVirtual": true, "aggregation": "sum", "displayName": "智能体数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_app_count", "fieldType": "metric", "displayName": "智能体数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "智能体数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "1111", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '1c6c4d30b7964c93810814feb966b0b8');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总知识库数', 'metric', 'mid_knowledge_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_knowledge_base_count", "fieldName": "总知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_knowledge_base_count", "fieldType": "metric", "displayName": "总知识库数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总知识库数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'dfe10a4967c5428d8d5eb23130689c73');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '用户数', 'metric', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_user_count", "isDivide": null, "fieldName": "用户数", "isVirtual": true, "aggregation": "sum", "displayName": "用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_user_count", "fieldType": "metric", "displayName": "用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "用户数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "1111", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '2dc1af');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总知识库数', 'stacked-bar', 'mid_knowledge_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_qa_knowledge_base_count", "fieldName": "总QA知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总QA知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}, {"sort": null, "fieldId": "total_document_knowledge_base_count", "fieldName": "总文档知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总文档知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(天)", "displayName": "时间(天)", "timeGranularity": "day"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(天)"}, {"fieldId": "total_qa_knowledge_base_count", "fieldType": "metric", "displayName": "总QA知识库数"}, {"fieldId": "total_document_knowledge_base_count", "fieldType": "metric", "displayName": "总文档知识库数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总知识库数", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "right", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '6e383953d2104888aa3bfa4bd2c84a15');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '总的智能体数', 'area', 'mid_app_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_app_count", "fieldName": "总的智能体数", "isVirtual": true, "aggregation": "sum", "displayName": "总的智能体数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(天)", "displayName": "时间(天)", "timeGranularity": "day"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(天)"}, {"fieldId": "total_app_count", "fieldType": "metric", "displayName": "总的智能体数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总的智能体数", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'ce4949a29c77479eb7d9a46654ebb972');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '新增用户数', 'area', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "new_user_count", "fieldName": "新增用户数", "isVirtual": true, "aggregation": "sum", "displayName": "新增用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(天)", "displayName": "时间(天)", "timeGranularity": "day"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(天)"}, {"fieldId": "new_user_count", "fieldType": "metric", "displayName": "新增用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "新增用户数", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '83690982e64d490798f4d350f3c429a4');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '选择日期', 'query', '', '{"queryConditions": {"id": "32d5", "displayType": "range", "defaultValue": {"mode": "dynamic", "type": "recent_days", "endDate": 1787759999, "startDate": 1787068800, "recentDays": 7, "shortcutKey": 7}, "hasDefaultValue": true, "timeGranularity": "year_month_day"}, "linkedComponentIds": ["83690982e64d490798f4d350f3c429a4", "136ef227d31749a3bc36ab2129d6fa48", "6e383953d2104888aa3bfa4bd2c84a15", "dfe10a4967c5428d8d5eb23130689c73", "ce4949a29c77479eb7d9a46654ebb972", "1c6c4d30b7964c93810814feb966b0b8", "f6c896a87d554f21a30d0f1cd5b569d7", "15b72c4d878c4364a5a9ce49d589d2e7", "a9d67e7517334bc185e58811d8f67ab0"]}', '{"titleColor": ""}', '94408421c2514745b7eeeb4ed007ff8d');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '数据集数量', 'metric', 'mid_dataset_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_dataset_count", "fieldName": "数据集数量", "isVirtual": true, "aggregation": "sum", "displayName": "数据集数量", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_dataset_count", "fieldType": "metric", "displayName": "数据集数量"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "数据集数量", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "left", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": true, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 16, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '15b72c4d878c4364a5a9ce49d589d2e7');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (10, '数据集数量', 'area', 'mid_dataset_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "new_dataset_count", "fieldName": "新增数据集数", "isVirtual": true, "aggregation": "sum", "displayName": "新增数据集数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(天)", "displayName": "时间(天)", "timeGranularity": "day"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(天)"}, {"fieldId": "new_dataset_count", "fieldType": "metric", "displayName": "新增数据集数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "数据集数量", "bgColor": "", "showAxis": true, "showGrid": false, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#666666", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#666666", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "#000000", "titleFontSize": 16, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'a9d67e7517334bc185e58811d8f67ab0');
 """
 
 preset_commercial_dashboard_sql = """
@@ -1154,15 +935,15 @@ INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_c
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '会话次数', 'metric', 'mid_sessions_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "session_count", "fieldName": "会话次数", "isVirtual": true, "aggregation": "sum", "displayName": "会话次数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "session_count", "fieldType": "metric", "displayName": "会话次数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "会话次数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "全公司截至目前", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "end", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 14, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'dd90c0b6ea174a9ea93b54e196e7769d');
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '会话次数TOP10的应用', 'grouped-horizontal-bar', 'mid_sessions_increment', '{"filters": [{"id": "2858ea", "value": "daily_chat", "fieldId": "app_name", "operator": "not_equals", "fieldName": "应用名称", "fieldType": "string", "filterType": "conditional"}], "metrics": [{"sort": "desc", "fieldId": "session_count", "fieldName": "会话次数", "isVirtual": true, "aggregation": "sum", "displayName": "会话次数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}, {"sort": null, "fieldId": "platform_user_count", "fieldCode": "使用人数", "fieldName": "使用人数", "isVirtual": false, "aggregation": "sum", "displayName": "使用人数", "numberFormat": {"type": "number", "decimalPlaces": 2, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "app_name", "fieldName": "应用名称", "displayName": "应用名称", "timeGranularity": null}], "fieldOrder": [{"fieldId": "session_count", "fieldType": "metric", "displayName": "会话次数"}, {"fieldId": "app_name", "fieldType": "dimension", "displayName": "应用名称"}, {"fieldId": "platform_user_count", "fieldType": "metric", "displayName": "使用人数"}], "resultLimit": {"limit": 10, "limitType": "limited"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "会话次数TOP10的应用", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": true, "themeColor": "cool-palette", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#000000", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#000000", "yAxisTitle": "", "legendAlign": "right", "legendColor": "#999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "", "titleFontSize": 14, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '48b66fdec7df4348b8d30e2c67517ed1');
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '总QA对数量', 'donut', 'mid_knowledge_increment', '{"filters": [{"id": "9ae3e0", "value": "默认用户组1", "fieldId": "user_group_infos.user_group_name", "operator": "not_equals", "fieldName": "用户组名称", "fieldType": "string", "filterType": "conditional"}], "metrics": [{"sort": null, "fieldId": "total_qa_knowledge_base_count", "fieldName": "总QA知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总QA知识库数", "numberFormat": {"type": "number", "decimalPlaces": 2, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "user_group_infos.user_group_name", "fieldName": "用户组名称", "displayName": "用户组名称", "timeGranularity": null}], "fieldOrder": [{"fieldId": "user_group_infos.user_group_name", "fieldType": "dimension", "displayName": "用户组名称"}, {"fieldId": "total_qa_knowledge_base_count", "fieldType": "metric", "displayName": "总QA知识库数"}], "resultLimit": {"limit": 3, "limitType": "limited"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总QA对数量", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": true, "themeColor": "cool-palette", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#000000", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#000000", "yAxisTitle": "", "legendAlign": "right", "legendColor": "#999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "center", "subtitleColor": "", "titleFontSize": 14, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '3d0f5873a8bb44e2965827ec6ae31c04');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '总应用数', 'metric', 'mid_app_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_app_count", "fieldName": "总应用数", "isVirtual": true, "aggregation": "sum", "displayName": "总应用数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_app_count", "fieldType": "metric", "displayName": "总应用数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总应用数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "全公司截至目前", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "end", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 14, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '59d11da581344a69b5e338a9d3b19145');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '智能体数', 'metric', 'mid_app_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_app_count", "fieldName": "智能体数", "isVirtual": true, "aggregation": "sum", "displayName": "智能体数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_app_count", "fieldType": "metric", "displayName": "智能体数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "智能体数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "全公司截至目前", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "end", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 14, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '59d11da581344a69b5e338a9d3b19145');
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '总文档知识库数', 'multiple-line', 'mid_knowledge_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_document_knowledge_base_count", "fieldName": "总文档知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总文档知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}, {"sort": null, "fieldId": "total_qa_knowledge_base_count", "fieldCode": "总QA知识库数", "fieldName": "总QA知识库数", "isVirtual": false, "aggregation": "sum", "displayName": "总QA知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(月)", "displayName": "时间(月)", "timeGranularity": "month"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(月)"}, {"fieldId": "total_document_knowledge_base_count", "fieldType": "metric", "displayName": "总文档知识库数"}, {"fieldId": "total_qa_knowledge_base_count", "fieldType": "metric", "displayName": "总QA知识库数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总文档知识库数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": true, "themeColor": "cool-palette", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#000000", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#000000", "yAxisTitle": "", "legendAlign": "right", "legendColor": "#999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "", "titleFontSize": 14, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '40fa4cfe8cce4320b5b9052e02df7768');
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '总文档知识库数', 'pie', 'mid_knowledge_increment', '{"filters": [{"id": "9ae3e0", "value": "默认用户组1", "fieldId": "user_group_infos.user_group_name", "operator": "not_equals", "fieldName": "用户组名称", "fieldType": "string", "filterType": "conditional"}], "metrics": [{"sort": null, "fieldId": "total_document_knowledge_base_count", "fieldName": "总文档知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总文档知识库数", "numberFormat": {"type": "number", "decimalPlaces": 2, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "user_group_infos.user_group_name", "fieldName": "用户组名称", "displayName": "用户组名称", "timeGranularity": null}], "fieldOrder": [{"fieldId": "total_document_knowledge_base_count", "fieldType": "metric", "displayName": "总文档知识库数"}, {"fieldId": "user_group_infos.user_group_name", "fieldType": "dimension", "displayName": "用户组名称"}], "resultLimit": {"limit": 3, "limitType": "limited"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总文档知识库数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": true, "themeColor": "cool-palette", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#000000", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#000000", "yAxisTitle": "", "legendAlign": "right", "legendColor": "#999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "center", "subtitleColor": "", "titleFontSize": 14, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "top", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'a93edd366639478fabe8a86cefde6632');
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '总文档知识库数', 'metric', 'mid_knowledge_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_document_knowledge_base_count", "fieldName": "总文档知识库数", "isVirtual": true, "aggregation": "sum", "displayName": "总文档知识库数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_document_knowledge_base_count", "fieldType": "metric", "displayName": "总文档知识库数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总文档知识库数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "全公司截至目前", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "end", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 14, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'bb3adabcdeaa4d51a6555f0124d588af');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '总用户数', 'metric', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_user_count", "fieldName": "总用户数", "isVirtual": true, "aggregation": "sum", "displayName": "总用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_user_count", "fieldType": "metric", "displayName": "总用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "总用户数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "全公司截至目前", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "end", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 14, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'ce8ca127b71a4a0884dc93075db28752');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '新增用户数', 'area', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "new_user_count", "isDivide": null, "fieldName": "新增用户数", "isVirtual": true, "aggregation": "sum", "displayName": "新增用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(月)", "displayName": "时间(月)", "timeGranularity": "month"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(月)"}, {"fieldId": "new_user_count", "fieldType": "metric", "displayName": "新增用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "新增用户数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#000000", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#000000", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "", "titleFontSize": 14, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "bottom", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '3ef497c6820545a989d249d29d6bb5d1');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '用户数', 'metric', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "total_user_count", "fieldName": "用户数", "isVirtual": true, "aggregation": "sum", "displayName": "用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [], "fieldOrder": [{"fieldId": "total_user_count", "fieldType": "metric", "displayName": "用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "用户数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "全公司截至目前", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "end", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 14, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'ce8ca127b71a4a0884dc93075db28752');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '新增用户数', 'area', 'mid_user_increment', '{"filters": [], "metrics": [{"sort": null, "fieldId": "new_user_count", "isDivide": null, "fieldName": "新增用户数", "isVirtual": true, "aggregation": "sum", "displayName": "新增用户数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [{"sort": null, "fieldId": "timestamp", "fieldName": "时间(天)", "displayName": "时间(天)", "timeGranularity": "day"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(天)"}, {"fieldId": "new_user_count", "fieldType": "metric", "displayName": "新增用户数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "新增用户数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#000000", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#000000", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "", "titleFontSize": 14, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "bottom", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '3ef497c6820545a989d249d29d6bb5d1');
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '最大LLM并发数', 'area', 'mid_model_call_dtl', '{"filters": [], "metrics": [{"sort": null, "fieldId": "max_concurrent_llm_sessions", "fieldName": "最大LLM并发数", "isVirtual": true, "aggregation": "sum", "displayName": "最大LLM并发数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": true}}], "dimensions": [{"sort": "asc", "fieldId": "timestamp", "fieldName": "时间(周)", "displayName": "时间(周)", "timeGranularity": "week"}], "fieldOrder": [{"fieldId": "timestamp", "fieldType": "dimension", "displayName": "时间(周)"}, {"fieldId": "max_concurrent_llm_sessions", "fieldType": "metric", "displayName": "最大LLM并发数"}], "timeFilter": {"mode": "dynamic", "type": "recent_days", "endDate": 1769443199, "startDate": 1753804800, "recentDays": "180"}, "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "最大LLM并发数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "", "titleBold": false, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": false, "showLegend": false, "themeColor": "cool-palette", "titleAlign": "left", "titleColor": "", "xAxisAlign": "center", "xAxisColor": "#000000", "xAxisTitle": "", "yAxisAlign": "center", "yAxisColor": "#000000", "yAxisTitle": "", "legendAlign": "left", "legendColor": "#999", "metricAlign": "center", "metricColor": "#000000", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": false, "subtitleBold": false, "showDataLabel": false, "subtitleAlign": "center", "subtitleColor": "", "titleFontSize": 14, "xAxisFontSize": 14, "yAxisFontSize": 14, "legendFontSize": 12, "legendPosition": "bottom", "metricFontSize": 14, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', '80abca18be5b47fdbd9931858b0994de');
 INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '最大同时在线会话数', 'metric', 'mid_session_run_dtl', '{"filters": [], "metrics": [{"sort": null, "fieldId": "max_concurrent_sessions", "fieldName": "最大同时在线会话数", "isVirtual": true, "aggregation": "sum", "displayName": "最大同时在线会话数", "numberFormat": {"type": "number", "decimalPlaces": 0, "thousandSeparator": false}}], "dimensions": [], "fieldOrder": [{"fieldId": "max_concurrent_sessions", "fieldType": "metric", "displayName": "最大同时在线会话数"}], "resultLimit": {"limitType": "all"}, "filtersLogic": "and", "isConfigured": true}', '{"title": "最大同时在线会话数", "bgColor": "", "showAxis": true, "showGrid": true, "subtitle": "全公司截至目前", "titleBold": true, "xAxisBold": false, "yAxisBold": false, "legendBold": false, "metricBold": true, "showLegend": true, "themeColor": "professional-blue", "titleAlign": "left", "titleColor": "", "xAxisAlign": "", "xAxisColor": "", "xAxisTitle": "", "yAxisAlign": "", "yAxisColor": "", "yAxisTitle": "", "legendAlign": "", "legendColor": "", "metricAlign": "end", "metricColor": "#4882f6", "titleItalic": false, "xAxisItalic": false, "yAxisItalic": false, "legendItalic": false, "metricItalic": false, "showSubtitle": true, "subtitleBold": false, "showDataLabel": true, "subtitleAlign": "left", "subtitleColor": "#666", "titleFontSize": 14, "xAxisFontSize": 0, "yAxisFontSize": 0, "legendFontSize": 0, "legendPosition": "", "metricFontSize": 28, "subtitleItalic": false, "titleUnderline": false, "xAxisUnderline": false, "yAxisUnderline": false, "legendUnderline": false, "metricUnderline": false, "subtitleFontSize": 14, "subtitleUnderline": false, "titleStrikethrough": false, "xAxisStrikethrough": false, "yAxisStrikethrough": false, "legendStrikethrough": false, "metricStrikethrough": false, "subtitleStrikethrough": false}', 'db44c5932fb94dca8dc6700e188d2eca');
-INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '选择日期', 'query', '', '{"queryConditions": {"id": "c833", "displayType": "range", "defaultValue": {"mode": "dynamic", "type": "recent_days", "endDate": 1769529599, "startDate": 1753891200, "recentDays": 180, "shortcutKey": 180}, "hasDefaultValue": true, "timeGranularity": "year_month_day"}, "linkedComponentIds": ["db44c5932fb94dca8dc6700e188d2eca", "ce8ca127b71a4a0884dc93075db28752", "40fa4cfe8cce4320b5b9052e02df7768", "a93edd366639478fabe8a86cefde6632", "dd90c0b6ea174a9ea93b54e196e7769d", "3d0f5873a8bb44e2965827ec6ae31c04", "80abca18be5b47fdbd9931858b0994de", "050b2c56f1354554bf6fc968fcf12f8f", "48b66fdec7df4348b8d30e2c67517ed1", "3ef497c6820545a989d249d29d6bb5d1", "2fb5ca536b3b44cb9fa9138ac7e78113", "4d76ff4edccf4fdf85034da6ffb3d7d6", "bb3adabcdeaa4d51a6555f0124d588af", "59d11da581344a69b5e338a9d3b19145"]}', '{"titleColor": ""}', '40a34e3d781e465786e9e884ebc171a6');
+INSERT INTO dashboard_component (dashboard_id, title, type, dataset_code, data_config, style_config, id) VALUES (11, '选择日期', 'query', '', '{"queryConditions": {"id": "c833", "displayType": "range", "defaultValue": {"mode": "dynamic", "type": "recent_days", "endDate": 1787759999, "startDate": 1787068800, "recentDays": 7, "shortcutKey": 7}, "hasDefaultValue": true, "timeGranularity": "year_month_day"}, "linkedComponentIds": ["db44c5932fb94dca8dc6700e188d2eca", "ce8ca127b71a4a0884dc93075db28752", "40fa4cfe8cce4320b5b9052e02df7768", "a93edd366639478fabe8a86cefde6632", "dd90c0b6ea174a9ea93b54e196e7769d", "3d0f5873a8bb44e2965827ec6ae31c04", "80abca18be5b47fdbd9931858b0994de", "050b2c56f1354554bf6fc968fcf12f8f", "48b66fdec7df4348b8d30e2c67517ed1", "3ef497c6820545a989d249d29d6bb5d1", "2fb5ca536b3b44cb9fa9138ac7e78113", "4d76ff4edccf4fdf85034da6ffb3d7d6", "bb3adabcdeaa4d51a6555f0124d588af", "59d11da581344a69b5e338a9d3b19145"]}', '{"titleColor": ""}', '40a34e3d781e465786e9e884ebc171a6');
 """
 
 
@@ -1188,9 +969,7 @@ async def _upgrade_datasets_add_department_dimensions(
             continue
         dimensions = schema.get("dimensions", [])
         # Check if department dimensions already present
-        has_dept = any(
-            d.get("field", "").startswith("user_department_infos.") for d in dimensions
-        )
+        has_dept = any(d.get("field", "").startswith("user_department_infos.") for d in dimensions)
         if has_dept:
             continue
         # Find insertion point: right after user_group_infos dimensions
@@ -1222,7 +1001,7 @@ async def init_dashboard_datasets():
         await DashboardDao.exec_sql_str(preset_commercial_dashboard_sql)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import asyncio
 
     asyncio.run(init_dashboard_datasets())

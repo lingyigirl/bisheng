@@ -136,7 +136,13 @@ class DocxProcessor:
                 if attr.find("zoom") != -1:
                     scale = int(re.findall(r"\d+", attr)[0])
 
-        if img_tag["src"] != "":
+        if not img_tag.get("src") and not img_tag.get("title"):
+            # sanitize_html_for_pdf strips src from images whose URL is not allowed
+            # (e.g. leftover local /tmp paths in parsed markdown); an <img> without
+            # src or title has nothing to embed — skip it instead of raising KeyError.
+            return
+
+        if img_tag.get("src"):
             img_src = img_tag["src"]
             # webauthn
             if img_src.startswith("http://") or img_src.startswith("https://"):

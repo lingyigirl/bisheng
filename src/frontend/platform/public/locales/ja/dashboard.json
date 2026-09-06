@@ -414,5 +414,20 @@
   "model_name": "モデル名",
   "total_token": "Token消費量",
   "like_count": "いいね回数",
-  "dislike_count": "ネガティブ評価回数"
+  "dislike_count": "ネガティブ評価回数",
+  "callLogType": "レコード種別",
+  "callLogStatus": "ステータス",
+  "callLogUser": "ユーザー",
+  "callLogDuration": "所要時間",
+  "callLogTime": "時刻",
+  "callLogAll": "すべて",
+  "callLogAgentRun": "エージェント実行",
+  "callLogModelCall": "モデル呼び出し",
+  "callLogSuccess": "成功",
+  "callLogFailed": "失敗",
+  "callLogTotal": "合計 {{total}} 件",
+  "callLogPrev": "前へ",
+  "callLogNext": "次へ",
+  "callLogAgentStatus": "エージェント実行状態",
+  "callLogLastActive": "最終アクティブ"
 }

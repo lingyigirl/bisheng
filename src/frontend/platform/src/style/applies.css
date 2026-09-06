@@ -999,6 +999,10 @@
     @apply px-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900
   }
 
+  .navlink {
+    @apply text-primary dark:text-[#8ab8f5]
+  }
+
   .navlink.active{
     @apply bg-[#fff] text-primary shadow-sm dark:bg-[#34353A] dark:text-[#FFFFFF] dark:shadow-sm
   }

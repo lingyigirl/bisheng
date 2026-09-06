@@ -417,5 +417,20 @@
   "model_name": "Model Name",
   "total_token": "Token Consumption",
   "like_count": "Like Count",
-  "dislike_count": "Dislike Count"
+  "dislike_count": "Dislike Count",
+  "callLogType": "Record type",
+  "callLogStatus": "Status",
+  "callLogUser": "User",
+  "callLogDuration": "Duration",
+  "callLogTime": "Time",
+  "callLogAll": "All",
+  "callLogAgentRun": "Agent run",
+  "callLogModelCall": "Model call",
+  "callLogSuccess": "Success",
+  "callLogFailed": "Failed",
+  "callLogTotal": "{{total}} records",
+  "callLogPrev": "Previous",
+  "callLogNext": "Next",
+  "callLogAgentStatus": "Agent run status",
+  "callLogLastActive": "Last active"
 }

@@ -133,7 +133,7 @@ export function IllustrationSection() {
           rows={[
             ['浅底', <Swatch hex="#BEDAFF" key="b" />, <Swatch hex="#DDF0E8" key="g" />, <Swatch hex="#E5E5E5" key="y" />],
             ['中间调', <Swatch hex="#6AA1FF" key="b" />, <Swatch hex="#A2D7B5" key="g" />, <Swatch hex="#FFFFFF" key="y" />],
-            ['主体', <Swatch hex="#165DFF" key="b" />, <Swatch hex="#169C47" key="g" />, <Swatch hex="#BCBCBC" key="y" />],
+            ['主体', <Swatch hex="#004DA4" key="b" />, <Swatch hex="#0E8C7B" key="g" />, <Swatch hex="#BCBCBC" key="y" />],
             ['整图不透明度', '100%', '100%', '80%'],
           ]}
         />

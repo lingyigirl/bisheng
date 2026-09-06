@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 from datetime import datetime
 from typing import Literal, Union
@@ -13,7 +14,8 @@ from starlette.websockets import WebSocket
 
 from bisheng.api.services.invite_code.invite_code import InviteCodeService
 from bisheng.api.v1.schemas import UnifiedResponseModel, resp_200
-from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum
+from bisheng.common.chat.utils import get_input_snapshot
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.http_error import NotFoundError, UnAuthorizedError
 from bisheng.common.errcode.linsight import (
@@ -655,6 +657,10 @@ async def task_message_stream(
                 start_time=int(start_time),
                 end_time=int(end_time),
                 process_time=int((end_time - start_time) * 1000),
+                # F046: an exception propagating through the finally marks the run failed
+                status=StatusEnum.FAILED if sys.exc_info()[0] is not None else StatusEnum.SUCCESS,
+                # F052: transaction identifier for the agent-monitor tab
+                input_snapshot=get_input_snapshot(session_version_info.session_id if session_version_info else ""),
             ),
         )
 

@@ -14,6 +14,7 @@ from bisheng.chat_session.api.router import router as session_router
 from bisheng.citation.api.router import router as citation_router
 from bisheng.finetune.api.finetune import router as finetune_router
 from bisheng.finetune.api.server import router as server_router
+from bisheng.gpu_manage.api.router import router as gpu_manage_router
 from bisheng.knowledge.api.router import (
     qa_router,
     knowledge_router,
@@ -52,6 +53,7 @@ router.include_router(knowledge_space_tag_library_router)
 router.include_router(knowledge_space_router)
 router.include_router(knowledge_version_router)
 router.include_router(server_router)
+router.include_router(gpu_manage_router)
 router.include_router(user_router)
 router.include_router(qa_router)
 router.include_router(variable_router)

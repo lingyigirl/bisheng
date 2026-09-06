@@ -13,26 +13,28 @@
 
 `:root` 定义**蓝色默认**（RGB 通道格式，为了支持 Tailwind `/<alpha>`）：
 
-```
---brand-50:232 243 255(#E8F3FF)  --brand-100:190 218 255(#BEDAFF)  --brand-200:148 191 255(#94BFFF)
---brand-300:106 161 255(#6AA1FF) --brand-400:64 128 255(#4080FF)   --brand-500:22 93 255(#165DFF 主)
---brand-600:2 77 227(#024DE3 按钮/按下) --brand-700:2 57 171  --brand-800:4 43 128  --brand-900:5 29 82
---brand-main:22 93 255(#165DFF)
-```
-
-`.theme-green` 覆盖成**绿色**：
+> 2026-08-26 品牌升级为**天阳（Tansun）配色**：企业深蓝 `#004DA4` 为主色（来自 www.tansun.com.cn），Arco 梯度算法、锚在 500（与旧蓝阶同约定）。
 
 ```
---brand-50:228 241 231(#E4F1E7)  --brand-100:204 228 210(#CCE4D2)  --brand-200:163 210 176(#A3D2B0)
---brand-300:111 186 133(#6FBA85) --brand-400:61 155 92(#3D9B5C)    --brand-500:22 156 71(#169C47 主, 2026-06-29 was #187C54)
---brand-600:9 139 53(#098B35)    --brand-700:7 105 41(#076929)  --brand-800:7 78 32(#074E20)  --brand-900:6 50 22(#063216)
---brand-main:22 156 71(#169C47)
+--brand-50:232 247 255(#E8F7FF)  --brand-100:172 211 237(#ACD3ED)  --brand-200:119 176 219(#77B0DB)
+--brand-300:73 141 200(#498DC8)  --brand-400:33 108 182(#216CB6)   --brand-500:0 77 164(#004DA4 主)
+--brand-600:0 62 142(#003E8E 按钮/按下) --brand-700:0 48 120  --brand-800:0 36 98  --brand-900:0 26 76
+--brand-main:0 77 164(#004DA4)
+```
+
+`.theme-green` 覆盖成**天阳青绿**（站点点缀色 `#78D5C9` 落在 200 档）：
+
+```
+--brand-50:232 255 248(#E8FFF8)  --brand-100:174 232 216(#AEE8D8)  --brand-200:122 209 189(#7AD1BD)
+--brand-300:79 186 164(#4FBAA4)  --brand-400:43 163 143(#2BA38F)   --brand-500:14 140 123(#0E8C7B 主)
+--brand-600:9 124 112(#097C70)   --brand-700:5 108 101(#056C65)  --brand-800:2 92 89(#025C59)  --brand-900:0 76 76(#004C4C)
+--brand-main:14 140 123(#0E8C7B)
 /* 另外覆盖： */
---primary:142 75% 35%;  --surface-active-alt:rgb(228 241 231);  --surface-primary-alt:#f4faf7;  --search-input:hsla(152,40%,99%,1);
-/* 绿阶 2026-07-15 以固定主色 #169C47 为锚重新推导（旧阶色相偏青 ~157°、500 单独跳档）：
-   浅档沿用旧阶明度/饱和度、仅旋色相到主色家族；深档镜像蓝阶深端 HSV 几何。 */
+--primary:171.9 81.82% 30.2%;  --surface-active-alt:rgb(232 255 248);  --surface-primary-alt:#f3faf8;  --search-input:hsla(172,40%,99%,1);
+/* 绿阶 2026-08-26 随天阳青绿重推导（Arco 梯度算法，锚 #0E8C7B = 站点点缀色 #78D5C9 的深色家族）。
+   历史：2026-06-29 曾为 #187C54，2026-07-15 以固定主色 #169C47 为锚重新推导。 */
 ```
-（蓝色 `--primary` 默认是 `222 100% 54%`，在 `:root`/`html` 块里。）
+（蓝色 `--primary` 默认是 `211.83 100% 32.16%`，在 `:root`/`html` 块里。）
 
 ### 1.2 Tailwind 接线（`tailwind.config.cjs`）
 
@@ -55,7 +57,7 @@ blue: { 50:'rgb(var(--brand-50) / <alpha-value>)', ... 900:'rgb(var(--brand-900)
 | 场景 | 做法 |
 |---|---|
 | Tailwind 类（`text-blue-500`/`bg-blue-600`/`border-blue-500`…） | **已自动跟随**，无需改 |
-| 写死的品牌蓝 hex（`#165DFF`/`#024DE3`/`#335CFF`…） | 换成 `blue-*` 类；或在内联 style/CSS 里换 `rgb(var(--brand-NNN))` |
+| 写死的品牌蓝 hex（`#004DA4`/`#003E8E`/`#216CB6`…） | 换成 `blue-*` 类；或在内联 style/CSS 里换 `rgb(var(--brand-NNN))` |
 | 选中/hover 浅底 | `bg-blue-500/[0.07]` 这种「主色 + 透明度」（本轮选中态统一用 7%） |
 | 内联 style / CSS / 渐变 | `rgb(var(--brand-500))`、`rgb(var(--brand-500)/0.04)`（注意 Tailwind 任意值 `[...]` 内**不能有空格**，斜杠两侧不留空） |
 | **SVG**（重点，插画用这个） | 见下 §3 |
@@ -74,19 +76,19 @@ blue: { 50:'rgb(var(--brand-50) / <alpha-value>)', ... 900:'rgb(var(--brand-900)
 
 ### 3.1 插画专用调色板 `--illus-*`（2026-06-24）
 
-空状态插画**不用 `--brand-*`，改用独立的 `--illus-100/300/500`**（`style.css`）。原因：用户画插画用的鲜绿 `#19B476/#BDE6D3/#7CD0B1` 比 UI 品牌绿 `#187C54` 系更亮；若跟 `--brand-*` 会被压暗、与设计稿不符。
+空状态插画**不用 `--brand-*`，改用独立的 `--illus-100/300/500`**（`style.css`）。原因：用户画插画用的鲜绿 `#19B476/#BDE6D3/#7CD0B1` 比 UI 品牌绿 `#187C54` 系更亮；若跟 `--brand-*` 会被压暗、与设计稿不符。（2026-08-26 起绿主题改为天阳青绿系，插画调色板同步重推。）
 
-- `:root`（蓝模式）：`--illus-*` = 品牌蓝（#165DFF/#6AA1FF/#BEDAFF），所以蓝模式插画仍跟随切蓝。
-- `.theme-green`：`--illus-500=#19B476`、`--illus-300=#7CD0B1`、`--illus-100=#BDE6D3`（忠于原图）。
+- `:root`（蓝模式）：`--illus-*` = 品牌蓝（#004DA4/#498DC8/#ACD3ED），所以蓝模式插画仍跟随切蓝。
+- `.theme-green`：`--illus-500=#0E8C7B`、`--illus-300=#7AD1BD`（= 站点点缀青绿 `#78D5C9`）、`--illus-100=#D8F4EC`（忠于原图）。
 
-7 张插画组件（EmptyState/ArticleQA/ListWebLink/Crawling/NoPermission/Success/SystemMaintenance）的 `fill/stroke` 都用 `rgb(var(--illus-NNN))`。**新插画一律用 `--illus-*`，不要用 `--brand-*`。** UI 品牌绿 `#187C54`（按钮/链接/选中）不受影响。FolderIcon 等 UI 图标仍用 `--brand-*`。
+7 张插画组件（EmptyState/ArticleQA/ListWebLink/Crawling/NoPermission/Success/SystemMaintenance）的 `fill/stroke` 都用 `rgb(var(--illus-NNN))`。**新插画一律用 `--illus-*`，不要用 `--brand-*`。** UI 品牌绿 `#0E8C7B`（按钮/链接/选中）不受影响。FolderIcon 等 UI 图标仍用 `--brand-*`。
 
 ---
 
 ## 4. 本轮已固定为「不跟随主题、永远蓝」的例外（不要误改成绿）
 
-- 审批中心「审批中」状态 tag：`bg-[#e8f3ff] text-[#165dff]`（`ApprovalCenterDialog.tsx`，4 处 pending 配置）。
-- 应用中心置顶 pin 图标：固定低饱和深绿 `#5C8A77`（`AgentCard.tsx`，2 处）——注意这个是**固定绿**不是蓝，是用户特意要的muted色，也不跟随切换。
+- 审批中心「审批中」状态 tag：`bg-[#E8F7FF] text-[#004DA4]`（`ApprovalCenterDialog.tsx`，4 处 pending 配置）。
+- 应用中心置顶 pin 图标：低饱和青绿 muted `#5C9991`（`src/pages/apps/components/AgentCard.tsx`，2 处，走 `rgb(var(--brand-muted))`）——注意这个是**固定绿**不是蓝，是用户特意要的muted色，也不跟随切换。
 - 各类**语义色**不参与：成功绿 `#00b42a`、失败红 `#f53f3f`、异常橙 `#ff7d00`、技能紫 `#F5E8FF/#722ED1`、助手橙 `#FFF7E8/#FF7D00`、第三方 logo（Google `#4285F4` 等）、灰蓝文字（`#8B8FA8` 等）、azure/sky（`#1677FF/#0285FF`）。
 
 ---
@@ -100,7 +102,7 @@ blue: { 50:'rgb(var(--brand-50) / <alpha-value>)', ... 900:'rgb(var(--brand-900)
 **落地步骤**：
 1. 拿到每张插画的 SVG 源码，统计它用的几档绿（通常 2~3 档：主绿 + 浅绿底 +（可选）中绿）。
 2. 按「明度」映射到 brand 档位，例如：
-   - 主体绿（深，如 #187C54 系）→ `rgb(var(--brand-500))` 或 `brand-600`
+   - 主体绿（深，如 #0E8C7B 系）→ `rgb(var(--brand-500))` 或 `brand-600`
    - 浅绿底（如 #CCE4DA / #E4F1EC 系）→ `rgb(var(--brand-100))` 或 `brand-200`
    - 中绿 → `rgb(var(--brand-300/400))`
    - 纯白/灰/描边等非品牌色保持原样

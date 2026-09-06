@@ -7,7 +7,7 @@ here — unknown names answer 11053 without leaking existence (design §7.5).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.linsight import SkillFileTooLargeError, SkillValidationError
@@ -96,6 +96,19 @@ async def get_skill_file(
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
 ) -> UnifiedResponseModel:
     return resp_200(await SkillService().read_bundle_file(_current_tenant_id(), name, path))
+
+
+@router.get("/{name}/export", summary="Download the whole skill bundle as a zip archive")
+async def export_skill(
+    name: str,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+) -> Response:
+    data, zip_name = await SkillService().export_bundle(_current_tenant_id(), name)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
 
 
 @router.post("", summary="Create skill: multipart (.md/.zip/.skill) or form fields")

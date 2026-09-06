@@ -120,3 +120,20 @@ class ConversationImportFileTooLargeError(BaseErrorCode):
     # quota error (12068) so the frontend shows the size reason, not "空间已满".
     Code: int = 12070
     Msg: str = "文件大小超过上传限制"
+
+
+# --- F047: Agent plaza (12080-12089) ---
+
+
+class PlazaAppNotFoundError(BaseErrorCode):
+    """The target app row does not exist (deleted or stale id)."""
+
+    Code: int = 12080
+    Msg: str = "应用不存在或已删除"
+
+
+class PlazaAppNotVisibleError(BaseErrorCode):
+    """The app exists but is offline or invisible to the current user."""
+
+    Code: int = 12081
+    Msg: str = "应用已下架或不可见"

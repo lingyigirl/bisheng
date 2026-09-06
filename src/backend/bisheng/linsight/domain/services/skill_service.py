@@ -11,6 +11,8 @@ existence is not leaked (design §7.5).
 
 from __future__ import annotations
 
+import io
+import zipfile
 from typing import NamedTuple
 
 from loguru import logger
@@ -282,6 +284,21 @@ class SkillService:
         for entry in self.store.list_files(tenant_id, name):
             files[entry["path"]] = (base / entry["path"]).read_bytes()
         return files
+
+    async def export_bundle(self, tenant_id: int, name: str) -> tuple[bytes, str]:
+        """Pack the whole skill bundle as a zip (SKILL.md at the archive root).
+
+        The layout is the inverse of ``unpack_zip_bytes``: a top-level
+        wrapper directory is not added, so an exported archive re-imports
+        as the same skill without path normalization.
+        """
+        await self._get_or_404(name)
+        files = self._load_existing_bundle(tenant_id, name)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for rel in sorted(files):
+                zf.writestr(rel, files[rel])
+        return buf.getvalue(), f"{name}.skill.zip"
 
     async def _create(
         self,

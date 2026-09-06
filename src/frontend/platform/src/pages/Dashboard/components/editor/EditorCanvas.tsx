@@ -75,7 +75,6 @@ export function EditorCanvas({ isLoading, isPreviewMode }: EditorCanvasProps) {
     // dashboard id is reloaded after a store reset, the refresh will still be triggered.
     const prevDashboardRef = useRef<any>(null);
     useEffect(() => {
-        console.log('currentDashboard :>> ', currentDashboard);
         if (currentDashboard && currentDashboard.components.length > 0
             && currentDashboard !== prevDashboardRef.current) {
             prevDashboardRef.current = currentDashboard;
@@ -95,7 +94,6 @@ export function EditorCanvas({ isLoading, isPreviewMode }: EditorCanvasProps) {
             isInitialMount.current = false;
             return;
         }
-        console.log('newLayout :>> ', newLayout);
 
         const updatedLayouts = newLayout.map(item => ({
             i: item.i,

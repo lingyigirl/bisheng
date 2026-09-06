@@ -56,6 +56,11 @@ export const skillApi = {
     return axios.get(`${SKILL_BASE}/${encodeURIComponent(name)}/file`, { params: { path } });
   },
 
+  // Download the whole skill bundle as a zip (SKILL.md at the archive root).
+  downloadSkill: (name: string): Promise<Blob> => {
+    return axios.get(`${SKILL_BASE}/${encodeURIComponent(name)}/export`, { responseType: 'blob' });
+  },
+
   createSkillForm: (data: SkillFormPayload): Promise<SkillDetail> => {
     const form = new FormData();
     Object.entries(data).forEach(([k, v]) => form.append(k, v));

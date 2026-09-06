@@ -44,7 +44,7 @@ export default function FileTagList({
                     isEditable={isEditable}
                 >
                     <button
-                        className="flex size-5 shrink-0 items-center justify-center rounded-[4px] text-[#4e5969] opacity-0 transition-[opacity,color,background-color] hover:text-[#335CFF] group-hover:opacity-100 group-hover/file-tags:text-[#335CFF] group-hover/file-tags:opacity-100"
+                        className="flex size-5 shrink-0 items-center justify-center rounded-[4px] text-[#4e5969] opacity-0 transition-[opacity,color,background-color] hover:text-[#004DA4] group-hover:opacity-100 group-hover/file-tags:text-[#004DA4] group-hover/file-tags:opacity-100"
                         onClick={(e) => e.stopPropagation()}
                         title={t('addTag')}
                     >

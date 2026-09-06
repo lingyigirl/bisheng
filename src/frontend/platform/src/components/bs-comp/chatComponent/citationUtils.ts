@@ -192,9 +192,9 @@ export function getCitationClassName(type?: string) {
     case "websearch":
       return "bg-[#F7F3FF] text-[#7224D9]";
     case "knowledgesearch":
-      return "bg-[#F5F8FF] text-[#024DE3]";
+      return "bg-[#E8F7FF] text-[#003E8E]";
     default:
-      return "bg-[#F5F8FF] text-[#024DE3]";
+      return "bg-[#E8F7FF] text-[#003E8E]";
   }
 }
 

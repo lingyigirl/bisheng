@@ -87,8 +87,14 @@ class TimeFilter(BaseModel):
     end_date: Optional[int] = Field(default=None, alias='endDate', description="end timestamp(s)")
 
     def get_start_end_date(self) -> (Optional[int], Optional[int]):
+        # Telemetry docs store `timestamp` as epoch_second, but numeric range
+        # bounds on ES date fields are interpreted as epoch MILLIS — so the
+        # bounds must be converted to ms here (the *1000 is required).
+        # End bound includes today: mid tables sync daily for the previous
+        # day, but backfills and intra-day data must not be filtered out,
+        # otherwise a freshly deployed day shows empty charts.
         if self.mode == TimeRangeMode.DYNAMIC:
-            end_date = datetime.now() - timedelta(days=1)
+            end_date = datetime.now()
             end_date = int(datetime(year=end_date.year, month=end_date.month, day=end_date.day, hour=23, minute=59,
                                     second=59).timestamp() * 1000)
             start_date = int((datetime.now() - timedelta(days=self.recent_days)).timestamp() * 1000)

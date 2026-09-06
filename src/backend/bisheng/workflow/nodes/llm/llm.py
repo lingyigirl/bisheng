@@ -1,8 +1,10 @@
+import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from loguru import logger
+from openai import APITimeoutError
 
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.llm.domain.services import LLMService
@@ -13,21 +15,20 @@ from bisheng.workflow.nodes.prompt_template import PromptTemplateParser
 
 
 class LLMNode(BaseNode):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Determine if it is a single or batch
-        self._tab = self.node_data.tab['value']
+        self._tab = self.node_data.tab["value"]
 
         # Whether to output the results to the user
-        self._output_user = self.node_params.get('output_user', False)
+        self._output_user = self.node_params.get("output_user", False)
 
-        self._image_prompt = self.node_params.get('image_prompt', [])
+        self._image_prompt = self.node_params.get("image_prompt", [])
 
         # Inisialisasiprompt
-        self._system_prompt = PromptTemplateParser(template=self.node_params['system_prompt'])
+        self._system_prompt = PromptTemplateParser(template=self.node_params["system_prompt"])
         self._system_variables = self._system_prompt.extract()
-        self._user_prompt = PromptTemplateParser(template=self.node_params['user_prompt'])
+        self._user_prompt = PromptTemplateParser(template=self.node_params["user_prompt"])
         self._user_variables = self._user_prompt.extract()
 
         # Data required to store logs
@@ -37,12 +38,14 @@ class LLMNode(BaseNode):
         self._log_reasoning_content = []
 
         # InisialisasillmObjects
-        self._llm = LLMService.get_bisheng_llm_sync(model_id=self.node_params['model_id'],
-                                                    temperature=self.node_params.get('temperature', 1),
-                                                    app_id=self.workflow_id,
-                                                    app_name=self.workflow_name,
-                                                    app_type=ApplicationTypeEnum.WORKFLOW,
-                                                    user_id=self.user_id)
+        self._llm = LLMService.get_bisheng_llm_sync(
+            model_id=self.node_params["model_id"],
+            temperature=self.node_params.get("temperature", 1),
+            app_id=self.workflow_id,
+            app_name=self.workflow_name,
+            app_type=ApplicationTypeEnum.WORKFLOW,
+            user_id=self.user_id,
+        )
 
     def _run(self, unique_id: str):
         self._system_prompt_list = []
@@ -51,19 +54,19 @@ class LLMNode(BaseNode):
         self._log_reasoning_content = []
 
         result = {}
-        if self._tab == 'single':
-            result['output'], reasoning_content = self._run_once(None, unique_id, 'output')
+        if self._tab == "single":
+            result["output"], reasoning_content = self._run_once(None, unique_id, "output")
             self._log_reasoning_content.append(reasoning_content)
         else:
-            for index, one in enumerate(self.node_params['batch_variable']):
+            for index, one in enumerate(self.node_params["batch_variable"]):
                 self._batch_variable_list.append(self.get_other_node_variable(one))
-                output_key = self.node_params['output'][index]['key']
+                output_key = self.node_params["output"][index]["key"]
                 result[output_key], reasoning_content = self._run_once(one, unique_id, output_key)
                 self._log_reasoning_content.append(reasoning_content)
 
         if self._output_user:
             for k, v in result.items():
-                self.graph_state.save_context(content=v, msg_sender='AI')
+                self.graph_state.save_context(content=v, msg_sender="AI")
         return result
 
     def parse_log(self, unique_id: str, result: dict) -> Any:
@@ -75,21 +78,22 @@ class LLMNode(BaseNode):
                 {"key": "user_prompt", "value": self._user_prompt_list[index], "type": "params"},
             ]
             if self._log_reasoning_content[index]:
-                one_ret.append({"key": "Thinking about content", "value": self._log_reasoning_content[index], "type": "params"})
-            one_ret.append({"key": f'{self.id}.{k}', "value": v, "type": "variable"})
+                one_ret.append(
+                    {"key": "Thinking about content", "value": self._log_reasoning_content[index], "type": "params"}
+                )
+            one_ret.append({"key": f"{self.id}.{k}", "value": v, "type": "variable"})
             if self._batch_variable_list:
-                one_ret.insert(0, {"key": f"{self.id}.batch_variable", "value": self._batch_variable_list[index],
-                                   "type": "variable"})
+                one_ret.insert(
+                    0,
+                    {"key": f"{self.id}.batch_variable", "value": self._batch_variable_list[index], "type": "variable"},
+                )
             index += 1
             ret.append(one_ret)
         return ret
 
-    def _run_once(self,
-                  input_variable: str = None,
-                  unique_id: str = None,
-                  output_key: str = None) -> (str, str):
+    def _run_once(self, input_variable: str = None, unique_id: str = None, output_key: str = None) -> (str, str):
         # Description is a variable that references a batch, The value of the variable needs to be replaced with the variable selected by the user
-        special_variable = f'{self.id}.batch_variable'
+        special_variable = f"{self.id}.batch_variable"
         variable_map = {}
         for one in self._system_variables:
             if input_variable and one == special_variable:
@@ -108,21 +112,22 @@ class LLMNode(BaseNode):
         user = self._user_prompt.format(variable_map)
         self._user_prompt_list.append(user)
 
-        logger.debug(
-            f'outputkey={output_key} workflow llm node prompt: system: {system}\nuser: {user}')
-        llm_callback = LLMNodeCallbackHandler(callback=self.callback_manager,
-                                              unique_id=unique_id,
-                                              node_id=self.id,
-                                              node_name=self.name,
-                                              output=self._output_user,
-                                              output_key=output_key)
+        logger.debug(f"outputkey={output_key} workflow llm node prompt: system: {system}\nuser: {user}")
+        llm_callback = LLMNodeCallbackHandler(
+            callback=self.callback_manager,
+            unique_id=unique_id,
+            node_id=self.id,
+            node_name=self.name,
+            output=self._output_user,
+            output_key=output_key,
+        )
         # F017 AC-09: attribute LLM token usage to the invoking user's leaf
         # tenant (INV-T13). The ContextVar is already populated by F012's
         # middleware / Celery task_prerun, so LLMTokenTracker picks it up
         # on on_llm_end.
         usage_callback = LLMUsageCallbackHandler(
             user_id=self.user_id,
-            model_id=self.node_params.get('model_id'),
+            model_id=self.node_params.get("model_id"),
             session_id=self.workflow_id,
         )
         config = RunnableConfig(callbacks=[llm_callback, usage_callback])
@@ -130,15 +135,46 @@ class LLMNode(BaseNode):
         if system:
             inputs.append(SystemMessage(content=system))
 
-        human_message = HumanMessage(content=[{
-            'type': 'text',
-            'text': user
-        }])
+        human_message = HumanMessage(content=[{"type": "text", "text": user}])
         human_message = self.contact_file_into_prompt(human_message, self._image_prompt)
         inputs.append(human_message)
 
-        logger.debug(f'llm invoke chat_history: {inputs} {self._image_prompt}')
+        logger.debug(f"llm invoke chat_history: {inputs} {self._image_prompt}")
 
-        result = self._llm.invoke(inputs, config=config)
-
-        return result.content, llm_callback.reasoning_content
+        # Reasoning models can take tens of seconds before the first token;
+        # provider gateways 408 the request under load (the SDK raises
+        # APITimeoutError). Retry a couple of times before giving up.
+        for attempt in range(3):
+            # only the final attempt may surface reasoning_content as the output
+            # event; earlier empty responses are retried for a normal completion
+            llm_callback.allow_empty_fallback = attempt == 2
+            try:
+                result = self._llm.invoke(inputs, config=config)
+                content = result.content
+                if not content:
+                    # DeepSeek occasionally ignores `thinking: disabled` and returns
+                    # only reasoning_content with empty content (the reasoning is CoT,
+                    # not the answer). Retry for a normal completion, then fall back.
+                    if attempt < 2:
+                        logger.warning(
+                            "workflow llm node {} invoke returned empty content (attempt {}/3), retrying in 3s",
+                            self.id,
+                            attempt + 1,
+                        )
+                        time.sleep(3)
+                        continue
+                    if llm_callback.reasoning_content:
+                        logger.warning(
+                            "workflow llm node {} invoke returned empty content, using reasoning_content (len={})",
+                            self.id,
+                            len(llm_callback.reasoning_content),
+                        )
+                        content = llm_callback.reasoning_content
+                return content, llm_callback.reasoning_content
+            except APITimeoutError:
+                if attempt == 2:
+                    raise
+                logger.warning(
+                    "workflow llm node {} invoke timed out (attempt {}/3), retrying in 3s", self.id, attempt + 1
+                )
+                time.sleep(3)

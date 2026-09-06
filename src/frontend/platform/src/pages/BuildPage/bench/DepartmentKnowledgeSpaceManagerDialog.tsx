@@ -191,7 +191,7 @@ export function DepartmentKnowledgeSpaceManagerDialog({ open, onOpenChange, onCh
   const renderRowSuffix = (node: DepartmentTreeNode) => {
     if (visibleBoundIds.has(node.id)) {
       return (
-        <span className="ml-auto shrink-0 rounded bg-[#E8F3FF] px-2 py-0.5 text-xs text-[#165DFF]">
+        <span className="ml-auto shrink-0 rounded bg-[#E8F7FF] px-2 py-0.5 text-xs text-[#004DA4]">
           {t("bench.departmentKnowledgeSpaceConfigured", "已配置")}
         </span>
       );
@@ -298,7 +298,7 @@ export function DepartmentKnowledgeSpaceManagerDialog({ open, onOpenChange, onCh
                   {renderChangeGroup(
                     t("bench.departmentKnowledgeSpacePendingRestore", "待恢复显示"),
                     pendingRestore,
-                    "bg-[#165DFF]",
+                    "bg-[#004DA4]",
                     false,
                   )}
                   {renderChangeGroup(

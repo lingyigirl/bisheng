@@ -5,14 +5,26 @@ import { useRecoilState, useRecoilValue } from "recoil"
 import { NotificationSeverity } from "~/common"
 import { useLocalize, useToast } from "~/hooks"
 import { SkillMethod } from "./appUtils/skillMethod"
-import { chatApiVersionState, submitDataState } from "./store/atoms"
+import { chatApiVersionState, submitDataState, chatsState } from "./store/atoms"
 import { appConversationsState } from "./store/appSidebarAtoms"
 import { genTitle } from "~/api/chat/data-service"
+import { getChatHistoryApi } from "~/api/apps"
 
 export const AppLostMessage = '11111'
 const wsMap = new Map<string, WebSocket>()
 // 会话运行时信息
 const sessionInfoMap = new Map<string, any>()
+// Conversations whose websocket closed after the server's `close` frame
+// (normal round end) — they must NOT trigger the drop-recovery path.
+const normalCloseSet = new Set<string>()
+// Conversations recovering from an unexpected drop: ALL reconnects are
+// suppressed while the flag is set (any reconnect makes the server replay
+// the accumulated event queue, re-rendering the thinking stream — the
+// "endless retry" effect). Recovery runs via history polling only.
+const dropRecoverySet = new Set<string>()
+const MAX_DROP_RECOVERY_ATTEMPTS = 3
+const HISTORY_POLL_INTERVAL_MS = 3000
+const HISTORY_POLL_MAX_TRIES = 60
 
 /**
  * Force-close the websocket and forget any session info for the given chatId.
@@ -65,6 +77,14 @@ export const useWebSocket = (helpers) => {
 
     const websocket = wsMap.get(helpers.chatId)
     const currentChatId = useCurrentChatId(helpers.chatId)
+    const [, setChats] = useRecoilState(chatsState)
+    const dropRecoveryAttemptsRef = useRef(0)
+    const historyPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+    // Whether this websocket connection has seen a node run — used to tell an
+    // unexpected close mid-run apart from an idle/navigation close. A fresh
+    // Recoil read is unreliable here (stale render closure), so track it from
+    // the frames themselves.
+    const sawNodeRunRef = useRef(false)
 
     // Track whether genTitle has been called for this chatId to avoid duplicates
     const hasGeneratedTitleRef = useRef<Record<string, boolean>>({})
@@ -94,8 +114,11 @@ export const useWebSocket = (helpers) => {
 
     // 连接WebSocket
     const connect = (callBack) => {
-        if (websocket) {
-            if (!(callBack && websocket.readyState !== WebSocket.OPEN)) {
+        // Re-read from the map instead of the render-time closure so recovery
+        // after an unexpected drop can reconnect with a fresh socket.
+        const currentWs = wsMap.get(helpers.chatId)
+        if (currentWs) {
+            if (!(callBack && currentWs.readyState !== WebSocket.OPEN)) {
                 // 发送消息并链接断开，重新连接
                 return
             }
@@ -110,6 +133,7 @@ export const useWebSocket = (helpers) => {
 
         ws.onopen = () => {
             console.log("WebSocket connection established!");
+            sawNodeRunRef.current = false
             helpers.clearError()
             if (helpers.flow.flow_type === 10) {
                 // 工作流初始化
@@ -165,7 +189,23 @@ export const useWebSocket = (helpers) => {
         ws.onclose = (event) => {
             console.log('close chatId:>> ', helpers.chatId);
             console.error('ws close :>> ', event);
+            if (normalCloseSet.delete(helpers.chatId)) {
+                // Normal round end (server sent its `close` frame first).
+                dropRecoverySet.delete(helpers.chatId)
+                dropRecoveryAttemptsRef.current = 0
+                helpers.handleMsgError({ code: '', data: null }, true)
+                return
+            }
+            const hadActiveRun = sawNodeRunRef.current
             helpers.handleMsgError({ code: '', data: null }, true)
+            if (hadActiveRun) {
+                // Unexpected drop mid-run (browser WS policy, proxy hiccup, ...):
+                // the server keeps processing and persists the result, so
+                // recover via history polling — see recoverChatAfterDrop for
+                // why reconnecting is deliberately avoided.
+                dropRecoverySet.add(helpers.chatId)
+                recoverChatAfterDrop()
+            }
             // todo 错误消息写入消息下面
         }
 
@@ -212,6 +252,7 @@ export const useWebSocket = (helpers) => {
             }
             return helpers.message.closeAllMsg(helpers.chatId)
         } else if (data.category === 'node_run') {
+            sawNodeRunRef.current = true
             return helpers.message.createNodeMsg(helpers.chatId, data)
         } else if (data.category === 'guide_word') {
             data.message.msg = data.message.guide_word
@@ -257,6 +298,7 @@ export const useWebSocket = (helpers) => {
         }
         /***** 技能 end******/
         if (data.type === 'close' && data.category === 'processing') {
+            normalCloseSet.add(helpers.chatId)
             helpers.message.insetSeparator(helpers.chatId, 'com_chat_round_finished')
             // 重启会话按钮,接收close确认后端处理结束后重启会话
             if (restartCallBack.current) {
@@ -270,7 +312,9 @@ export const useWebSocket = (helpers) => {
         }
     }
     useEffect(() => {
-        connect()
+        if (!dropRecoverySet.has(helpers.chatId)) {
+            connect()
+        }
 
         return () => {
             // 后台运行的会话结束后，断开WebSocket连接
@@ -282,8 +326,61 @@ export const useWebSocket = (helpers) => {
                     wsMap.delete(helpers.chatId)
                 }
             }
+            if (historyPollTimerRef.current) {
+                clearInterval(historyPollTimerRef.current)
+                historyPollTimerRef.current = null
+            }
         }
     }, [helpers.chatId, helpers.running])
+
+    /**
+     * Recovery after an unexpected websocket drop mid-run: poll the persisted
+     * history until the server-side result lands, then replace the in-memory
+     * messages with it.
+     *
+     * Deliberately NO websocket reconnect: on check_status the server drains
+     * the accumulated Redis event queue and replays the whole run to the new
+     * connection, which re-renders the thinking stream from the start — the
+     * "endless retry" effect. The server keeps running and persisting the
+     * result regardless; history polling surfaces it.
+     */
+    const recoverChatAfterDrop = () => {
+        const attempts = dropRecoveryAttemptsRef.current
+        if (attempts >= MAX_DROP_RECOVERY_ATTEMPTS) return
+        dropRecoveryAttemptsRef.current = attempts + 1
+        wsMap.delete(helpers.chatId)
+        setTimeout(pollHistoryAfterDrop, 2000 * (attempts + 1))
+    }
+
+    const pollHistoryAfterDrop = () => {
+        if (historyPollTimerRef.current) return
+        let tries = 0
+        historyPollTimerRef.current = setInterval(async () => {
+            tries += 1
+            if (tries >= HISTORY_POLL_MAX_TRIES && historyPollTimerRef.current) {
+                clearInterval(historyPollTimerRef.current)
+                historyPollTimerRef.current = null
+                // allow reconnects again (e.g. the user's next message)
+                dropRecoverySet.delete(helpers.chatId)
+            }
+            try {
+                const msgs = await getChatHistoryApi({
+                    flowId: helpers.flow.id,
+                    chatId: helpers.chatId,
+                    flowType: String(helpers.flow.flow_type),
+                    apiVersion,
+                })
+                if (msgs && msgs.length) {
+                    setChats((prev) => ({
+                        ...prev,
+                        [helpers.chatId]: { ...prev[helpers.chatId], messages: msgs },
+                    }))
+                }
+            } catch {
+                // history poll is best-effort; keep polling until max tries
+            }
+        }, HISTORY_POLL_INTERVAL_MS)
+    }
 
     const sendWsMsg = async (msg) => {
         try {

@@ -38,6 +38,10 @@ class LLMNodeCallbackHandler(BaseCallbackHandler):
         self.tool_list = tool_list
         self.cancel_llm_end = cancel_llm_end
         self.reasoning_content = ""
+        # Whether an empty-content response may fall back to reasoning_content for
+        # the output event. The LLM node disables this on retry attempts so a CoT
+        # from an early attempt is not emitted as the answer.
+        self.allow_empty_fallback = True
         logger.info("on_llm_new_token {} outkey={}", self.output, self.output_key)
 
     @classmethod
@@ -134,8 +138,18 @@ class LLMNodeCallbackHandler(BaseCallbackHandler):
         else:
             msg = msg.content
         if not msg:
-            logger.warning("LLM output is empty")
-            return
+            # DeepSeek may ignore `thinking: disabled` and deliver only
+            # reasoning_content with empty content — without an output event
+            # the answer is lost to the frontend/evaluation. The LLM node
+            # retries such responses; only the final attempt may fall back.
+            if self.reasoning_content and self.allow_empty_fallback:
+                logger.warning(
+                    "LLM output is empty, using reasoning_content as output (len={})", len(self.reasoning_content)
+                )
+                msg = self.reasoning_content
+            else:
+                logger.warning("LLM output is empty")
+                return
 
         if self.stream and self.output_len > 0:
             # Streaming output end needs to return a streaming end event

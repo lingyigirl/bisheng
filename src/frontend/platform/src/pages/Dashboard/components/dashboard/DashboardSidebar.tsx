@@ -32,7 +32,6 @@ interface DashboardSidebarProps {
     onSelect: (id: string) => void
     onRename: (id: string, newTitle: string) => void
     onDefault: (id: string) => void
-    onShare: (id: string) => void
 }
 
 export function DashboardSidebar({
@@ -42,8 +41,7 @@ export function DashboardSidebar({
     setIsCollapsed,
     onSelect,
     onRename,
-    onDefault,
-    onShare
+    onDefault
 }: DashboardSidebarProps) {
     const { t } = useTranslation("dashboard")
 
@@ -233,7 +231,6 @@ export function DashboardSidebar({
                                     onRename={onRename}
                                     onDuplicate={handleDuplicate}
                                     onDefault={onDefault}
-                                    onShare={onShare}
                                     onDelete={handleDelete}
                                     onPermission={canManageResource(permLevels, dashboard.id)
                                         ? (d) => { setPermTarget({ id: String(d.id), name: d.title }); setPermDialogOpen(true); }

@@ -9,14 +9,16 @@ import { Background, BackgroundVariant, Connection, ReactFlow, addEdge, applyEdg
 import '@xyflow/react/dist/base.css';
 import '@xyflow/react/dist/style.css';
 import cloneDeep from "lodash-es/cloneDeep";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { TabsContext } from "@/contexts/tabsContext";
 import { Controls } from "./Controls";
 import CustomEdge from "./FlowEdge";
 import FlowNode from "./FlowNode";
 import Header from "./Header";
 import NoteNode from "./NoteNode";
 import Sidebar from "./Sidebar";
+import { VersionCompareSheet } from "./VersionCompareSheet";
 import useFlowStore from "./flowStore";
 
 // 自定义组件
@@ -97,12 +99,44 @@ export default function Panne({ flow, preFlow }: { flow: WorkFlow, preFlow: stri
 
     const [showApiPage, setShowApiPage] = useState(false)
 
-    return <div className="flex flex-col h-full overflow-hidden">
+    // F051 — version compare sheet state (design.md 决策 5/6). The highlight is
+    // a DOM class on the react-flow node element, NEVER store state — writing
+    // store nodes would trip the unsaved-changes check (AC-10, design.md 坑 3).
+    const [compareOpen, setCompareOpen] = useState(false)
+    const { version: editorVersion } = useContext(TabsContext)
+    const clearCompareHighlight = useCallback(() => {
+        document.querySelectorAll('.react-flow__node.flow-node-compare-highlight')
+            .forEach(el => el.classList.remove('flow-node-compare-highlight'))
+    }, [])
+    const handleLocateNode = useCallback((nodeId: string) => {
+        if (!reactFlowInstance || !reactFlowInstance.getNode(nodeId)) return
+        reactFlowInstance.fitView({ nodes: [{ id: nodeId }], duration: 400, maxZoom: 1 })
+        clearCompareHighlight()
+        // Node DOM renders async after fitView; retry briefly (design.md 坑 4).
+        let attempts = 0
+        const apply = () => {
+            const el = document.querySelector(`.react-flow__node[data-id="${nodeId}"]`)
+            if (el) {
+                el.classList.add('flow-node-compare-highlight')
+                return
+            }
+            if (attempts++ < 20) setTimeout(apply, 100)
+        }
+        apply()
+    }, [reactFlowInstance, clearCompareHighlight])
+    const handleCompareOpenChange = useCallback((next: boolean) => {
+        setCompareOpen(next)
+        if (!next) clearCompareHighlight()
+    }, [clearCompareHighlight])
+
+    return <>
+        <div className="flex flex-col h-full overflow-hidden">
         <Header
             flow={flow}
             nodes={nodes}
             onTabChange={(type) => setShowApiPage('api' === type)}
             preFlow={preFlow}
+            onOpenCompare={() => setCompareOpen(true)}
             onImportFlow={(nodes, edges, viewport) => {
                 setNodes(nodes)
                 setEdges(edges)
@@ -199,7 +233,15 @@ export default function Panne({ flow, preFlow }: { flow: WorkFlow, preFlow: stri
         <div className={`flex flex-1 min-h-0 overflow-hidden ${showApiPage ? '' : 'hidden'}`}>
             <ApiMainPage type={'flow'} />
         </div>
+        {flow && <VersionCompareSheet
+            open={compareOpen}
+            onOpenChange={handleCompareOpenChange}
+            flowId={flow.id}
+            currentVersionId={editorVersion?.id || 0}
+            onLocateNode={handleLocateNode}
+        />}
     </div>
+    </>;
 };
 
 
@@ -249,7 +291,7 @@ const useFlow = (_reactFlowInstance, data, takeSnapshot) => {
                     {
                         ...params,
                         type: 'customEdge',
-                        // style: { stroke: "#024de3", strokeWidth: 2 },
+                        // style: { stroke: "#003E8E", strokeWidth: 2 },
                         // className: 'stroke-foreground stroke-connection',
                         animated: true
                     },

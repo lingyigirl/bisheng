@@ -273,3 +273,75 @@ export async function exportCsvDataApi(params: {
         params, paramsSerializer
     })
 }
+
+// ============ F052 智能体监控（agent-monitor tab） ============
+
+export interface AgentTransactionRecord {
+    trace_id: string;
+    app_id: string;
+    app_name: string;
+    app_type: string;
+    chat_id: string;
+    user_id: number;
+    user_name: string;
+    status: string;
+    process_time: number;
+    input_snapshot: string | null;
+    start_time: number;
+    end_time: number;
+    time: number;
+}
+
+export interface AgentTransactionListResp {
+    records: AgentTransactionRecord[];
+    total: number;
+    page: number;
+    page_size: number;
+}
+
+export interface TransactionNodeRecord {
+    node_id: string;
+    node_name: string;
+    status: "running" | "success" | "failed";
+    start_time: string | null;
+    end_time: string | null;
+    duration: number | null;
+    reason: string | null;
+    input_data: unknown;
+    output_data: unknown;
+    incomplete: boolean;
+}
+
+export interface ModelCallRecord {
+    model_id: number | null;
+    model_name: string;
+    status: string | null;
+    duration: number;
+    first_token_cost_time: number | null;
+    total_token: number | null;
+    time: number;
+}
+
+// 交易列表：一次智能体运行 = 一条交易（F052）
+export async function getAgentTransactionsApi(params: {
+    page: number;
+    page_size: number;
+    app_id?: string;
+    app_type?: string;
+    status?: string;
+    keyword?: string;
+    start_time?: number;
+    end_time?: number;
+}): Promise<AgentTransactionListResp> {
+    return await axios.get('/api/v1/telemetry/agent-transactions', { params })
+}
+
+// 交易详情：节点执行记录（start/end 已合并）
+export async function getTransactionNodesApi(traceId: string): Promise<{ trace_id: string; nodes: TransactionNodeRecord[] }> {
+    return await axios.get(`/api/v1/telemetry/agent-transactions/${traceId}/nodes`)
+}
+
+// 交易详情：该次运行内的模型调用明细（trace_id 关联）
+export async function getTransactionModelCallsApi(traceId: string): Promise<{ trace_id: string; records: ModelCallRecord[] }> {
+    return await axios.get(`/api/v1/telemetry/agent-transactions/${traceId}/model-calls`)
+}

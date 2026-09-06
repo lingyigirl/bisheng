@@ -338,7 +338,7 @@ export default function CitationDocumentPreviewDrawer({
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
-          {(!isNarrowLayout || isFullBleedMobile) && <FileText className="size-4 shrink-0 text-[#165DFF]" />}
+          {(!isNarrowLayout || isFullBleedMobile) && <FileText className="size-4 shrink-0 text-[#004DA4]" />}
           <h2
             className={cname(
               "min-w-0 truncate font-semibold text-[#1D2129]",
@@ -354,7 +354,7 @@ export default function CitationDocumentPreviewDrawer({
               onClick={handleDownload}
               disabled={!downloadFileUrl}
               className={cname(
-                "shrink-0 items-center justify-center text-[#86909C] hover:bg-[#F2F3F5] hover:text-[#335CFF] disabled:cursor-not-allowed disabled:text-[#C9CDD4]",
+                "shrink-0 items-center justify-center text-[#86909C] hover:bg-[#F2F3F5] hover:text-[#004DA4] disabled:cursor-not-allowed disabled:text-[#C9CDD4]",
                 isFullBleedMobile ? "inline-flex size-8 rounded-md" : "inline-flex size-6 rounded-[6px]",
               )}
               aria-label="下载文档"
@@ -369,7 +369,7 @@ export default function CitationDocumentPreviewDrawer({
               type="button"
               onClick={handleDownload}
               disabled={!downloadFileUrl}
-              className="inline-flex size-8 shrink-0 items-center justify-center rounded-[6px] text-[#86909C] hover:bg-[#F2F3F5] hover:text-[#335CFF] disabled:cursor-not-allowed disabled:text-[#C9CDD4]"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-[6px] text-[#86909C] hover:bg-[#F2F3F5] hover:text-[#004DA4] disabled:cursor-not-allowed disabled:text-[#C9CDD4]"
               aria-label="下载文档"
             >
               <Download className="size-4" />

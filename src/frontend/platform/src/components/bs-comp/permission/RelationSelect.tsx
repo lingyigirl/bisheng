@@ -53,7 +53,7 @@ export function RelationSelect({ value, onChange, className, disabled, options }
             key={model.id}
             value={model.id}
             showIcon={false}
-            className="mb-1 min-h-[32px] rounded-[8px] px-2 py-[5px] pr-2 text-[14px] leading-[22px] text-[#212121] focus:bg-[#E6EDFC] focus:text-[#335CFF] data-[state=checked]:bg-[#E6EDFC] data-[state=checked]:font-normal data-[state=checked]:text-[#335CFF] last:mb-0"
+            className="mb-1 min-h-[32px] rounded-[8px] px-2 py-[5px] pr-2 text-[14px] leading-[22px] text-[#212121] focus:bg-[#E8F7FF] focus:text-[#004DA4] data-[state=checked]:bg-[#E8F7FF] data-[state=checked]:font-normal data-[state=checked]:text-[#004DA4] last:mb-0"
           >
             {model.name}
           </SelectItem>

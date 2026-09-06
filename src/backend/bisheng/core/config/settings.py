@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from bisheng.core.config.gpu_manage import GpuManageConf
 from bisheng.core.config.llm import LLMConf
 from bisheng.core.config.multi_tenant import MultiTenantConf
 from bisheng.core.config.openfga import OpenFGAConf
@@ -171,18 +172,39 @@ class CeleryConf(BaseModel):
         if "telemetry_mid_user_increment" not in self.beat_schedule:
             self.beat_schedule["telemetry_mid_user_increment"] = {
                 "task": "bisheng.worker.telemetry.mid_table.sync_mid_user_increment",
-                "schedule": crontab.from_string("30 0 * * *"),  # 00:30 exec every day
+                # Every 30 min: the dashboard 总用户数/新增用户数 cards read this
+                # table, and a daily run left them up to 24h behind the source
+                # user table. The task is incremental (latest record + 1s) and
+                # cheap, so the higher cadence only matters on first backfill.
+                "schedule": crontab.from_string("*/30 * * * *"),
             }
         if "telemetry_mid_knowledge_increment" not in self.beat_schedule:
             self.beat_schedule["telemetry_mid_knowledge_increment"] = {
                 "task": "bisheng.worker.telemetry.mid_table.sync_mid_knowledge_increment",
                 "schedule": crontab.from_string("30 0 * * *"),  # 00:30 exec every day
             }
+        if "telemetry_mid_dataset_increment" not in self.beat_schedule:
+            self.beat_schedule["telemetry_mid_dataset_increment"] = {
+                "task": "bisheng.worker.telemetry.mid_table.sync_mid_dataset_increment",
+                # Same 30-min cadence as the user table: dashboard cards read this
+                # table directly and a daily run would lag the dataset count.
+                "schedule": crontab.from_string("*/30 * * * *"),
+            }
         if "telemetry_sync_mid_app_increment" not in self.beat_schedule:
             self.beat_schedule["telemetry_sync_mid_app_increment"] = {
                 "task": "bisheng.worker.telemetry.mid_table.sync_mid_app_increment",
-                "schedule": crontab.from_string("30 0 * * *"),  # 00:30 exec every day
+                # Same 30-min cadence as user/dataset tables: the dashboard
+                # 智能体数 card reads this table, and a daily run left it up
+                # to 24h behind the flow table.
+                "schedule": crontab.from_string("*/30 * * * *"),
             }
+        if "telemetry_sync_mid_agent_run_dtl" not in self.beat_schedule:
+            self.beat_schedule["telemetry_sync_mid_agent_run_dtl"] = {
+                "task": "bisheng.worker.telemetry.mid_table.sync_mid_agent_run_dtl",
+                # F046: 5-min near-realtime agent monitoring dashboard
+                "schedule": crontab.from_string("*/5 * * * *"),
+            }
+
         if "telemetry_sync_mid_user_interact_dtl" not in self.beat_schedule:
             self.beat_schedule["telemetry_sync_mid_user_interact_dtl"] = {
                 "task": "bisheng.worker.telemetry.mid_table.sync_mid_user_interact_dtl",
@@ -775,6 +797,7 @@ class Settings(BaseModel):
     sso_sync: SSOSyncConf = SSOSyncConf()
     reconcile: ReconcileConf = ReconcileConf()
     llm: LLMConf = LLMConf()
+    gpu_manage: GpuManageConf = GpuManageConf()
     in_app_message_forwarding: InAppMessageForwardingConf = InAppMessageForwardingConf()
     database_pool: DatabasePoolConf = DatabasePoolConf()
     metric_log: MetricLogConf = MetricLogConf()

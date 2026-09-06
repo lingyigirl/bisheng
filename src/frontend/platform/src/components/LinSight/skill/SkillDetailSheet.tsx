@@ -7,7 +7,7 @@ import { Button } from "@/components/bs-ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/bs-ui/sheet";
 import { toast } from "@/components/bs-ui/toast/use-toast";
 import { SkillDetail, skillApi } from "@/controllers/API/linsight";
-import { FileText, Info, Pencil, Trash2 } from "lucide-react";
+import { Download, FileText, Info, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -68,6 +68,20 @@ export function SkillDetailSheet({ detail, onOpenChange, onEdit, onDelete }: Ski
             .catch(err => toast({ variant: 'error', description: getSkillErrorMessage(err, t) }));
     };
 
+    const handleExport = () => {
+        if (!detail) return;
+        skillApi.downloadSkill(detail.name)
+            .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${detail.name}.skill.zip`;
+                link.click();
+                URL.revokeObjectURL(url);
+            })
+            .catch(err => toast({ variant: 'error', description: getSkillErrorMessage(err, t) }));
+    };
+
     if (!detail) return null;
     const isSkillMd = selectedPath === SKILL_MD;
     // Preview = rendered Markdown of the body; Source = raw SKILL.md (with frontmatter).
@@ -91,6 +105,9 @@ export function SkillDetailSheet({ detail, onOpenChange, onEdit, onDelete }: Ski
                         </SheetTitle>
                         {/* calm ghost pair — same neutral weight as the file tree; delete reddens on hover only */}
                         <div className="shrink-0 flex gap-1">
+                            <Button variant="ghost" size="sm" className="h-8 text-[#5A6172] dark:text-gray-300 hover:text-[#1F2430] dark:hover:text-gray-100 hover:bg-[#F2F4F8] dark:hover:bg-gray-800" onClick={handleExport}>
+                                <Download className="size-3.5 mr-1" />{t('skillManage.exportAction')}
+                            </Button>
                             <Button variant="ghost" size="sm" className="h-8 text-[#5A6172] dark:text-gray-300 hover:text-[#1F2430] dark:hover:text-gray-100 hover:bg-[#F2F4F8] dark:hover:bg-gray-800" onClick={() => onEdit(detail)}>
                                 <Pencil className="size-3.5 mr-1" />{t('skillManage.editAction')}
                             </Button>
@@ -104,7 +121,7 @@ export function SkillDetailSheet({ detail, onOpenChange, onEdit, onDelete }: Ski
                         <span className="min-w-0 max-w-full truncate text-xs font-mono font-medium text-[#7A8194] dark:text-gray-400 border border-[#E5E6EB] dark:border-gray-700 rounded-md px-[7px] py-[3px]" title={detail.name}>
                             ID: {detail.name}
                         </span>
-                        <span className={`shrink-0 text-xs font-medium rounded-full px-[11px] py-1 whitespace-nowrap ${detail.enabled ? 'bg-[#E6EDFC] text-[#024DE3] dark:bg-primary/20 dark:text-primary' : 'bg-[#EEF0F3] text-[#6B7280] dark:bg-gray-800 dark:text-gray-400'}`}>
+                        <span className={`shrink-0 text-xs font-medium rounded-full px-[11px] py-1 whitespace-nowrap ${detail.enabled ? 'bg-[#E8F7FF] text-[#003E8E] dark:bg-primary/20 dark:text-primary' : 'bg-[#EEF0F3] text-[#6B7280] dark:bg-gray-800 dark:text-gray-400'}`}>
                             {detail.enabled ? t('skillManage.statusEnabled') : t('skillManage.statusDisabled')}
                         </span>
                     </div>
@@ -120,7 +137,7 @@ export function SkillDetailSheet({ detail, onOpenChange, onEdit, onDelete }: Ski
                                     <div
                                         key={file.path}
                                         onClick={() => handleSelectFile(file.path)}
-                                        className={`flex items-center gap-2 px-3.5 py-2 text-[12.5px] font-mono cursor-pointer border-l-2 transition-colors ${on ? 'border-primary bg-[#EEF2FF] dark:bg-primary/10 text-[#024DE3] dark:text-primary' : 'border-transparent text-[#5A6172] dark:text-gray-400 hover:bg-[#F2F4F8] dark:hover:bg-gray-800'}`}
+                                        className={`flex items-center gap-2 px-3.5 py-2 text-[12.5px] font-mono cursor-pointer border-l-2 transition-colors ${on ? 'border-primary bg-[#E8F7FF] dark:bg-primary/10 text-[#003E8E] dark:text-primary' : 'border-transparent text-[#5A6172] dark:text-gray-400 hover:bg-[#F2F4F8] dark:hover:bg-gray-800'}`}
                                     >
                                         <FileText className={`size-3.5 shrink-0 ${on ? 'text-primary' : 'text-[#9AA0AC]'}`} />
                                         <span className="truncate min-w-0" title={file.path}>{file.path}</span>

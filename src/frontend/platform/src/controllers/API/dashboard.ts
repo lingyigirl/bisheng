@@ -289,3 +289,15 @@ export async function getFieldEnums({ dataset_code, field, page, pageSize = 20, 
         }
     });
 }
+/** F046: query agent-run / model-call logs (raw telemetry events). */
+export async function queryCallLogsApi(params: {
+    record_type?: string
+    app_id?: string
+    status?: string
+    start_time?: number
+    end_time?: number
+    page?: number
+    page_size?: number
+}): Promise<any> {
+    return await axios.get(`/api/v1/telemetry/call-logs`, { params });
+}

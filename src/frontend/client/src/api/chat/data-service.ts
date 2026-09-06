@@ -263,7 +263,7 @@ export const updateUserPlugins = (payload: t.TUpdateUserPlugins) => {
 export const getStartupConfig = (): Promise<config.TStartupConfig> => {
   // return request.get(endpoints.config());
   return Promise.resolve({
-    "appTitle": "BISHENG",
+    "appTitle": "TansunWise",
     "socialLogins": [
       "github",
       "google",

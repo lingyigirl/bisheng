@@ -9,6 +9,8 @@ import { memo, useEffect, useRef, useState } from "react"
 import { ChartType, Dashboard, DashboardComponent } from "../../types/dataConfig"
 import { ChartContainer } from "../charts/ChartContainer"
 import { QueryFilter } from "../charts/QueryFilter"
+import { AgentStatusTable } from "../dashboard/AgentStatusTable"
+import { CallLogTable } from "../dashboard/CallLogTable"
 import "./index.css"
 import { cn } from "@/utils"
 import { useTranslation } from "react-i18next"
@@ -294,6 +296,12 @@ export const ComponentWrapper = memo(({
                             isPreviewMode={isPreviewMode}
                             hasChanged={hasChange}
                         />
+                    ) : componentData.type === 'table' ? (
+                        componentData.data_config?.source === 'call_logs' ? (
+                            <CallLogTable component={componentData} />
+                        ) : (
+                            <AgentStatusTable component={componentData} isPreviewMode={isPreviewMode} />
+                        )
                     ) : (
                         <ChartContainer isDark={isDark} component={componentData} isPreviewMode={isPreviewMode} />
                     )}

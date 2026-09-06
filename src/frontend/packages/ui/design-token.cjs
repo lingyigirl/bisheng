@@ -86,8 +86,12 @@ const BRAND = {
     '400': 'hover 态', '500': '主色', '600': '按下 active', '700': '深色档',
     '800': '深色档', '900': '深色档', muted: '低饱和点缀',
   },
-  blue:  { '50': '#E8F3FF', '100': '#BEDAFF', '200': '#94BFFF', '300': '#6AA1FF', '400': '#4080FF', '500': '#165DFF', '600': '#024DE3', '700': '#0239AB', '800': '#042B80', '900': '#051D52', muted: '#5773B4' },
-  green: { '50': '#E4F1E7', '100': '#CCE4D2', '200': '#A3D2B0', '300': '#6FBA85', '400': '#3D9B5C', '500': '#169C47', '600': '#098B35', '700': '#076929', '800': '#074E20', '900': '#063216', muted: '#5C8A77' },
+  // Tansun (天阳) brand ramps, re-derived 2026-08-26 from the Tansun site
+  // theme (www.tansun.com.cn): corporate blue #004DA4 with the site's teal
+  // accent #78D5C9 as the green-theme family. Arco gradient algorithm,
+  // seed at 500 (same convention as the original ramps).
+  blue:  { '50': '#E8F7FF', '100': '#ACD3ED', '200': '#77B0DB', '300': '#498DC8', '400': '#216CB6', '500': '#004DA4', '600': '#003E8E', '700': '#003078', '800': '#002462', '900': '#001A4C', muted: '#5678B2' },
+  green: { '50': '#E8FFF8', '100': '#AEE8D8', '200': '#7AD1BD', '300': '#4FBAA4', '400': '#2BA38F', '500': '#0E8C7B', '600': '#097C70', '700': '#056C65', '800': '#025C59', '900': '#004C4C', muted: '#5C9991' },
 };
 
 /* ------------------------------------------------------------------ *
@@ -104,8 +108,8 @@ const ILLUS_STEPS = ['100', '300', '500'];
 
 const ILLUS = {
   role: { '100': '浅底 / 大色块', '300': '中间调 / 点缀', '500': '主体' },
-  blue:  { '100': '#BEDAFF', '300': '#6AA1FF', '500': '#165DFF' },
-  green: { '100': '#DDF0E8', '300': '#A2D7B5', '500': '#169C47' },
+  blue:  { '100': '#ACD3ED', '300': '#498DC8', '500': '#004DA4' },
+  green: { '100': '#D8F4EC', '300': '#7AD1BD', '500': '#0E8C7B' },
   // Grey collapses 300 onto 100 on purpose — pure white washed out on white
   // backgrounds (e.g. CrawlingIllustration's magnifier halo).
   grey:  { '100': '#E5E5E5', '300': '#E5E5E5', '500': '#BCBCBC' },
@@ -197,7 +201,7 @@ const TAG = [
   { label: '助手（橙 = warning 同值）', bg: '#FFF7E8', fg: '#FF7D00', note: 'warning tint' },
   { label: '已完成',                   bg: '#E8FFEA', fg: '#00B42A', note: 'success tint' },
   { label: '已驳回',                   bg: '#FFECE8', fg: '#F53F3F', note: 'danger tint' },
-  { label: '审批中（例外：永远蓝）',    bg: '#E8F3FF', fg: '#165DFF', note: '固定蓝，不换肤' },
+  { label: '审批中（例外：永远蓝）',    bg: '#E8F7FF', fg: '#004DA4', note: '固定蓝，不换肤' },
 ];
 
 /* ------------------------------------------------------------------ *

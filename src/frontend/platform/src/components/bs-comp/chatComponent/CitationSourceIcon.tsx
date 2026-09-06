@@ -208,8 +208,8 @@ function CitationFileTypeIcon({
         <>
           <path d="M16 0H0V16H16V0Z" fill="white" fillOpacity="0.01" />
           <path d="M16 0H0V16H16V0Z" fill="white" fillOpacity="0.01" />
-          <path d="M3.33268 1.33337H9.99935L13.3327 4.66671V14C13.3327 14.3682 13.0342 14.6667 12.666 14.6667H3.33268C2.96449 14.6667 2.66602 14.3682 2.66602 14V2.00004C2.66602 1.63185 2.96449 1.33337 3.33268 1.33337Z" stroke="#024DE3" strokeWidth="1.33333" strokeLinejoin="round" />
-          <path d="M5.33594 6.66663L6.33594 11.3333L8.0026 7.99996L9.66927 11.3333L10.6693 6.66663" stroke="#024DE3" strokeWidth="1.33333" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M3.33268 1.33337H9.99935L13.3327 4.66671V14C13.3327 14.3682 13.0342 14.6667 12.666 14.6667H3.33268C2.96449 14.6667 2.66602 14.3682 2.66602 14V2.00004C2.66602 1.63185 2.96449 1.33337 3.33268 1.33337Z" stroke="#003E8E" strokeWidth="1.33333" strokeLinejoin="round" />
+          <path d="M5.33594 6.66663L6.33594 11.3333L8.0026 7.99996L9.66927 11.3333L10.6693 6.66663" stroke="#003E8E" strokeWidth="1.33333" strokeLinecap="round" strokeLinejoin="round" />
         </>
       );
     }

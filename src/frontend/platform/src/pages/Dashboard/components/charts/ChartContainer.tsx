@@ -42,7 +42,6 @@ export function ChartContainer({ isPreviewMode, isDark, component }: ChartContai
   // Refetch when refresh trigger changes
   useEffect(() => {
     if (refreshTrigger > 0) {
-      console.log('refreshInfo :>> ', component, refreshInfo);
       refetch()
     }
   }, [refreshTrigger, refetch])

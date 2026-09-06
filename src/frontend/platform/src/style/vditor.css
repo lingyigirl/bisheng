@@ -56,14 +56,14 @@
 }
 .linsight-vditor .vditor-reset blockquote{
 	margin: 0 0 14px 0;
-	border-left: 2px solid #3370ff;
+	border-left: 2px solid #216CB6;
 }
 .linsight-vditor  .vditor-reset ul {
 	list-style-type: none;
 }
 .linsight-vditor .vditor-reset ul > li:not(:has(input[type="checkbox"]))::before {
   content: "•";
-  color: #3370ff;
+  color: #216CB6;
   display: inline-block;
   margin-left: -20px;
   margin-right: 20px;
@@ -132,6 +132,6 @@
     white-space: pre-wrap;
     hyphens: auto;
     word-break: break-word;
-    color: #3370ff;
+    color: #216CB6;
     text-decoration: none;
 }

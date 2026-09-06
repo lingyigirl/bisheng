@@ -92,7 +92,7 @@ const AutoPagination = ({
                     <PaginationItem key="total">
                         <span className="text-sm text-[#86909c] mr-2 whitespace-nowrap">
                             {t('pagination.totalPrefix', { ns: 'bs' })}
-                            <span className="text-[#335CFF]">{total}</span>
+                            <span className="text-[#004DA4]">{total}</span>
                             {t('pagination.totalSuffixWithPageSize', { ns: 'bs', pageSize })}
                         </span>
                     </PaginationItem>

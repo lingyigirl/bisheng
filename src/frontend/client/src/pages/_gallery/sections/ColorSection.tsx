@@ -142,18 +142,20 @@ function PaletteRow({ title, swatches }: { title?: ReactNode; swatches: Swatch[]
  * Spec data
  * ------------------------------------------------------------------ */
 
-/** §1.1 brand ramp — blue/green documentation values. */
+/** §1.1 brand ramp — blue/green documentation values.
+ *  Tansun (天阳) ramps, re-derived 2026-08-26: corporate blue seed #004DA4,
+ *  teal seed #0E8C7B (site accent #78D5C9 at 200). */
 const BRAND_RAMP = [
-  { step: '50', blue: '#E8F3FF', green: '#E4F1E7', usage: '浅底一档：选中背景；按钮 filled 底 / outlined·text hover' },
-  { step: '100', blue: '#BEDAFF', green: '#CCE4D2', usage: '浅底二档：filled hover / outlined·text 触屏 active' },
-  { step: '200', blue: '#94BFFF', green: '#A3D2B0', usage: '浅底三档：filled 触屏 active' },
-  { step: '300', blue: '#6AA1FF', green: '#6FBA85', usage: '浅色过渡档 · 暂无固定用途' },
-  { step: '400', blue: '#4080FF', green: '#3D9B5C', usage: 'hover（比主色亮一档）' },
-  { step: '500', blue: '#165DFF', green: '#169C47', usage: '主色（= --brand-main）' },
-  { step: '600', blue: '#024DE3', green: '#098B35', usage: 'active / 按下（深一档）' },
-  { step: '700', blue: '#0239AB', green: '#076929', usage: '深色档 · 暂无固定用途' },
-  { step: '800', blue: '#042B80', green: '#074E20', usage: '深色档 · 暂无固定用途' },
-  { step: '900', blue: '#051D52', green: '#063216', usage: '深色档 · 暂无固定用途' },
+  { step: '50', blue: '#E8F7FF', green: '#E8FFF8', usage: '浅底一档：选中背景；按钮 filled 底 / outlined·text hover' },
+  { step: '100', blue: '#ACD3ED', green: '#AEE8D8', usage: '浅底二档：filled hover / outlined·text 触屏 active' },
+  { step: '200', blue: '#77B0DB', green: '#7AD1BD', usage: '浅底三档：filled 触屏 active' },
+  { step: '300', blue: '#498DC8', green: '#4FBAA4', usage: '浅色过渡档 · 暂无固定用途' },
+  { step: '400', blue: '#216CB6', green: '#2BA38F', usage: 'hover（比主色亮一档）' },
+  { step: '500', blue: '#004DA4', green: '#0E8C7B', usage: '主色（= --brand-main）' },
+  { step: '600', blue: '#003E8E', green: '#097C70', usage: 'active / 按下（深一档）' },
+  { step: '700', blue: '#003078', green: '#056C65', usage: '深色档 · 暂无固定用途' },
+  { step: '800', blue: '#002462', green: '#025C59', usage: '深色档 · 暂无固定用途' },
+  { step: '900', blue: '#001A4C', green: '#004C4C', usage: '深色档 · 暂无固定用途' },
 ];
 
 /** §2.1 primitive Arco gray ramp — rendered live from --arco-gray-N. */
@@ -244,10 +246,10 @@ const FUNCTIONAL: { title: string; swatches: Swatch[] }[] = [
   {
     title: '链接 / 信息 Info（= 品牌色，跟随主题）',
     swatches: [
-      { label: '主色', hex: '#165DFF', primary: true, accent: '#024DE3', usage: 'blue-500' },
-      { label: 'hover', hex: '#4080FF', usage: 'blue-400' },
-      { label: 'active', hex: '#024DE3', usage: 'blue-600' },
-      { label: '浅底', hex: '#E8F3FF', usage: 'blue-50' },
+      { label: '主色', hex: '#004DA4', primary: true, accent: '#003E8E', usage: 'blue-500' },
+      { label: 'hover', hex: '#216CB6', usage: 'blue-400' },
+      { label: 'active', hex: '#003E8E', usage: 'blue-600' },
+      { label: '浅底', hex: '#E8F7FF', usage: 'blue-50' },
     ],
   },
 ];
@@ -296,7 +298,7 @@ export function ColorSection() {
                 accent: BRAND_RAMP.find((x) => x.step === '700')!.blue,
                 usage: BRAND_ROLE[r.step],
               })),
-              { label: 'muted', hex: '#5773B4', usage: BRAND_ROLE.muted },
+              { label: 'muted', hex: '#5678B2', usage: BRAND_ROLE.muted },
             ]}
           />
           <PaletteRow
@@ -309,7 +311,7 @@ export function ColorSection() {
                 accent: BRAND_RAMP.find((x) => x.step === '700')!.green,
                 usage: BRAND_ROLE[r.step],
               })),
-              { label: 'muted', hex: '#5C8A77', usage: BRAND_ROLE.muted },
+              { label: 'muted', hex: '#5C9991', usage: BRAND_ROLE.muted },
             ]}
           />
         </div>
@@ -364,7 +366,7 @@ export function ColorSection() {
             <TagChip className="bg-warning-tint text-warning">助手（橙 = warning 同值）</TagChip>
             <TagChip className="bg-success-tint text-success">已完成</TagChip>
             <TagChip className="bg-danger-tint text-danger">已驳回</TagChip>
-            <TagChip style={{ background: '#E8F3FF', color: '#165DFF' }}>审批中（例外：永远蓝）</TagChip>
+            <TagChip style={{ background: '#E8F7FF', color: '#004DA4' }}>审批中（例外：永远蓝）</TagChip>
           </ExampleCard>
         </ExampleGrid>
       </ExampleGroup>

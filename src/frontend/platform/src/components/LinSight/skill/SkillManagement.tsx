@@ -191,7 +191,7 @@ export function SkillManagement({ scopeVersion = 0, entryEnabled = false, onEntr
                             >
                                 <TableCell className="font-medium">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="size-[34px] shrink-0 rounded-[9px] grid place-items-center text-primary bg-gradient-to-br from-[#EEF2FF] to-[#E2EAFF]">
+                                        <div className="size-[34px] shrink-0 rounded-[9px] grid place-items-center text-primary bg-gradient-to-br from-[#E8F7FF] to-[#E2EAFF]">
                                             <Sparkles className="size-[17px]" />
                                         </div>
                                         <span className="truncate min-w-0">{skill.display_name}</span>

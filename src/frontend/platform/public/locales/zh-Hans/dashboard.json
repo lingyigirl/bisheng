@@ -414,5 +414,20 @@
   "model_name": "模型名称",
   "total_token": "Token消耗量",
   "like_count": "点赞次数",
-  "dislike_count": "点踩次数"
+  "dislike_count": "点踩次数",
+  "callLogType": "记录类型",
+  "callLogStatus": "状态",
+  "callLogUser": "用户",
+  "callLogDuration": "耗时",
+  "callLogTime": "时间",
+  "callLogAll": "全部",
+  "callLogAgentRun": "智能体运行",
+  "callLogModelCall": "模型调用",
+  "callLogSuccess": "成功",
+  "callLogFailed": "失败",
+  "callLogTotal": "共 {{total}} 条",
+  "callLogPrev": "上一页",
+  "callLogNext": "下一页",
+  "callLogAgentStatus": "智能体运行状态",
+  "callLogLastActive": "最后活跃"
 }

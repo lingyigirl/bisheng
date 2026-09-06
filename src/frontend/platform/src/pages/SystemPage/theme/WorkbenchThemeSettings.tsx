@@ -16,8 +16,8 @@ import { cname } from "@/components/bs-ui/utils";
 // Preset accent colors must mirror `.theme-green` / default `--primary` in the
 // client app's style.css, so the preview here matches what the workbench renders.
 const PRESETS: Array<{ value: WorkbenchTheme; color: string; labelKey: string }> = [
-    { value: "blue", color: "#165DFF", labelKey: "theme.workbenchThemeBlue" },
-    { value: "green", color: "#187C54", labelKey: "theme.workbenchThemeGreen" },
+    { value: "blue", color: "#004DA4", labelKey: "theme.workbenchThemeBlue" },
+    { value: "green", color: "#0E8C7B", labelKey: "theme.workbenchThemeGreen" },
 ];
 
 /** Strip linsightAgentName (server ignores it; BrandConfigUpdate omits it). */

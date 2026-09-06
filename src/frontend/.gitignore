@@ -34,3 +34,6 @@ yarn.lock
 
 # dead-key scan output (regenerable working artifact, not tracked)
 scripts/i18n-dead-keys-report.json
+
+# Local dev TLS certs (scripts/dev-cert.sh)
+certs/

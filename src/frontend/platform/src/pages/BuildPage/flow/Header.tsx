@@ -10,7 +10,7 @@ import { Button } from "@/components/bs-ui/button";
 import ActionButton from "@/components/bs-ui/button/actionButton";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/bs-ui/dialog";
 import TextInput from "@/components/bs-ui/input/textInput";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/bs-ui/popover";
+import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/bs-ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/bs-ui/radio";
 import { useToast } from "@/components/bs-ui/toast/use-toast";
 import { darkContext } from "@/contexts/darkContext";
@@ -22,7 +22,7 @@ import { FlowVersionItem } from "@/types/flow";
 import { flowVersionCompatible } from "@/util/flowCompatible";
 import { findParallelNodes, importFlow } from "@/util/flowUtils";
 import { cloneDeep, isEqual } from "lodash-es";
-import { ChevronLeft, EllipsisVertical, PencilLineIcon, Play, Shield, ShieldCheck } from "lucide-react";
+import { ChevronLeft, EllipsisVertical, GitCompareArrows, PencilLineIcon, Play, Shield, ShieldCheck } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { unstable_useBlocker as useBlocker, useLocation, useNavigate } from "react-router-dom";
@@ -40,7 +40,7 @@ const APP_HEADER_PERMISSION_IDS = [
     'manage_app_viewer',
 ]
 
-const Header = ({ flow, nodes, onTabChange, preFlow, onPreFlowChange, onImportFlow }) => {
+const Header = ({ flow, nodes, onTabChange, preFlow, onPreFlowChange, onImportFlow, onOpenCompare }) => {
     const { message } = useToast()
     const { dark } = useContext(darkContext);
     const testRef = useRef(null)
@@ -422,6 +422,17 @@ const Header = ({ flow, nodes, onTabChange, preFlow, onPreFlowChange, onImportFl
                                         </div>
                                     ))}
                                 </RadioGroup>
+                                {/* F051 — entry to the version compare sheet */}
+                                <PopoverClose asChild>
+                                    <button
+                                        type="button"
+                                        onClick={onOpenCompare}
+                                        className="flex w-full items-center gap-2 border-t px-4 py-3 text-sm text-muted-foreground hover:bg-gray-100 dark:hover:bg-gray-700"
+                                    >
+                                        <GitCompareArrows className="size-4" />
+                                        {t('skills.compareVersions', { ns: 'bs' })}
+                                    </button>
+                                </PopoverClose>
                             </div>
                         )}
                     >{t('skills.saveVersion', { ns: 'bs' })}</ActionButton>

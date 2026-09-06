@@ -81,7 +81,7 @@ export default function CustomEdge({
                         markerHeight="6"
                         orient="auto-start-reverse"
                     >
-                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#024de3" />
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#003E8E" />
                     </marker>
                 </defs>
             </svg>
@@ -89,7 +89,7 @@ export default function CustomEdge({
             <BaseEdge
                 id={id}
                 path={edgePath}
-                style={{ stroke: '#024de3', strokeWidth: selected ? 2 : 1, strokeDasharray: selected && 0 }}
+                style={{ stroke: '#003E8E', strokeWidth: selected ? 2 : 1, strokeDasharray: selected && 0 }}
                 markerEnd="url(#arrow)"
             />
             {/* 在连线中间添加一个加号按钮 */}

@@ -1,6 +1,8 @@
 module.exports = {
   roots: ['<rootDir>/src'],
-  testEnvironment: 'jsdom',
+  // Custom environment: disables the canvas native binding (missing on dev
+  // machines) before jsdom loads — see test/jsdomEnvironment.js.
+  testEnvironment: '<rootDir>/test/jsdomEnvironment.js',
   testEnvironmentOptions: {
     url: 'http://localhost:3080',
   },
@@ -23,6 +25,9 @@ module.exports = {
   //   },
   // },
   moduleNameMapper: {
+    // jsdom's optional `canvas` dependency has no native binding in this
+    // environment — route it to jest-canvas-mock (already used in setupTests).
+    '^canvas$': 'jest-canvas-mock',
     '\\.(css)$': 'identity-obj-proxy',
     '\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$':
       'jest-file-loader',

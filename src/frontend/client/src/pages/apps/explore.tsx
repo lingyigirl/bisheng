@@ -1,105 +1,110 @@
+// @ts-strict-ignore
+"use client"
+
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ArrowLeft } from "lucide-react"
-import { LoadingIcon } from "~/components/ui/icon/Loading"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useToastContext } from "~/Providers"
-import { getChatOnlineApi, getUncategorized } from "~/api/apps"
+import {
+    addFavoriteApi,
+    getFavoritesApi,
+    getHomeLabelApi,
+    getPlazaAppsApi,
+    removeFavoriteApi,
+} from "~/api/apps"
 import { NotificationSeverity } from "~/common"
 import { Button } from "~/components/ui/Button"
+import { LoadingIcon } from "~/components/ui/icon/Loading"
 import { EmptyStateIllustration } from "~/components/illustrations"
 import { useLocalize, useMediaQuery } from "~/hooks"
 import { useGetBsConfig } from "~/hooks/queries/data-provider"
 import { cn, copyText } from "~/utils"
 import { getAppShareUrl } from './appUtils'
 import { AgentCard } from './components/AgentCard'
-import { AgentNavigation } from './components/AgentNavigation'
 import { AppSearchBar } from './components/AppSearchBar'
+import { FavoritesSection } from './components/plaza/FavoritesSection'
+import { PlazaFilters, type PlazaFilterState } from './components/plaza/PlazaFilters'
+import { PreviewDrawer, type PlazaApp } from './components/plaza/PreviewDrawer'
+import { RecentSection } from './components/plaza/RecentSection'
 
 const appFlowOriginKey = (flowId: string) => `app-flow-origin:${flowId}`;
 const appLastOriginKey = 'app-last-origin';
 
+const PAGE_SIZE = 20
+
+interface PlazaPage {
+    data: { data: PlazaApp[]; total: number }
+}
+
+interface FavoritesPayload {
+    data: { list: PlazaApp[]; total: number }
+}
+
 export default function ExplorePlaza() {
-    // Null until the navigation has its tags and can say which tab is the
-    // default; fetching before that would show one tab's apps and then swap.
-    const [activeTabId, setActiveTabId] = useState<number | string | null>(null)
-    const [searchQuery, setSearchQuery] = useState("")
-    const [agents, setAgents] = useState<any[]>([])
-    const [loading, setLoading] = useState(false)
-    const [loadingMore, setLoadingMore] = useState(false)
-    const [refreshTrigger, setRefreshTrigger] = useState(0)
-
-    // --- 新增滚动加载相关状态 ---
-    const [page, setPage] = useState(1);
-    const [hasMore, setHasMore] = useState(true);
-    const loaderRef = useRef<HTMLDivElement>(null);
-    const loadMoreLockRef = useRef(false);
-    const pageSize = 20;
-
+    const localize = useLocalize()
     const navigate = useNavigate()
     const { showToast } = useToastContext()
-    const localize = useLocalize()
+    const queryClient = useQueryClient()
     const { data: bsConfig } = useGetBsConfig()
     const isAtLeast768 = useMediaQuery('(min-width: 768px)')
     const isAtLeast1024 = useMediaQuery('(min-width: 1024px)')
-    const bannerTitle = bsConfig?.applicationCenterWelcomeMessage?.trim() || localize('com_app_center_welcome')
+
+    const bannerTitle = bsConfig?.applicationCenterWelcomeMessage?.trim() || localize('com_app_plaza_title')
     const bannerDescription = bsConfig?.applicationCenterDescription?.trim() || localize('com_app_center_description')
 
     const exploreCols = useMemo(() => {
-        // md: 2 列（与应用中心一致）；lg+: 3 列（应用中心 4 列减 1）
         if (isAtLeast1024) return 3;
         if (isAtLeast768) return 2;
         return 1;
     }, [isAtLeast768, isAtLeast1024]);
 
-    // Modify Fetch Function
-    const fetchAgents = useCallback(async (query: string, categoryId: number | string, currentPage: number, isAppend: boolean) => {
-        if (loading || loadingMore) return;
-        if (isAppend) setLoadingMore(true);
-        else setLoading(true);
-        try {
-            const result = categoryId === 'uncategorized'
-                ? await getUncategorized(currentPage, pageSize, query)
-                : await getChatOnlineApi(currentPage, query, categoryId as number, pageSize);
+    // --- filter state -------------------------------------------------------
+    const [searchQuery, setSearchQuery] = useState("")
+    const [filters, setFilters] = useState<PlazaFilterState>({ flowType: null, tagIds: [], sortBy: "recent" })
+    const isDefaultView = !searchQuery && filters.flowType === null && filters.tagIds.length === 0
 
-            const pageData = (result as any).data || [];
+    const applyFilterPatch = useCallback((patch: Partial<PlazaFilterState>) => {
+        setFilters(prev => ({ ...prev, ...patch }))
+    }, [])
 
-            const formattedResults = pageData.map((item: any) => ({
-                ...item,
-                id: item.id || item.agentId || item.flowId,
-                // Normalize so the shared AgentCard (which reads flow_type) renders correctly.
-                flow_type: item.flow_type ?? item.type,
-            }));
+    // --- plaza list (react-query infinite) ----------------------------------
+    const plazaQuery = useInfiniteQuery({
+        queryKey: ["plaza-apps", searchQuery, filters.flowType, filters.tagIds, filters.sortBy],
+        queryFn: ({ pageParam = 1 }) =>
+            getPlazaAppsApi({
+                keyword: searchQuery || undefined,
+                flow_types: filters.flowType !== null ? [filters.flowType] : undefined,
+                tag_ids: filters.tagIds.length > 0 ? filters.tagIds : undefined,
+                sort_by: filters.sortBy,
+                page: pageParam,
+                limit: PAGE_SIZE,
+            }) as Promise<PlazaPage>,
+        getNextPageParam: (lastPage: PlazaPage, allPages: PlazaPage[]) => {
+            const total = lastPage?.data?.total ?? 0
+            const loaded = allPages.reduce((n, p) => n + (p?.data?.data?.length ?? 0), 0)
+            return loaded < total ? allPages.length + 1 : undefined
+        },
+        staleTime: 30_000,
+    })
 
-            setAgents(prev => isAppend ? [...prev, ...formattedResults] : formattedResults);
-            setHasMore(pageData.length >= pageSize);
-        } catch (error) {
-            console.error("Failed to fetch agents:", error);
-            if (!isAppend) setAgents([]);
-        } finally {
-            if (isAppend) setLoadingMore(false);
-            else setLoading(false);
-        }
-    }, [loading, loadingMore]);
+    const agents = useMemo(
+        () => plazaQuery.data?.pages.flatMap((p) => p?.data?.data ?? []) ?? [],
+        [plazaQuery.data],
+    )
+    const hasMore = plazaQuery.hasNextPage ?? false
+    const loading = plazaQuery.isLoading
+    const loadingMore = plazaQuery.isFetchingNextPage
 
-    useEffect(() => {
-        if (activeTabId === null) return;
-        setPage(1);
-        setHasMore(true);
-        loadMoreLockRef.current = false;
-        fetchAgents(searchQuery, activeTabId, 1, false);
-    }, [searchQuery, activeTabId, refreshTrigger]);
-
-    useEffect(() => {
-        if (page > 1 && activeTabId !== null) {
-            fetchAgents(searchQuery, activeTabId, page, true);
-        }
-    }, [page]);
+    // --- infinite scroll trigger --------------------------------------------
+    const loaderRef = useRef<HTMLDivElement>(null)
+    const loadMoreLockRef = useRef(false)
 
     useEffect(() => {
         if (!loadingMore) {
-            loadMoreLockRef.current = false;
+            loadMoreLockRef.current = false
         }
-    }, [loadingMore]);
+    }, [loadingMore])
 
     useEffect(() => {
         const observer = new IntersectionObserver((entries) => {
@@ -112,7 +117,7 @@ export default function ExplorePlaza() {
                 !loadMoreLockRef.current
             ) {
                 loadMoreLockRef.current = true;
-                setPage(prev => prev + 1);
+                plazaQuery.fetchNextPage();
             }
         }, { threshold: 0, rootMargin: '400px 0px' });
 
@@ -121,33 +126,84 @@ export default function ExplorePlaza() {
         }
 
         return () => observer.disconnect();
-    }, [loading, loadingMore, hasMore]);
+    }, [loading, loadingMore, hasMore, plazaQuery.fetchNextPage]);
 
-    // The spinner also covers the wait for the navigation's tags, which decide
-    // the default tab. `loading` itself must stay false until a request is
-    // actually in flight — fetchAgents treats it as a re-entry guard and would
-    // skip the very first fetch, leaving the spinner up for good.
-    const showLoading = loading || activeTabId === null;
+    // --- tags for the filter chips ------------------------------------------
+    const { data: tagsResponse } = useQuery({
+        queryKey: ["plaza-tags"],
+        queryFn: () => getHomeLabelApi(),
+        staleTime: 5 * 60_000,
+    })
+    const tags: { id: number; name: string }[] =
+        (tagsResponse as unknown as { data: { id: number; name: string }[] } | undefined)?.data ?? []
 
-    const handleCardClick = (agent: any) => {
+    // --- favorites ----------------------------------------------------------
+    const { data: favoritesResponse } = useQuery({
+        queryKey: ["plaza-favorites", 1],
+        queryFn: () => getFavoritesApi(1, 50),
+        staleTime: 30_000,
+    })
+    const favoriteIds = useMemo(
+        () => new Set(((favoritesResponse as unknown as FavoritesPayload | undefined)?.data?.list ?? []).map((a) => Number(a.id))),
+        [favoritesResponse],
+    )
+
+    const favoriteMutation = useMutation({
+        mutationFn: ({ agent, favorited }: { agent: PlazaApp; favorited: boolean }) =>
+            favorited
+                ? removeFavoriteApi(agent.id, agent.flow_type ?? 5)
+                : addFavoriteApi(agent.id, agent.flow_type ?? 5),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ["plaza-favorites"] })
+        },
+        onError: () => {
+            showToast?.({
+                message: localize('com_ui_error'),
+                severity: NotificationSeverity.ERROR,
+            })
+        },
+    })
+
+    const handleToggleFavorite = useCallback(
+        (agent: PlazaApp) => {
+            favoriteMutation.mutate({
+                agent,
+                favorited: favoriteIds.has(Number(agent.id)),
+            })
+        },
+        [favoriteMutation, favoriteIds],
+    )
+
+    // --- preview drawer -----------------------------------------------------
+    const [previewAgent, setPreviewAgent] = useState<PlazaApp | null>(null)
+
+    const handleOpenPreview = useCallback((agent: PlazaApp) => {
+        setPreviewAgent(agent)
+    }, [])
+
+    const handleCardClick = (agent: PlazaApp) => {
+        handleOpenPreview(agent)
+    }
+
+    const handleStartChat = (agent: PlazaApp) => {
         const flowId = agent.id
-        const flowType = agent.flow_type || agent.type
+        const flowType = agent.flow_type
         try {
             sessionStorage.setItem(appFlowOriginKey(String(flowId)), 'explore');
             sessionStorage.setItem(appLastOriginKey, 'explore');
         } catch {
             // ignore storage failures
         }
-        // Enter without chatId — AppChatEntry will resolve to most recent conversation,
-        // or create a new one if the user has no conversations for this app yet.
+        // Enter without chatId — AppChatEntry resolves the most recent conversation,
+        // or creates a new one. The use_app pre-check happens in the appChat init flow.
         navigate(`/app/${flowId}/${flowType}?from=explore&returnTo=%2Fapps%2Fexplore`, {
             state: { appSurfaceReturn: '/apps/explore' as const },
         });
     }
 
-    const handleShare = async (agent: any) => {
+    const handleShare = async (agent: PlazaApp) => {
         if (agent.can_share !== true) return;
-        const shareUrl = getAppShareUrl(agent.id, agent.flow_type || agent.type);
+        const shareUrl = getAppShareUrl(agent.id, agent.flow_type ?? 10);
         try {
             await copyText(shareUrl);
             showToast?.({
@@ -166,21 +222,11 @@ export default function ExplorePlaza() {
         <div
             className={cn(
                 'flex h-full min-h-0 w-full flex-1 flex-col items-center overflow-hidden bg-white',
-                // Mobile explore is not innerScrollShell in MainLayout (h-auto shell) and
-                // html/body scrolling is globally disabled (WebView bottom-strip fix in
-                // index.html), so h-full/flex-1 collapse to content height and nothing can
-                // scroll. Pin the page to one viewport tall on mobile so <main>'s
-                // overflow-y-auto becomes the scroller (also gives empty/loading states a
-                // real height to center against).
                 'max-[767px]:h-[100dvh]',
             )}
         >
-            {/* 顶部横幅：与知识广场一致 — 跟随主题的品牌色渐变底（brand-50 → white） */}
-            <div
-                className="relative w-full shrink-0 overflow-hidden border-b border-[#F0F1F5] bg-blue-500/[0.05]"
-            >
-                {/* Decorative scattered icons — kept from the original banner art, recolored
-                    via a brand-tinted mask layer so they follow the blue ⇄ green theme. */}
+            {/* Banner */}
+            <div className="relative w-full shrink-0 overflow-hidden border-b border-[#F0F1F5] bg-blue-500/[0.05]">
                 <div
                     aria-hidden
                     className="pointer-events-none absolute inset-0 bg-blue-200"
@@ -214,68 +260,87 @@ export default function ExplorePlaza() {
                 </div>
             </div>
 
-            {/* 过滤栏：桌面与原先一致；窄屏搜索独占一行（移动端始终展开搜索） */}
-            <div className="w-full max-w-[1000px] shrink-0 flex items-center justify-between z-10 px-5 py-5 max-[576px]:flex-col max-[576px]:items-stretch max-[576px]:gap-3">
-                <div className="order-2 max-[576px]:order-1 max-[576px]:w-full min-w-0 min-[577px]:shrink-0">
+            {/* Search + filters */}
+            <div className="z-10 w-full max-w-[1000px] shrink-0 px-5 py-4">
+                <div className="mb-3">
                     <AppSearchBar query={searchQuery} onSearch={setSearchQuery} />
                 </div>
-                <div className="order-1 max-[576px]:order-2 w-full min-w-0">
-                    <AgentNavigation onCategoryChange={setActiveTabId} onRefresh={() => setRefreshTrigger(prev => prev + 1)} />
-                </div>
+                <PlazaFilters value={filters} tags={tags} onChange={applyFilterPatch} />
             </div>
 
-            {/* 智能体网格：滚动区占满整宽（滚动条贴最右），内容居中约束在 1000px */}
+            {/* Grid + sections */}
             <main className="flex min-h-0 w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto scrollbar-os">
-                <div className="flex w-full max-w-[1000px] flex-1 flex-col px-5 pb-5">
-                <div
-                    className="grid w-full items-start gap-4"
-                    style={{ gridTemplateColumns: `repeat(${exploreCols}, minmax(0, 1fr))` }}
-                >
-                    {agents.map((agent, idx) => (
-                        <AgentCard
-                            key={`${agent.id}-${idx}`}
-                            agent={agent}
-                            onStartChat={handleCardClick}
-                            onShare={handleShare}
-                        />
-                    ))}
-                </div>
+                <div className="flex w-full max-w-[1000px] flex-1 flex-col gap-6 px-5 pb-5">
+                    {isDefaultView && (
+                        <>
+                            <FavoritesSection onOpenPreview={handleOpenPreview} />
+                            <RecentSection onOpenPreview={handleOpenPreview} />
+                        </>
+                    )}
 
-                {/* 滚动触发器 & 加载状态显示 */}
-                <div
-                    ref={loaderRef}
-                    className={cn(
-                        'flex w-full flex-col items-center',
-                        // Empty/loading: fill the region and place content via flex spacers at a
-                        // region-relative height (not viewport vh): ~40% on mobile, ~45% on PC.
-                        (showLoading || agents.length === 0) ? 'flex-1' : 'py-10',
-                    )}
-                >
-                    {(showLoading || agents.length === 0) && <div className="flex-[8] md:flex-[9]" aria-hidden />}
-                    {showLoading ? (
-                        <div className="flex flex-col items-center gap-3 text-blue-500">
-                            <LoadingIcon className="size-20 text-primary" />
-                            <span className="text-sm font-['PingFang_SC'] text-text-3">{localize('com_app_explore_loading_more')}</span>
-                        </div>
-                    ) : loadingMore ? (
-                        <div className="flex items-center gap-2 text-blue-500">
-                            <LoadingIcon className="size-6 text-primary" />
-                            <span className="text-sm font-['PingFang_SC'] text-text-3">{localize('com_app_explore_loading_more')}</span>
-                        </div>
-                    ) : null}
-                    {!hasMore && agents.length > 0 && (
-                        <p className="text-[#a9aeb8] text-[12px] font-['PingFang_SC'] mt-4">{localize('com_app_explore_end_of_list')}</p>
-                    )}
-                    {!showLoading && agents.length === 0 && (
-                        <div className="flex flex-col items-center">
-                            <EmptyStateIllustration className="size-[120px] mb-4" />
-                            <p className="text-[#a9aeb8] text-[14px] font-['PingFang_SC']">{localize('com_app_explore_no_agents')}</p>
-                        </div>
-                    )}
-                    {(showLoading || agents.length === 0) && <div className="flex-[12] md:flex-[11]" aria-hidden />}
-                </div>
+                    <div
+                        className="grid w-full items-start gap-4"
+                        style={{ gridTemplateColumns: `repeat(${exploreCols}, minmax(0, 1fr))` }}
+                    >
+                        {agents.map((agent, idx) => (
+                            <div key={`${agent.id}-${idx}`} className="relative">
+                                {typeof agent?.stats?.recent_7d_visits === 'number' && (
+                                    <span className="pointer-events-none absolute right-2 top-2 z-10 rounded-md bg-blue-500/[0.07] px-1.5 py-0.5 text-caption text-blue-500">
+                                        {localize('com_app_plaza_visits_7d')} {agent.stats.recent_7d_visits}
+                                    </span>
+                                )}
+                                <AgentCard
+                                    agent={agent}
+                                    onStartChat={handleCardClick}
+                                    onShare={handleShare}
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Load trigger & states */}
+                    <div
+                        ref={loaderRef}
+                        className={cn(
+                            'flex w-full flex-col items-center',
+                            (loading || agents.length === 0) ? 'flex-1' : 'py-10',
+                        )}
+                    >
+                        {(loading || agents.length === 0) && <div className="flex-[8] md:flex-[9]" aria-hidden />}
+                        {loading ? (
+                            <div className="flex flex-col items-center gap-3 text-blue-500">
+                                <LoadingIcon className="size-20 text-primary" />
+                                <span className="text-sm font-['PingFang_SC'] text-text-3">{localize('com_app_explore_loading_more')}</span>
+                            </div>
+                        ) : loadingMore ? (
+                            <div className="flex items-center gap-2 text-blue-500">
+                                <LoadingIcon className="size-6 text-primary" />
+                                <span className="text-sm font-['PingFang_SC'] text-text-3">{localize('com_app_explore_loading_more')}</span>
+                            </div>
+                        ) : null}
+                        {!hasMore && agents.length > 0 && (
+                            <p className="mt-4 text-[12px] font-['PingFang_SC'] text-[#a9aeb8]">{localize('com_app_explore_end_of_list')}</p>
+                        )}
+                        {!loading && agents.length === 0 && (
+                            <div className="flex flex-col items-center">
+                                <EmptyStateIllustration className="mb-4 size-[120px]" />
+                                <p className="text-[14px] font-['PingFang_SC'] text-[#a9aeb8]">{localize('com_app_explore_no_agents')}</p>
+                            </div>
+                        )}
+                        {(loading || agents.length === 0) && <div className="flex-[12] md:flex-[11]" aria-hidden />}
+                    </div>
                 </div>
             </main>
+
+            {/* Preview drawer */}
+            <PreviewDrawer
+                agent={previewAgent}
+                open={!!previewAgent}
+                onOpenChange={(open) => { if (!open) setPreviewAgent(null) }}
+                isFavorited={previewAgent ? favoriteIds.has(Number(previewAgent.id)) : false}
+                onToggleFavorite={handleToggleFavorite}
+                onStartChat={handleStartChat}
+            />
         </div>
     )
 }

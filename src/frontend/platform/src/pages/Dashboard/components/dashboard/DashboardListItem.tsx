@@ -23,7 +23,6 @@ interface DashboardListItemProps {
     onRename: (id: string, newTitle: string) => void
     onDuplicate: (dashboard: Dashboard) => void
     onDefault: (id: string) => void
-    onShare: (id: string) => void
     onDelete: (id: string) => void
     onPermission?: (dashboard: Dashboard) => void
     permissionBadge?: React.ReactNode
@@ -35,7 +34,6 @@ export function DashboardListItem({
     onSelect,
     onRename,
     onDuplicate,
-    onShare,
     onDefault,
     onDelete,
     onPermission,
@@ -141,7 +139,6 @@ export function DashboardListItem({
                     {appConfig.isDashboardPro && <DropdownMenuItem disabled={dashboard.is_default} onClick={() => onDefault(dashboard.id)}>{dashboard.is_default ? t('alreadyDefault') : t('setAsDefault')}</DropdownMenuItem>}
                     {dashboard.write && appConfig.isDashboardPro && <DropdownMenuItem onClick={() => onDuplicate(dashboard)}>{t('duplicate')}</DropdownMenuItem>}
                     {onPermission && <DropdownMenuItem onClick={() => onPermission(dashboard)}>{t('managePermission', { ns: 'permission' })}</DropdownMenuItem>}
-                    <DropdownMenuItem onClick={() => onShare(dashboard.id)}>{t('share')}</DropdownMenuItem>
                     {dashboard.write && appConfig.isDashboardPro && <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => onDelete(dashboard.id)}>
                         {t('delete')}
                     </DropdownMenuItem>}

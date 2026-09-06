@@ -227,7 +227,7 @@ function CustomNode({ data: node, selected, isConnectable }: { data: WorkflowNod
         }, 100);
     }
 
-    const [expend, setExpend] = useState(node.expand === undefined ? true : node.expand)
+    const [expend, setExpend] = useState(node.expand === undefined ? false : node.expand)
 
     const { isVisible, handleMouseEnter, handleMouseLeave } = useHoverToolbar();
 
@@ -281,7 +281,7 @@ function CustomNode({ data: node, selected, isConnectable }: { data: WorkflowNod
                                 <span className='truncate block min-h-4'>{node.name}</span>
                             </EditText>
                         </div>
-                        {!['output', 'condition', 'end'].includes(node.type) && <div
+                        {!['condition', 'end'].includes(node.type) && <div
                             className='absolute -right-1 -top-1 cursor-pointer p-2'
                             onClick={() => {
                                 setExpend(!expend)
@@ -307,7 +307,7 @@ function CustomNode({ data: node, selected, isConnectable }: { data: WorkflowNod
                 </div>
                 {/* body */}
                 <div className='-nowheel bg-[#F7F8FB] dark:bg-background pb-5 rounded-b-[20px]'>
-                    <div className={expend || ['output', 'condition', 'end'].includes(node.type) ? `` : 'h-0 overflow-hidden'}>
+                    <div className={expend || ['condition', 'end'].includes(node.type) ? `` : 'h-0 overflow-hidden'}>
                         {node.tab && <NodeTabs
                             data={node}
                             onChange={(val) => {

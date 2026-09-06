@@ -37,6 +37,7 @@ from bisheng.core.storage.chat_attachment import promote_chat_attachments_sync
 from bisheng.database.models.flow import FlowDao, FlowType
 from bisheng.database.models.message import ChatMessage, ChatMessageDao
 from bisheng.database.models.session import MessageSession, MessageSessionDao
+from bisheng.database.models.workflow_node_run import NodeRunDao
 from bisheng.llm.domain import LLMService
 from bisheng.utils.threadpool import thread_pool
 from bisheng.workflow.callback.base_callback import BaseCallback
@@ -681,6 +682,21 @@ class RedisCallback(BaseCallback):
                 chat_id=self.chat_id,
             )
         )
+        # F052: persist node-run record for the transaction monitor (best-effort, AC-04).
+        # Run trace = self.unique_id; data.unique_id is the per-execution uuid
+        # (pairs this start with its end — do NOT confuse the two).
+        NodeRunDao.insert_event(
+            unique_id=self.unique_id,
+            exec_id=data.unique_id,
+            chat_id=self.chat_id,
+            flow_id=self.workflow_id,
+            node_id=data.node_id,
+            node_name=data.name,
+            event_type="start",
+            status="running",
+            user_id=self.user_id,
+            tenant_id=self.tenant_id,
+        )
 
     def on_node_end(self, data: NodeEndData):
         """node end event"""
@@ -693,6 +709,23 @@ class RedisCallback(BaseCallback):
                 flow_id=self.workflow_id,
                 chat_id=self.chat_id,
             )
+        )
+        # F052: persist node-run record for the transaction monitor (best-effort, AC-04).
+        # Run trace = self.unique_id; data.unique_id pairs start/end (per-execution uuid).
+        NodeRunDao.insert_event(
+            unique_id=self.unique_id,
+            exec_id=data.unique_id,
+            chat_id=self.chat_id,
+            flow_id=self.workflow_id,
+            node_id=data.node_id,
+            node_name=data.name,
+            event_type="end",
+            status="failed" if data.reason else "success",
+            reason=data.reason,
+            input_data=data.input_data,
+            output_data=data.log_data,
+            user_id=self.user_id,
+            tenant_id=self.tenant_id,
         )
 
     def on_user_input(self, data: UserInputData):

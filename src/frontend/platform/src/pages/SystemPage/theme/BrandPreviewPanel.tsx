@@ -107,7 +107,7 @@ function LoginPreview({
     const heroKey: BrandAssetKey = isDarkHero ? "loginHeroDark" : "loginHeroLight";
     const logoKey: BrandAssetKey = target === "headerLogoDark" ? "headerLogoDark" : "headerLogoLight";
     const faviconUrl = getImageUrl(config.assets.favicon, DEFAULT_BRAND_CONFIG.assets.favicon.url);
-    const title = getLocalizedText(config.brandName) || "BISHENG";
+    const title = getLocalizedText(config.brandName) || "TansunWise";
 
     return (
         <MockBrowserFrame title={title} faviconUrl={faviconUrl} target={target}>
@@ -150,7 +150,7 @@ function AdminPreview({
 }) {
     const logoKey: BrandAssetKey = target === "headerLogoDark" ? "headerLogoDark" : "headerLogoLight";
     const faviconUrl = getImageUrl(config.assets.favicon, DEFAULT_BRAND_CONFIG.assets.favicon.url);
-    const title = getLocalizedText(config.brandName) || "BISHENG";
+    const title = getLocalizedText(config.brandName) || "TansunWise";
 
     return (
         <MockBrowserFrame title={title} faviconUrl={faviconUrl} target={target}>
@@ -201,7 +201,7 @@ function LoadingPreview({
     target: BrandPreviewTarget;
 }) {
     const faviconUrl = getImageUrl(config.assets.favicon, DEFAULT_BRAND_CONFIG.assets.favicon.url);
-    const title = getLocalizedText(config.brandName) || "BISHENG";
+    const title = getLocalizedText(config.brandName) || "TansunWise";
     const loadingIconUrl = withBrandBaseUrl(config.URLLoadingIcon || config.loading?.icon?.url || "");
 
     return (

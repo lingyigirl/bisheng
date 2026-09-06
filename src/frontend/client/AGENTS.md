@@ -22,7 +22,7 @@ Vite 6 + React 18 + TypeScript + TailwindCSS 3 + Radix UI (shadcn/ui) + **Recoil
   - **⚠️ After upgrading `bisheng-icons`**, clear the Vite pre-bundle cache or new icons crash the page (`Element type is invalid`): `pnpm dev -- --force` (or `rm -rf node_modules/.vite && pnpm dev`). Its git-source `exports` field defeats Vite's dep-change detection, so the stale pre-bundled snapshot is served unless forced.
 - **Toast**: `const { showToast } = useToastContext(); showToast?.({ message, severity: 'error' | 'success' })`.
 - **i18n**: `useLocalize()` from `~/hooks` → `localize()`. Locale files at `src/locales/{en,zh-Hans,ja}/translation.json` (single file). New keys use nested namespace format (see `/i18n-localizer` skill).
-- **Brand theme (blue⇄green)**: brand-colored UI MUST follow the theme — **never hardcode brand hex** (`#165DFF`/`#024DE3`/`#19B476`/`#187C54`…).
+- **Brand theme (blue⇄green)**: brand-colored UI MUST follow the theme — **never hardcode brand hex** (`#004DA4`/`#003E8E`/`#0E8C7B`/`#78D5C9`…).
   - Use `blue-*` classes (they're re-pointed to `--brand-*` vars → auto-follow; `blue-*` means "brand", not literal blue) or `rgb(var(--brand-NNN))` in inline style/CSS.
   - **Primary filled button**: `<Button>` (default variant, already themed). Hand-rolled `bg-blue-500 text-white` MUST also add the `btn-brand-primary` class. Brand-tinted secondary: `<Button variant="secondaryBrand">`.
   - **Tints**: selection/active `bg-blue-500/[0.07]`, header `…/[0.05]`. Tailwind arbitrary values can't contain spaces: `rgb(var(--brand-500)/0.04)` ✅.

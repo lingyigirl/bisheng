@@ -67,7 +67,7 @@ function SourceTypeBadge({ preview, type }: { preview: CitationPreview | null; t
     <div
       className={cname(
         "inline-flex h-[18px] min-w-[16px] items-center justify-center rounded-[6px] px-1 text-[12px] font-normal leading-[18px]",
-        isWeb ? "bg-[#F7F3FF] text-[#7224D9]" : "bg-[#F5F8FF] text-[#024DE3]",
+        isWeb ? "bg-[#F7F3FF] text-[#7224D9]" : "bg-[#E8F7FF] text-[#003E8E]",
       )}
     >
       {isWeb ? "网页" : "文档"}
@@ -130,7 +130,7 @@ function CitationReferenceCard({
           className={cname(
             "flex w-full min-w-0 items-center gap-1 rounded-[4px] text-left",
             nameRowTextClass,
-            "transition-colors hover:text-[#165DFF] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#165DFF]/25",
+            "transition-colors hover:text-[#004DA4] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#004DA4]/25",
           )}
           title={title}
         >
@@ -148,7 +148,7 @@ function CitationReferenceCard({
           target="_blank"
           rel="noreferrer"
           className={cname(
-            "flex w-full min-w-0 items-center gap-1 rounded-[4px] hover:text-[#165DFF]",
+            "flex w-full min-w-0 items-center gap-1 rounded-[4px] hover:text-[#004DA4]",
             nameRowTextClass,
           )}
           title={title}
@@ -460,7 +460,7 @@ export default function CitationReferencesDrawer({
       )}>
         <div className="flex items-center gap-2">
           <h2 className="text-[14px] font-medium leading-[22px] text-[#1D2129]">参考资料</h2>
-          <span className="inline-flex h-4 w-4 items-center justify-center gap-2 rounded-[6px] bg-[#F5F8FF] px-1 text-[12px] font-medium leading-4 text-[#165DFF]">
+          <span className="inline-flex h-4 w-4 items-center justify-center gap-2 rounded-[6px] bg-[#E8F7FF] px-1 text-[12px] font-medium leading-4 text-[#004DA4]">
             {references.length}
           </span>
         </div>
@@ -527,7 +527,7 @@ export default function CitationReferencesDrawer({
         <button
           type="button"
           onClick={handleDownloadDocument}
-          className="inline-flex size-6 shrink-0 items-center justify-center rounded-[6px] text-[#024DE3] transition-colors hover:bg-[#F2F7FF]"
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-[6px] text-[#003E8E] transition-colors hover:bg-[#E8F7FF]"
           aria-label="下载文档"
         >
           <Download className="size-4" strokeWidth={1.75} />

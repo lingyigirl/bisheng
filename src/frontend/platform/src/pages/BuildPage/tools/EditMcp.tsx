@@ -171,6 +171,19 @@ const McpServerEditorDialog = forwardRef(({ existingNames = [], onReload }, ref)
                     "url": "https://mcp.amap.com/mcp?key=yourapikey"
                 }
             }
+        }, null, 2),
+        authHeaders: JSON.stringify({
+            "mcpServers": {
+                "gateway-with-auth": {
+                    "type": "streamable",
+                    "name": t('tools.mcpAuthHeadersExample'),
+                    "description": "",
+                    "url": "https://example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer your-api-key"
+                    }
+                }
+            }
         }, null, 2)
     }), [t]);
 
@@ -374,6 +387,7 @@ const McpServerEditorDialog = forwardRef(({ existingNames = [], onReload }, ref)
                                         <SelectGroup>
                                             <SelectItem value="gaode1">{t('tools.gaodeMapSSE')}</SelectItem>
                                             <SelectItem value="gaode2">{t('tools.gaodeMapStreamable')}</SelectItem>
+                                            <SelectItem value="authHeaders">{t('tools.mcpAuthHeadersExample')}</SelectItem>
                                         </SelectGroup>
                                     </SelectContent>
                                 </Select>

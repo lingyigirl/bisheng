@@ -16,7 +16,7 @@
 
     --background-tip: white;
 
-    --background-tip-darkhover: #0055e3;
+    --background-tip-darkhover: #004DA4;
 
     --background-prompt: hsla(0, 0%, 100%, 1);
 
@@ -53,8 +53,8 @@
     /* hsl(214 32% 91%) */
     --input: 223 48% 44%;
     /* hsl(214 32% 91%) */
-    --primary: 220 98% 45%;
-    /* hsl(222 27% 18%) */
+    --primary: 211.83 100% 32.16%;
+    /* hsl(211.83 100% 32.16%) — Tansun (天阳) brand blue #004DA4 */
     --primary-foreground: 210 40% 98%;
     /* hsl(210 40% 98%) */
     --secondary: 210 40% 96.1%;
@@ -109,7 +109,7 @@
 
     --login-input: #272728;
 
-    --button: #024FE5;
+    --button: #004DA4;
 
     --background-main: rgba(17, 17, 17, 1);
 
@@ -161,8 +161,8 @@
     --input: 0 0% 100%;
     /* hsl(216 34% 17%) */
 
-    --primary: 220 98% 45%;
-    /* hsl(210 20% 80%) */
+    --primary: 211.83 100% 32.16%;
+    /* hsl(211.83 100% 32.16%) — Tansun (天阳) brand blue #004DA4 */
     --primary-foreground: 0 0% 100%;
     /* hsl(222 47% 1%) */
 

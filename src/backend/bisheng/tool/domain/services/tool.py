@@ -12,6 +12,7 @@ from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode import BaseErrorCode
 from bisheng.common.errcode.http_error import NotFoundError, UnAuthorizedError
 from bisheng.common.errcode.tool import (
+    ToolMcpConnectError,
     ToolMcpSchemaError,
     ToolMcpStdioError,
     ToolSchemaDownloadError,
@@ -31,6 +32,7 @@ from bisheng.mcp_manage.manager import ClientManager
 from bisheng.permission.domain.services.tool_permission_service import ToolPermissionService
 from bisheng.tool.domain.const import ToolPresetType
 from bisheng.tool.domain.langchain.linsight_knowledge import SearchKnowledgeBase
+from bisheng.tool.domain.zh_dict import apply_zh_dict
 from bisheng.tool.domain.models.gpts_tools import GptsTools, GptsToolsDao, GptsToolsType, GptsToolsTypeRead
 from bisheng.tool.domain.services.openapi import OpenApiSchema
 from bisheng.utils import get_request_ip, md5_hash
@@ -377,9 +379,18 @@ class ToolServices(BaseModel):
                 if client_type == McpClientType.STDIO.value:
                     raise ToolMcpStdioError()
             # Instantiatemcpservice object, getting a list of tools
-            client = await ClientManager.connect_mcp_from_json(result)
-
-            tools = await client.list_tools()
+            try:
+                client = await ClientManager.connect_mcp_from_json(result)
+                tools = await client.list_tools()
+                apply_zh_dict(tool_type.server_host, tools)
+            except BaseErrorCode:
+                raise
+            except Exception as e:
+                logger.exception(f"mcp tool connect error: {e}")
+                # streamable 客户端经 anyio TaskGroup 抛出 ExceptionGroup，
+                # 解包出真正的 HTTP 错误（如 401）给前端展示，否则只能看到组包装文案。
+                display_exc = e.exceptions[0] if isinstance(e, BaseExceptionGroup) and e.exceptions else e
+                raise ToolMcpConnectError(exception=display_exc)
 
             for one in tools:
                 tool_type.children.append(
@@ -548,6 +559,7 @@ class ToolServices(BaseModel):
         # Instantiatemcpservice object, getting a list of tools
         client = await ClientManager.connect_mcp_from_json(tool_type.openapi_schema)
         tools = await client.list_tools()
+        apply_zh_dict(tool_type.server_host, tools)
         children = []
         for one in tools:
             children.append(

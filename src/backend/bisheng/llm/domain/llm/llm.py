@@ -1,6 +1,8 @@
 import json
 from typing import List, Optional, Any, Sequence, Union, Dict, Type, Callable, Iterator, AsyncIterator
 
+import httpx
+
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun, CallbackManagerForLLMRun
 from langchain_core.language_models import BaseChatModel, LanguageModelInput
 from langchain_core.language_models.chat_models import agenerate_from_stream, generate_from_stream
@@ -86,6 +88,12 @@ def _get_deepseek_params(params: dict, server_config: dict, model_config: dict) 
     params['stream_usage'] = True
 
     user_kwargs = _get_user_kwargs(model_config)
+    # Outbound calls egress through the local proxy, whose upstream TLS handshake
+    # occasionally exceeds the openai SDK's 5s connect default, spuriously failing
+    # health checks and chats with "Request timed out.". Fall back to a tolerant
+    # timeout unless the advanced params (or front-end config) set one explicitly.
+    if 'timeout' not in user_kwargs and 'timeout' not in params:
+        params['timeout'] = httpx.Timeout(connect=30, read=600, write=30, pool=30)
     user_kwargs.update(params)
     return user_kwargs
 

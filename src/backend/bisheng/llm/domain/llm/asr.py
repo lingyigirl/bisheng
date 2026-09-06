@@ -3,6 +3,7 @@ from typing import Union, BinaryIO
 import httpx
 from pydantic import Field
 from typing_extensions import Self
+import zhconv
 
 from bisheng.common.errcode.server import NoAsrModelConfigError, AsrModelConfigDeletedError, AsrModelTypeError, \
     AsrProviderDeletedError, \
@@ -103,4 +104,17 @@ class BishengASR(BishengBase):
 
     @wrapper_bisheng_model_limit_check_async
     async def ainvoke(self, audio: Union[str, bytes, BinaryIO], **kwargs) -> str:
-        return await self.asr.transcribe(audio=audio, **kwargs)
+        # LLM-based ASR (e.g. Qwen3-ASR) follows an initial prompt to steer the
+        # output style. A model-level `prompt` in llm_model.config (e.g.
+        # "请输出简体中文。") is forwarded as the transcription initial prompt;
+        # explicit caller kwargs win over the model default.
+        if self.model_info and self.model_info.config:
+            model_prompt = self.model_info.config.get('prompt')
+            if model_prompt:
+                kwargs.setdefault('prompt', model_prompt)
+        text = await self.asr.transcribe(audio=audio, **kwargs)
+        # LLM-based ASR (e.g. Qwen3-ASR) conditions output glyphs on the audio,
+        # so the initial prompt alone cannot guarantee Simplified characters.
+        # Normalize deterministically after transcription (no-op for already
+        # Simplified text and for non-CJK content).
+        return zhconv.convert(text, 'zh-hans')

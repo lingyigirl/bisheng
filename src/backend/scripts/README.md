@@ -514,3 +514,11 @@ config=config.yaml PYTHONPATH=./ python scripts/seed_load_test_org.py --purge --
 # 或用 shell 包装（自动探测解释器 / PYTHONPATH / config）：
 bash scripts/seed_load_test_org.sh --departments 200 --users 50000 --apply
 ```
+
+### ops_seed_agent_monitoring.py（F046）
+
+智能体运行监控（首页统计看板 id=10）的组件/数据集/布局补数脚本，**幂等**（重复运行安全）。已有环境的部署在升级后执行一次；全新部署也会在首次启动后执行一次（数据集由 init_dataset 种子写入，组件由本脚本补）。
+
+```bash
+cd src/backend/ && config=config.yaml PYTHONPATH=./ .venv/bin/python scripts/ops_seed_agent_monitoring.py
+```

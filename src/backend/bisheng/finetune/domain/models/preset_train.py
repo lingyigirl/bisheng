@@ -12,22 +12,24 @@ from bisheng.utils import generate_uuid
 # FinetunePreset training set for tasks
 from bisheng.core.database.dialect_helpers import UPDATE_TIME_SERVER_DEFAULT
 
+
 class PresetTrainBase(SQLModelSerializable):
-    id: str = Field(default=None, primary_key=True, description='Preset Training Files UniqueID')
-    url: str = Field(default='', description='minIoFile link on')
-    name: str = Field(default='', index=True, description='Uploaded file name')
-    user_id: str = Field(default='', index=True, description='creatorID')
-    user_name: str = Field(default='', index=True, description='creatorName')
-    type: int = Field(default=0, index=True, description='0 Doc. 1 QA')
+    id: str = Field(default=None, primary_key=True, description="Preset Training Files UniqueID")
+    url: str = Field(default="", description="minIoFile link on")
+    name: str = Field(default="", index=True, description="Uploaded file name")
+    user_id: str = Field(default="", index=True, description="creatorID")
+    user_name: str = Field(default="", index=True, description="creatorName")
+    type: int = Field(default=0, index=True, description="0 Doc. 1 QA")
     tenant_id: Optional[int] = Field(
         default=None,
-        sa_column=Column(Integer, nullable=False, server_default=text('1'),
-                         index=True, comment='Tenant ID'),
+        sa_column=Column(Integer, nullable=False, server_default=text("1"), index=True, comment="Tenant ID"),
     )
-    create_time: Optional[datetime] = Field(default=None, sa_column=Column(
-        DateTime, nullable=False, index=True, server_default=text('CURRENT_TIMESTAMP')))
-    update_time: Optional[datetime] = Field(default=None, sa_column=Column(
-        DateTime, nullable=False, server_default=UPDATE_TIME_SERVER_DEFAULT))
+    create_time: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime, nullable=False, index=True, server_default=text("CURRENT_TIMESTAMP"))
+    )
+    update_time: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime, nullable=False, server_default=UPDATE_TIME_SERVER_DEFAULT)
+    )
 
 
 class PresetTrain(PresetTrainBase, table=True):
@@ -35,7 +37,6 @@ class PresetTrain(PresetTrainBase, table=True):
 
 
 class PresetTrainDao(PresetTrainBase):
-
     @classmethod
     async def insert_batch(cls, models: List[PresetTrain]) -> List[PresetTrain]:
         async with get_async_db_session() as session:
@@ -54,6 +55,15 @@ class PresetTrainDao(PresetTrainBase):
         return True
 
     @classmethod
+    async def touch(cls, file_id: str) -> None:
+        """Refresh update_time after the content file is overwritten."""
+        async with get_async_db_session() as session:
+            await session.execute(
+                text("UPDATE presettrain SET update_time = CURRENT_TIMESTAMP WHERE id = :id"), {"id": file_id}
+            )
+            await session.commit()
+
+    @classmethod
     async def find_one(cls, file_id: str) -> PresetTrain | None:
         async with get_async_db_session() as session:
             statement = select(PresetTrain).where(PresetTrain.id == file_id)
@@ -66,16 +76,15 @@ class PresetTrainDao(PresetTrainBase):
             return (await session.exec(statement)).all()
 
     @classmethod
-    async def search_name(cls,
-                          keyword: str = None,
-                          page_size: int = None,
-                          page_num: int = None) -> Tuple[List[PresetTrain], int]:
+    async def search_name(
+        cls, keyword: str = None, page_size: int = None, page_num: int = None
+    ) -> Tuple[List[PresetTrain], int]:
         async with get_async_db_session() as session:
             statement = select(PresetTrain)
             count = select(func.count(PresetTrain.id))
             if keyword:
-                statement = statement.where(col(PresetTrain.name).like('%{}%'.format(keyword)))
-                count = count.where(col(PresetTrain.name).like('%{}%'.format(keyword)))
+                statement = statement.where(col(PresetTrain.name).like("%{}%".format(keyword)))
+                count = count.where(col(PresetTrain.name).like("%{}%".format(keyword)))
             if page_num and page_size:
                 statement = statement.offset((page_num - 1) * page_size).limit(page_size)
             statement = statement.order_by(col(PresetTrain.create_time).desc())

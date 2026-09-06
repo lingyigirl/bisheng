@@ -95,7 +95,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
         // backend version
         res.version && console.log(
           "%cversion " + res.version,
-          "background-color:#024de3;color:#fff;font-weight:bold;font-size: 38px;" +
+          "background-color:#003E8E;color:#fff;font-weight:bold;font-size: 38px;" +
           "padding: 6px 12px;font-family:'american typewriter';text-shadow:1px 1px 3px black;"
         );
 

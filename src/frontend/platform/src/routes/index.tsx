@@ -36,6 +36,8 @@ const DailyChatDetail = lazy(() => import("@/pages/LogPage/useAppLog/dailyChatDe
 const Doc = lazy(() => import("@/pages/ModelPage/doc"));
 const Finetune = lazy(() => import("@/pages/ModelPage/finetune").then(module => ({ default: module.Finetune })));
 const Management = lazy(() => import("@/pages/ModelPage/manage"));
+const ModelResource = lazy(() => import("@/pages/ModelPage/resource"));
+const ModelDeploy = lazy(() => import("@/pages/ModelPage/deploy"));
 const Report = lazy(() => import("@/pages/Report"));
 const SystemPage = lazy(() => import("@/pages/SystemPage"));
 const ApprovalPage = lazy(() => import("@/pages/ApprovalPage"));
@@ -89,6 +91,8 @@ const privateRouter = [
       { path: "build/temps/:type", element: <Templates />, permission: 'create_app', },
       { path: "model/management", element: <Management />, permission: 'model' },
       { path: "model/finetune", element: <Finetune />, permission: 'model' },
+      { path: "model/resource", element: <ModelResource />, permission: 'model' },
+      { path: "model/deploy", element: <ModelDeploy />, permission: 'model' },
       { path: "model", element: <Navigate to="management" replace /> },
       { path: "sys", element: <SystemPage />, permission: 'sys' },
       { path: "approval", element: <ApprovalPage />, permission: 'sys' },

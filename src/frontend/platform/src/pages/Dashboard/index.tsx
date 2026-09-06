@@ -10,7 +10,6 @@ import {
     updateDashboardTitle
 } from "@/controllers/API/dashboard"
 import { useEditorDashboardStore } from "@/store/dashboardStore"
-import { copyText } from "@/utils"
 import { useContext, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useMutation, useQuery, useQueryClient } from "react-query"
@@ -78,31 +77,6 @@ export default function DashboardPage() {
         updateTitlteMutation.mutate({ id, title: newTitle })
     }
 
-    const handleShare = async (id: string) => {
-        // const _selectedDashboard = dashboards.find((d) => d.id === id)
-        if (selectedDashboard?.status === "draft") {
-            toast({
-                description: t('shareNotPublished'),
-                variant: "error",
-            })
-            return
-        }
-
-        try {
-            const link = `${location.origin}${__APP_ENV__.BASE_URL}/dashboard/share/${btoa(selectedDashboard.id)}`
-            await copyText(link)
-            toast({
-                description: t('shareCopySuccess'),
-                variant: "success",
-            })
-        } catch (error) {
-            toast({
-                description: t('shareCopyError'),
-                variant: "error",
-            })
-        }
-    }
-
     const navigator = useNavigate()
     const handleEdit = (id: string) => {
         navigator(`/dashboard/${id}`)
@@ -142,7 +116,6 @@ export default function DashboardPage() {
                 onSelect={setSelectedId}
                 onRename={handleRename}
                 onDefault={(id) => setDefaultMutation.mutate(id)}
-                onShare={handleShare}
             />
             }
             <DashboardDetail
@@ -152,7 +125,6 @@ export default function DashboardPage() {
                 isLoading={isLoading}
                 onRename={handleRename}
                 onDefault={(id) => setDefaultMutation.mutate(id)}
-                onShare={handleShare}
                 onEdit={handleEdit}
             />
         </div>

@@ -1,11 +1,8 @@
 // @ts-strict-ignore
 import {
     ApplicationIcon,
-    BookOpenIcon,
     EvaluatingIcon,
-    GithubIcon,
     KnowledgeIcon,
-    LabelIcon,
     LogIcon,
     ModelIcon,
     QuitIcon,
@@ -24,7 +21,7 @@ import { ApprovalMenuIcon } from "@/components/bs-icons/menu/approval";
 import { TenantMenuIcon } from "@/components/bs-icons/menu/tenant";
 import { Suspense, useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Separator } from "../components/bs-ui/separator";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/bs-ui/tooltip";
 import { darkContext } from "../contexts/darkContext";
@@ -36,12 +33,48 @@ import { getBrandAssetUrl } from "../utils/brand";
 import HeaderMenu from "./HeaderMenu";
 import { LicenseBanner } from "./LicenseBanner";
 
+/** 页头左侧品牌标识。
+ * 品牌定制上传过 headerLogoLight 时显示上传图；否则渲染应用图标 + 品牌名，
+ * 品牌名用 HTML 文字（跟随 --foreground 明暗切换）而非位图缩放，避免发虚。 */
+function HeaderBrandLogo() {
+    const { t } = useTranslation();
+    const configuredUrl = window.BRAND_CONFIG?.assets?.headerLogoLight?.url || "";
+    const isCustomLogo = Boolean(configuredUrl) && !configuredUrl.endsWith("/assets/bisheng/login-logo-small.png");
+
+    if (isCustomLogo) {
+        return (
+            <img
+                src={getBrandAssetUrl("headerLogoLight", "/assets/bisheng/login-logo-small.png")}
+                className="ml-[38px] h-9 w-auto max-w-[200px] object-contain"
+                alt=""
+            />
+        );
+    }
+    return (
+        <div className="ml-[38px] flex items-center gap-2.5">
+            <img
+                src={getBrandAssetUrl("favicon", "/assets/bisheng/favicon.ico")}
+                className="size-7 shrink-0 rounded-[7px]"
+                alt=""
+            />
+            <span className="whitespace-nowrap text-[16px] font-semibold tracking-wide text-foreground">
+                {t("bisheng")}
+            </span>
+        </div>
+    );
+}
+
 export default function MainLayout() {
     const { dark, setDark } = useContext(darkContext);
     const { appConfig } = useContext(locationContext)
     // 角色
     const { user, setUser } = useContext(userContext);
     const { language, languageNames, options, changLanguage, t } = useLanguage(user)
+
+    // Dashboard is a full-viewport board page — hide the header theme/language
+    // switchers there to keep the header minimal.
+    const location = useLocation()
+    const isDashboardPage = location.pathname.replace(/\/+$/, "") === "/dashboard"
 
     const handleLogout = () => {
         bsConfirm({
@@ -115,17 +148,13 @@ export default function MainLayout() {
             {isSuperAdmin && <LicenseBanner />}
             <div className="flex justify-between h-[64px] shrink-0 bg-background-main relative z-[21]">
                 <div className="flex h-9 my-[14px]">
-                    <div className="inline-block" >
-                        {/* @ts-ignore */}
-                        <img src={getBrandAssetUrl('headerLogoLight', '/assets/bisheng/login-logo-small.png')} className="w-[104px] ml-[38px] rounded dark:hidden" alt="" />
-                        <img src={getBrandAssetUrl('headerLogoDark', '/assets/bisheng/logo-small-dark.png')} className="w-[104px] ml-[38px] rounded hidden dark:block" alt="" />
-                    </div>
+                    <HeaderBrandLogo />
                 </div>
                 <div>
                     <HeaderMenu />
                 </div>
                 <div className="flex w-fit relative z-10">
-                    <div className="flex">
+                    {!isDashboardPage && <div className="flex">
                         <TooltipProvider>
                             <Tooltip>
                                 <TooltipTrigger className="h-8 w-8 bg-header-icon rounded-lg cursor-pointer my-4" onClick={() => setDark(!dark)}>
@@ -157,7 +186,7 @@ export default function MainLayout() {
                             ))}
                         </SelectHover>
                         <Separator className="mx-[23px] h-6 border-l my-5 border-[#dddddd]" orientation="vertical" />
-                    </div>
+                    </div>}
                     <div className="flex items-center h-7 my-4">
                         {/* @ts-ignore */}
                         <img className="h-7 w-7 rounded-2xl mr-4" src={__APP_ENV__.BASE_URL + (user.avatar || '/assets/user.png')} alt="" />
@@ -213,15 +242,15 @@ export default function MainLayout() {
                             </NavLink>
                         }
                         {
-                            showAdminNav('evaluation') &&
-                            <NavLink to={isMenu('evaluation') ? '/evaluation' : '/menu-pending?menu=evaluation'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
-                                <EvaluatingIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.evaluation')}</span>
+                            showAdminNav('model') &&
+                            <NavLink to='/model/resource' className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
+                                <TechnologyIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.resource')}</span>
                             </NavLink>
                         }
                         {
-                            showAdminNav('mark_task') &&
-                            <NavLink to={isMenu('mark_task') ? '/label' : '/menu-pending?menu=mark_task'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
-                                <LabelIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.annotation')}</span>
+                            showAdminNav('evaluation') &&
+                            <NavLink to={isMenu('evaluation') ? '/evaluation' : '/menu-pending?menu=evaluation'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
+                                <EvaluatingIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.evaluation')}</span>
                             </NavLink>
                         }
                         {
@@ -251,33 +280,6 @@ export default function MainLayout() {
                             </>
                         }
                     </nav>
-                    {!appConfig.noFace && <div className="absolute left-0 bottom-0 w-[180px] p-2">
-                        <div className="help flex items-between my-3">
-                            <TooltipProvider>
-                                <Tooltip>
-                                    <TooltipTrigger className="h-[72px] w-[78px] cursor-pointer bg-background-tip rounded-lg hover:bg-[#1b1f23] hover:text-[white] transition-all dark:hover:bg-background-tip-darkhover">
-                                        <Link to={"https://github.com/dataelement/bisheng"} target="_blank">
-                                            <GithubIcon className="side-bar-button-size mx-auto w-5 h-5 " />
-                                            <span className="block text-[12px] mt-[8px] font-bold">{t("menu.github")}</span>
-                                        </Link>
-                                    </TooltipTrigger>
-                                    <TooltipContent><p>{t("menu.github")}</p></TooltipContent>
-                                </Tooltip>
-                            </TooltipProvider>
-                            <Separator className="mx-1" orientation="vertical" />
-                            <TooltipProvider>
-                                <Tooltip>
-                                    <TooltipTrigger className="h-[72px] w-[78px] cursor-pointer bg-background-tip rounded-lg p-0 align-top hover:bg-[#0055e3] hover:text-[white]  transition-all">
-                                        <Link className="m-0 p-0" to={"https://m7a7tqsztt.feishu.cn/wiki/ZxW6wZyAJicX4WkG0NqcWsbynde"} target="_blank">
-                                            <BookOpenIcon className=" mx-auto w-5 h-5" />
-                                            <span className="block text-[12px] mt-[8px] font-bold">{t("menu.bookopen")}</span>
-                                        </Link>
-                                    </TooltipTrigger>
-                                    <TooltipContent><p>{t('menu.document')}</p></TooltipContent>
-                                </Tooltip>
-                            </TooltipProvider>
-                        </div>
-                    </div>}
                 </div>
                 <div className="flex-1 bg-background-main-content rounded-lg w-[calc(100vw-184px)]">
                     <Suspense fallback={<div className="flex items-center justify-center h-full"><LoadingIcon /></div>}>
@@ -291,16 +293,6 @@ export default function MainLayout() {
         <div className="fixed w-full h-full top-0 left-0 bg-[rgba(0,0,0,0.4)] sm:hidden text-sm z-50">
             <div className="w-10/12 bg-gray-50 mx-auto mt-[30%] rounded-xl px-4 py-10">
                 <p className=" text-sm text-center">{t('menu.forBestExperience')}</p>
-                {
-                    !appConfig.isPro && <div className="flex mt-8 justify-center gap-4">
-                        <a href={"https://github.com/dataelement/bisheng"} target="_blank">
-                            <GithubIcon className="side-bar-button-size mx-auto" />Github
-                        </a>
-                        <a href={"https://m7a7tqsztt.feishu.cn/wiki/ZxW6wZyAJicX4WkG0NqcWsbynde"} target="_blank">
-                            <BookOpenIcon className="side-bar-button-size mx-auto" /> {t('menu.onlineDocumentation')}
-                        </a>
-                    </div>
-                }
             </div>
         </div>
     </div >

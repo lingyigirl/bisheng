@@ -17,7 +17,9 @@ from bisheng.worker.knowledge.scheduler import (
 )
 from bisheng.worker.permission.retry_failed_tuples import retry_failed_tuples
 from bisheng.worker.telemetry.mid_table import (
+    sync_mid_agent_run_dtl,
     sync_mid_app_increment,
+    sync_mid_dataset_increment,
     sync_mid_knowledge_increment,
     sync_mid_user_increment,
     sync_mid_user_interact_dtl,

@@ -196,7 +196,7 @@ html {
   --header-hover: var(--gray-50);
   --header-button-hover: var(--gray-50);
   --surface-active: var(--gray-100);
-  --surface-active-alt: rgb(232 243 255); /* #E8F3FF — brand-blue selection bg */
+  --surface-active-alt: rgb(232 247 255); /* #E8F7FF — brand-blue selection bg */
   --surface-hover: var(--gray-200);
   --surface-hover-alt: var(--gray-300);
   --surface-primary: var(--white);
@@ -223,9 +223,9 @@ html {
   --foreground: 0 0% 3.9%;
   --card: 0 0% 100%;
   --card-foreground: 0 0% 3.9%;
-  /* #165DFF — design brand blue. Fractional HSL so hsl(var(--primary)) rounds to
-     exactly rgb(22,93,255) = --brand-500; integer 222 100% 54% drifted to (20,91,255). */
-  --primary: 221.51 100% 54.22%;
+  /* #004DA4 — Tansun (天阳) brand blue. Fractional HSL so hsl(var(--primary))
+     rounds to exactly rgb(0,77,164) = --brand-500 (same convention as before). */
+  --primary: 211.83 100% 32.16%;
   --primary-foreground: 0 0% 100%;
   --secondary: 0 0% 96.1%;
   --secondary-foreground: 0 0% 9%;
@@ -246,22 +246,23 @@ html {
   --chart-5: 27 87% 67%;
   --switch-unchecked: 0 0% 58%;
 
-  /* Brand accent palette — default = design-system brand blue (Arco-style ramp,
-     primary-6 #165DFF / pressed #024DE3). RGB channels so Tailwind's `blue-*`
+  /* Brand accent palette — default = Tansun (天阳) corporate blue (Arco-style
+     ramp, seed #004DA4 at 500, pressed #003E8E; re-derived 2026-08-26 from
+     www.tansun.com.cn theme colors). RGB channels so Tailwind's `blue-*`
      utilities support `/<alpha>`. 500 = main accent, 600 = button/strong.
      Overridden by .theme-green. */
-  --brand-50: 232 243 255;   /* #E8F3FF — light tint / selection bg */
-  --brand-100: 190 218 255;  /* #BEDAFF */
-  --brand-200: 148 191 255;  /* #94BFFF */
-  --brand-300: 106 161 255;  /* #6AA1FF */
-  --brand-400: 64 128 255;   /* #4080FF */
-  --brand-500: 22 93 255;    /* #165DFF — main brand blue */
-  --brand-600: 2 77 227;     /* #024DE3 — button / pressed */
-  --brand-700: 2 57 171;     /* #0239AB */
-  --brand-800: 4 43 128;     /* #042B80 */
-  --brand-900: 5 29 82;      /* #051D52 */
-  --brand-main: 22 93 255;   /* #165DFF */
-  --brand-muted: 87 115 180; /* #5773B4 — muted/low-sat brand accent (e.g. pin) */
+  --brand-50: 232 247 255;   /* #E8F7FF — light tint / selection bg */
+  --brand-100: 172 211 237;  /* #ACD3ED */
+  --brand-200: 119 176 219;  /* #77B0DB */
+  --brand-300: 73 141 200;   /* #498DC8 */
+  --brand-400: 33 108 182;   /* #216CB6 */
+  --brand-500: 0 77 164;     /* #004DA4 — main brand blue */
+  --brand-600: 0 62 142;     /* #003E8E — button / pressed */
+  --brand-700: 0 48 120;     /* #003078 */
+  --brand-800: 0 36 98;      /* #002462 */
+  --brand-900: 0 26 76;      /* #001A4C */
+  --brand-main: 0 77 164;    /* #004DA4 */
+  --brand-muted: 86 120 178; /* #5678B2 — muted/low-sat brand accent (e.g. pin) */
 
   /* Button semantic tokens (docs-ui-refactor/组件-Button按钮.md §5.1).
      Neutral grays follow the Arco ramp; danger red is FIXED — never themed.
@@ -285,49 +286,45 @@ html {
 
   /* Illustration palette — empty-state SVG illustrations use --illus-* instead
      of --brand-* so the green theme can render the illustrations' own vivid
-     green ramp (#19B476 / #BDE6D3 / #7CD0B1) rather than the darker UI brand
-     green (#187C54). Blue mode mirrors the brand blue (see .theme-green). */
-  --illus-100: 190 218 255;  /* #BEDAFF */
-  --illus-300: 106 161 255;  /* #6AA1FF */
-  --illus-500: 22 93 255;    /* #165DFF */
+     teal ramp (#D8F4EC / #7AD1BD / #0E8C7B) rather than the darker UI brand
+     teal. Blue mode mirrors the brand blue (see .theme-green). */
+  --illus-100: 172 211 237;  /* #ACD3ED */
+  --illus-300: 73 141 200;   /* #498DC8 */
+  --illus-500: 0 77 164;     /* #004DA4 */
 }
 
 /* Green brand theme — toggled via `theme-green` class on <html>.
    Re-points the brand palette + the few brand-tinted tokens. Frontend-only.
-   Ramp re-derived 2026-07-15 anchored on the FIXED primary #169C47 (the old
-   steps sat at hue ~157° teal while 500 is 142° green, so 500 jumped out):
-   light side keeps the OLD ramp's saturation/brightness envelope (the Arco-
-   algorithm version hit v=100 and read neon; designer nixed it) with only the
-   hue rotated onto the 500 family (−2°/step, same drift as the blue lights);
-   dark side mirrors the blue ramp's dark-side HSV geometry. */
+   Ramp re-derived 2026-08-26 as the Tansun (天阳) teal family: seed #0E8C7B
+   at 500 (the deep teal of the site's accent #78D5C9, which lands at step
+   200), Arco gradient algorithm — same convention as the blue ramp. */
 .theme-green {
-  --brand-50: 228 241 231;   /* #E4F1E7 — light tint / selection bg */
-  --brand-100: 204 228 210;  /* #CCE4D2 */
-  --brand-200: 163 210 176;  /* #A3D2B0 */
-  --brand-300: 111 186 133;  /* #6FBA85 */
-  --brand-400: 61 155 92;    /* #3D9B5C */
-  --brand-500: 22 156 71;    /* #169C47 — main brand green (FIXED, do not touch) */
-  --brand-600: 9 139 53;     /* #098B35 — button / pressed */
-  --brand-700: 7 105 41;     /* #076929 */
-  --brand-800: 7 78 32;      /* #074E20 */
-  --brand-900: 6 50 22;      /* #063216 */
-  --brand-main: 22 156 71;   /* #169C47 */
-  --brand-muted: 92 138 119; /* #5C8A77 — muted/low-sat brand accent (e.g. pin) */
+  --brand-50: 232 255 248;   /* #E8FFF8 — light tint / selection bg */
+  --brand-100: 174 232 216;  /* #AEE8D8 */
+  --brand-200: 122 209 189;  /* #7AD1BD — ≈ site accent #78D5C9 */
+  --brand-300: 79 186 164;   /* #4FBAA4 */
+  --brand-400: 43 163 143;   /* #2BA38F */
+  --brand-500: 14 140 123;   /* #0E8C7B — main brand teal */
+  --brand-600: 9 124 112;    /* #097C70 — button / pressed */
+  --brand-700: 5 108 101;    /* #056C65 */
+  --brand-800: 2 92 89;      /* #025C59 */
+  --brand-900: 0 76 76;      /* #004C4C */
+  --brand-main: 14 140 123;  /* #0E8C7B */
+  --brand-muted: 92 153 145; /* #5C9991 — muted/low-sat brand accent (e.g. pin) */
 
-  /* Illustration palette — green mode keeps the source SVGs' vivid greens so the
-     illustrations match their original artwork (not the darker UI brand green). */
-  --illus-100: 221 240 232;  /* #DDF0E8 */
-  --illus-300: 162 215 181;  /* #A2D7B5 */
-  --illus-500: 22 156 71;    /* #169C47 */
+  /* Illustration palette — teal mode keeps the source SVGs' vivid teals so the
+     illustrations match their original artwork (not the darker UI brand teal). */
+  --illus-100: 216 244 236;  /* #D8F4EC */
+  --illus-300: 122 209 189;  /* #7AD1BD — the site's accent teal */
+  --illus-500: 14 140 123;   /* #0E8C7B */
 
   /* Brand-tinted surfaces driven by their own vars (not the blue palette). */
-  /* HSL of the brand green #187C54 — 156 68% 29% rounds to rgb(24,124,84), exactly
-     matching --brand-500. The old 154 67% 29% rounded to rgb(24,123,81), so
-     bg-primary (e.g. picker checkboxes) drifted ~3/255 off the brand green. */
-  --primary: 142 75% 35%;
-  --surface-active-alt: rgb(228 241 231); /* = --brand-50 (keep in sync) */
-  --surface-primary-alt: #f4faf7;
-  --search-input: hsla(152, 40%, 99%, 1);
+  /* HSL of the brand teal #0E8C7B — 171.9 81.82% 30.2% rounds to rgb(14,140,123),
+     exactly matching --brand-500 (same fractional-HSL convention as the blue). */
+  --primary: 171.9 81.82% 30.2%;
+  --surface-active-alt: rgb(232 255 248); /* = --brand-50 (keep in sync) */
+  --surface-primary-alt: #f3faf8;
+  --search-input: hsla(172, 40%, 99%, 1);
 }
 
 /* Illustration grey mode — THEME-INDEPENDENT. Add `illus-grey` to an illustration
@@ -336,7 +333,7 @@ html {
    of the blue/green brand theme. Defined AFTER .theme-green so it wins when both
    land on the same element. Only the brand greens move to grey; white accents stay
    white (they don't use --illus-*); the whole illustration dims to 80% (per design).
-   Mapping: #19B476→#BCBCBC, #BDE6D3→#E5E5E5, #7CD0B1→#FFFFFF (the element's own
+   Mapping: #0E8C7B→#BCBCBC, #D8F4EC→#E5E5E5, #7AD1BD→#FFFFFF (the element's own
    opacity, e.g. 60%, still applies). */
 .illus-grey {
   --illus-100: 229 229 229;  /* #E5E5E5 */
@@ -349,7 +346,7 @@ html {
 }
 
 /* Brand primary button — GREEN theme override only.
-   Design diverges the primary button in the green theme to a green fill (#19B476)
+   Design diverges the primary button in the green theme to a teal fill (#0E8C7B)
    with white text/icon (#FFF). Add the `btn-brand-primary` class to any primary
    button (the shared <Button variant="default"> and the hand-rolled bg-blue-500 ones).
    Blue theme is intentionally NOT touched here — call sites keep their own
@@ -359,18 +356,18 @@ html {
    <Button> default `bg-primary` — those win on the default state otherwise. Hover/active
    step to progressively darker greens so the state change is visible. */
 .theme-green .btn-brand-primary:not(:disabled) {
-  background-color: #169c47 !important; /* default: green fill (matches --primary) */
+  background-color: #0e8c7b !important; /* default: teal fill (matches --primary) */
   color: #fff !important; /* default: white text / icon */
 }
 .theme-green .btn-brand-primary:not(:disabled):hover {
-  background-color: #148f41 !important; /* hover: slightly darker green */
+  background-color: #097c70 !important; /* hover: slightly darker teal */
 }
 /* Press feedback is TOUCH-ONLY (组件-Button按钮.md §5.2): on hover-capable
    devices a pressed button keeps its hover color (no click flash); on touch,
    where hover is disabled, the deeper step is the only press feedback. */
 @media not ((hover: hover) and (pointer: fine)) {
   .theme-green .btn-brand-primary:not(:disabled):active {
-    background-color: #12813b !important; /* active: deeper green on press */
+    background-color: #056c65 !important; /* active: deeper teal on press */
   }
 }
 /* Force a direct-child icon white too — some send buttons pin `[&>svg]:text-white`

@@ -219,3 +219,26 @@ def process_node_data(node_data: List[Dict]) -> Dict:
             variables_value_list = tweak[nd.get("id")].get("variable_value", [])
             variables_value_list.append(variable_value)
     return tweak
+
+
+# F052: transaction identifier for the agent-monitor tab (spec AC-01).
+INPUT_SNAPSHOT_MAX_CHARS = 200
+
+
+def get_input_snapshot(chat_id: str, max_chars: int = INPUT_SNAPSHOT_MAX_CHARS) -> str | None:
+    """Latest user-input text of the round, truncated — the `input_snapshot`
+    filled into `ApplicationProcessEventData` at every report point.
+
+    Uses the chatmessage `question` row: for dialog inputs it holds the
+    question text; for form inputs it holds the `label: value` list (written
+    by the input-node callback during the run). Best-effort: failures return
+    None and never disturb the reporting call.
+    """
+    try:
+        rows = ChatMessageDao.get_messages_by_chat_id(chat_id, category_list=['question'], limit=1)
+        if not rows or not rows[0].message:
+            return None
+        return rows[0].message[:max_chars]
+    except Exception as e:  # noqa: BLE001 — snapshot is best-effort
+        logger.warning('input_snapshot lookup failed chat={}: {}', chat_id, e)
+        return None

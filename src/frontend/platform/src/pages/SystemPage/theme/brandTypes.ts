@@ -7,7 +7,7 @@ export type BrandTextKey = "brandName";
 export type BrandPreviewTarget = BrandTextKey | BrandAssetKey | "loadingIcon" | "loadingAnimation";
 
 export const DEFAULT_BRAND_CONFIG: BrandConfig = {
-    brandName: { zh: "BISHENG", en: "BISHENG" },
+    brandName: { zh: "TansunWise", en: "TansunWise" },
     linsightAgentName: { zh: "灵思", en: "Linsight" },
     assets: {
         favicon: {

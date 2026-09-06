@@ -532,7 +532,7 @@ print(response.text)# 输出工作流的响应`
                         <ul className="list-disc list-inside pl-4 mt-2 bisheng-label pb-2">
                             <li className='mt-2 leading-6'>如果用户在对话框内上传了文件</li>
                             <ul className="list-disc list-inside pl-4 mt-2 bisheng-label pb-2">
-                                <li className='mt-2 leading-6'>如果有文件类型，调用毕昇文件上传接口获取到文件url，示例如下：</li>
+                                <li className='mt-2 leading-6'>如果有文件类型，调用天阳金包文件上传接口获取到文件url，示例如下：</li>
                             </ul>
                         </ul>
                     </div>
@@ -664,7 +664,7 @@ def upload_file(local_path: str):
                         <p className="bisheng-label py-2">处理逻辑：</p>
                         <ul className="list-disc list-inside pl-4 mt-2 bisheng-label pb-2">
                             <li className='mt-2 leading-6'>解析<code className="bg-gray-200 p-1 rounded">input_schema.value</code> 中的表单元素，在前端渲染表单样式</li>
-                            <li className='mt-2 leading-6'>如果有文件类型，调用毕昇文件上传接口获取到文件url，示例如下：</li>
+                            <li className='mt-2 leading-6'>如果有文件类型，调用天阳金包文件上传接口获取到文件url，示例如下：</li>
                         </ul>
                     </div>
                     <SyntaxHighlighter

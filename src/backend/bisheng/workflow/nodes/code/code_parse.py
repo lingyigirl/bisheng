@@ -90,6 +90,12 @@ class CodeParser:
         """
         compiled_func = compile(ast.Module(body=[node], type_ignores=[]), "<string>", "exec")
         exec(compiled_func, self.exec_globals, self.exec_locals)
+        # exec() with separate globals/locals binds function definitions into
+        # locals only; mirror them into globals (same as parse_classes) so a
+        # function body can resolve sibling helpers defined in the same node
+        # code — otherwise calling e.g. run_ffmpeg() from main() raises
+        # NameError.
+        self.exec_globals[node.name] = self.exec_locals[node.name]
 
     def parse_classes(self, node: ast.ClassDef) -> None:
         compiled_class = compile(ast.Module(body=[node], type_ignores=[]), "<string>", "exec")
@@ -105,8 +111,12 @@ class CodeParser:
             "value": ast.unparse(node.value),
         }
         if isinstance(node.value, ast.Constant):
+            # Store the real Python value, not its unparsed source string:
+            # storing '200' instead of 200 makes `len(x) > MAX_TURNS` raise
+            # TypeError ('>' not supported between 'int' and 'str'), and
+            # string constants gained a spurious extra layer of quotes.
             for one in global_var["targets"]:
-                self.exec_globals[one] = global_var["value"]
+                self.exec_globals[one] = node.value.value
 
     def exec_method(self, method_name: str, *args, **kwargs):
         """

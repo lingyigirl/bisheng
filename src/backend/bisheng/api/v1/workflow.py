@@ -231,6 +231,20 @@ async def create_versions(*,
     return await FlowService.create_new_version(login_user, flow_id, flow_version)
 
 
+@router.get('/versions/compare', status_code=200)
+async def compare_versions(*,
+                           flow_id: str = Query(..., description='Flow UniqueID'),
+                           from_version_id: int = Query(..., description='Older version ID to compare'),
+                           to_version_id: int = Query(..., description='Newer version ID to compare'),
+                           login_user: UserPayload = Depends(UserPayload.get_login_user)):
+    """
+    Compare two versions of a flow (F051) — read-only structured diff.
+    MUST stay declared before GET /versions/{version_id}, otherwise FastAPI
+    parses 'compare' as an int version_id and returns 422 (design.md 坑 1).
+    """
+    return await FlowService.compare_versions(login_user, flow_id, from_version_id, to_version_id)
+
+
 @router.put('/versions/{version_id}', status_code=200)
 async def update_versions(*,
                           request: Request,

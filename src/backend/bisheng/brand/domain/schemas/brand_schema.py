@@ -51,7 +51,7 @@ class BrandLoading(BaseModel):
 
 
 class BrandConfig(BaseModel):
-    brandName: BrandText = Field(default_factory=lambda: BrandText(zh="BISHENG", en="BISHENG"))
+    brandName: BrandText = Field(default_factory=lambda: BrandText(zh="天阳金包智能体平台", en="TansunWise"))
     linsightAgentName: BrandText = Field(default_factory=lambda: BrandText(zh="灵思", en="Linsight"))
     assets: BrandAssets = Field(default_factory=BrandAssets)
     loading: BrandLoading = Field(default_factory=BrandLoading)
@@ -63,7 +63,7 @@ class BrandConfig(BaseModel):
 
 
 class BrandConfigUpdate(BaseModel):
-    brandName: BrandText = Field(default_factory=lambda: BrandText(zh="BISHENG", en="BISHENG"))
+    brandName: BrandText = Field(default_factory=lambda: BrandText(zh="天阳金包智能体平台", en="TansunWise"))
     assets: BrandAssets = Field(default_factory=BrandAssets)
     loading: BrandLoading = Field(default_factory=BrandLoading)
     URLLoadingIcon: str = ""

@@ -1,15 +1,20 @@
 from datetime import datetime, timedelta
 
 from loguru import logger
+from sqlalchemy import text
 
 from bisheng.api.services.workflow import WorkFlowService
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.common.schemas.telemetry.base_telemetry_schema import UserDepartmentInfo, UserGroupInfo, UserRoleInfo
+from bisheng.core.database import get_sync_db_session
 from bisheng.core.logger import trace_id_var
+from bisheng.database.models.dataset import DatasetDao
 from bisheng.database.models.flow import FlowType
 from bisheng.knowledge.domain.services.knowledge_service import KnowledgeService
+from bisheng.telemetry.domain.mid_table.agent_run import AgentRun, AgentRunRecord
 from bisheng.telemetry.domain.mid_table.app_increment import AppIncrement, AppIncrementRecord
 from bisheng.telemetry.domain.mid_table.base import BaseMidTable
+from bisheng.telemetry.domain.mid_table.dataset_increment import DatasetIncrement, DatasetIncrementRecord
 from bisheng.telemetry.domain.mid_table.knowledge_increment import KnowledgeIncrement, KnowledgeIncrementRecord
 from bisheng.telemetry.domain.mid_table.user_increment import UserIncrement, UserIncrementRecord
 from bisheng.telemetry.domain.mid_table.user_interact import UserInteract, UserInteractRecord
@@ -18,15 +23,37 @@ from bisheng.utils import generate_uuid
 from bisheng.worker.main import bisheng_celery
 
 
+def _db_now() -> datetime:
+    """Current time from the source DB.
+
+    create_time columns are written by the MySQL server (CURRENT_TIMESTAMP),
+    whose clock can differ from the worker process clock (e.g. DB at +08:00
+    while the workers run UTC). Bounding the sync window with the process
+    clock then makes ``end < start`` for the newest records and the daily run
+    silently skips them; use the DB clock so both bounds and the stored
+    ``create_time`` values share one time base.
+    """
+    with get_sync_db_session() as session:
+        return session.scalar(text("SELECT CURRENT_TIMESTAMP"))
+
+
 def get_yesterday_date_range(
     mid_table: BaseMidTable, start_date: str = None, end_date: str = None
 ) -> (datetime, datetime):
     if start_date is None or end_date is None:
-        # default to yesterday's date
-        now = datetime.now()
-        yesterday = now - timedelta(days=1)
-        start_date = datetime(year=yesterday.year, month=yesterday.month, day=yesterday.day, hour=0, minute=0, second=0)
-        end_date = datetime(year=now.year, month=now.month, day=now.day, hour=0, minute=0, second=0)
+        # Incremental sync up to the DB's NOW: the default window previously
+        # ended at today 00:00, so users/apps created today only reached the
+        # mid tables on the following day's run — dashboard totals
+        # (总用户数/总应用数…) lagged behind the source tables by up to a day.
+        end_date = _db_now()
+        lastest_time = mid_table.get_latest_record_time_sync()
+        if lastest_time:
+            start_date = datetime.fromtimestamp(lastest_time) + timedelta(seconds=1)
+        else:
+            # First run on an empty mid table: backfill the entire history,
+            # otherwise a fresh deployment only syncs the previous day and the
+            # cumulative totals never match the source tables.
+            start_date = datetime(1970, 1, 1)
     else:
         start_date = datetime.fromisoformat(start_date)
         end_date = datetime.fromisoformat(end_date)
@@ -114,6 +141,59 @@ def sync_mid_user_increment(start_date: str = None, end_date: str = None):
 
     # This is a placeholder for the actual data synchronization logic
     logger.info(f"Successfully synced mid_user_increment from {start_date} to {end_date}")
+
+
+@bisheng_celery.task()
+@_cross_tenant
+def sync_mid_dataset_increment(start_date: str | None = None, end_date: str | None = None):
+    trace_id_var.set(f"sync_mid_dataset_increment_task_{generate_uuid()}")
+    mid_table = DatasetIncrement()
+    start_date, end_date = get_yesterday_date_range(mid_table, start_date, end_date)
+    if start_date is None or end_date is None:
+        return
+
+    logger.info(f"Syncing mid_dataset_increment from {start_date} to {end_date}")
+    page, page_size = 1, 1000
+
+    while True:
+        dataset_list = DatasetDao.get_datasets_by_create_window(start_date, end_date, page=page, page_size=page_size)
+        page += 1
+        if not dataset_list:
+            break
+        user_map = {}
+        get_user_from_ids_with_cache([ds.user_id for ds in dataset_list if ds.user_id], user_map)
+        records = []
+        for ds in dataset_list:
+            user = user_map.get(ds.user_id)
+            records.append(
+                DatasetIncrementRecord(
+                    es_id=f"dataset_{ds.id}",
+                    dataset_id=ds.id,
+                    user_id=ds.user_id or 0,
+                    user_name=user.user_name if user else str(ds.user_id),
+                    user_group_infos=[
+                        UserGroupInfo(user_group_id=group.id, user_group_name=group.group_name) for group in user.groups
+                    ]
+                    if user
+                    else [],
+                    user_role_infos=[
+                        UserRoleInfo(role_id=role.id, role_name=role.role_name, group_id=role.group_id)
+                        for role in user.roles
+                    ]
+                    if user
+                    else [],
+                    user_department_infos=[
+                        UserDepartmentInfo(department_id=dept.id, department_name=dept.name)
+                        for dept in getattr(user, "departments", []) or []
+                    ]
+                    if user
+                    else [],
+                    timestamp=int(ds.create_time.timestamp()),
+                )
+            )
+        mid_table.insert_records_sync(records)
+
+    logger.info(f"Successfully synced mid_dataset_increment from {start_date} to {end_date}")
 
 
 def get_user_from_ids_with_cache(user_ids: list[int], user_map: dict):
@@ -304,3 +384,66 @@ def sync_mid_user_interact_dtl(start_date: str = None, end_date: str = None):
         mid_table.insert_records_sync(records)
     # Implement the actual logic here
     logger.info("Successfully synced mid_user_interact_dtl table.")
+
+
+@bisheng_celery.task()
+@_cross_tenant
+def sync_mid_agent_run_dtl(start_date: str = None, end_date: str = None):
+    """Sync agent runs (APPLICATION_PROCESS events) into mid_agent_run_dtl.
+
+    One row per agent run; the dashboard dataset aggregates count/success
+    rate/avg/max process_time at query time (design 决策 2).
+    """
+    trace_id_var.set(f"sync_mid_agent_run_dtl_task_{generate_uuid()}")
+    logger.info("Syncing mid_agent_run_dtl table...")
+    mid_table = AgentRun()
+    start_date, end_date = get_yesterday_date_range(mid_table, start_date, end_date)
+    if start_date is None or end_date is None:
+        return
+
+    page, page_size = 1, 1000
+    while True:
+        result = mid_table.get_records_by_time_range_sync(
+            start_time=int(start_date.timestamp()), end_time=int(end_date.timestamp()), page=page, page_size=page_size
+        )
+        page += 1
+        if not result:
+            break
+        records = []
+        for record in result:
+            es_id = record["_id"]
+            record = record["_source"]
+            event_data = record.get("event_data") or {}
+            records.append(
+                AgentRunRecord(
+                    es_id=es_id,
+                    user_id=record["user_context"]["user_id"],
+                    user_name=record["user_context"]["user_name"],
+                    user_group_infos=[
+                        UserGroupInfo(user_group_id=group["user_group_id"], user_group_name=group["user_group_name"])
+                        for group in record["user_context"].get("user_group_infos", [])
+                    ],
+                    user_role_infos=[
+                        UserRoleInfo(
+                            role_id=role["role_id"], role_name=role["role_name"], group_id=role.get("group_id", 0)
+                        )
+                        for role in record["user_context"].get("user_role_infos", [])
+                    ],
+                    user_department_infos=[
+                        UserDepartmentInfo(department_id=d["department_id"], department_name=d["department_name"])
+                        for d in record["user_context"].get("user_department_infos", [])
+                    ],
+                    event_id=record["event_id"],
+                    timestamp=record["timestamp"],
+                    app_id=event_data["application_process_app_id"],
+                    app_name=event_data["application_process_app_name"],
+                    app_type=event_data["application_process_app_type"],
+                    chat_id=event_data.get("application_process_chat_id"),
+                    process_time=event_data["application_process_process_time"],
+                    # historical events lack status -> None, excluded from the
+                    # success-rate denominator by the dataset's exists-filter
+                    status=event_data.get("application_process_status"),
+                )
+            )
+        mid_table.insert_records_sync(records)
+    logger.info("Successfully synced mid_agent_run_dtl table.")

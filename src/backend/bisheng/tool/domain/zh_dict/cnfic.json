@@ -1,0 +1,1282 @@
+{
+  "servers": {
+    "/mcp-servers/xhcj-mcp-quote-stock-real": {
+      "tools": {
+        "get-stock-real-data": {
+          "desc": "查询股票实时数据",
+          "params": {
+            "prod_code": "证券代码【例：000001.SZ】"
+          }
+        },
+        "get-fund-real-data": {
+          "desc": "查询基金实时数据",
+          "params": {
+            "prod_code": "基金代码【例：159915.SZ】"
+          }
+        },
+        "get-index-real-data": {
+          "desc": "查询指数实时行情数据",
+          "params": {
+            "prod_code": "指数代码【例：000300.SH】"
+          }
+        },
+        "get-future-real-data": {
+          "desc": "查询期货实时行情数据",
+          "params": {
+            "prod_code": "期货合约代码【例：RB2410】"
+          }
+        },
+        "get-option-real-data": {
+          "desc": "查询期权实时行情数据",
+          "params": {
+            "prod_code": "期权合约代码【例：10004881.SH】"
+          }
+        },
+        "get-forex-real-data": {
+          "desc": "查询外汇实时行情数据",
+          "params": {
+            "prod_code": "外汇代码【例：USDCNY】"
+          }
+        },
+        "get-market-real-data-v2": {
+          "desc": "代码详细内部信息",
+          "params": {
+            "codes": "品种代码.市场，例如 600570.SS、600570.XSHG，输入为列表"
+          }
+        },
+        "get-history-snapshot": {
+          "desc": "查询历史行情快照数据",
+          "params": {
+            "beginDate": "开始日期，格式 YYYY-MM-DD，例如 2026-07-07",
+            "endDate": "结束日期，格式 YYYY-MM-DD，例如 2026-07-08",
+            "code": "品种代码.市场，例如 600570.SS",
+            "adjusted": "复权标记：none不复权 / previous前复权 / backward后复权，默认 none",
+            "period": "周期：Day日 / Week周 / Month月 / Year年，默认 Day",
+            "fields": "字段列表"
+          }
+        }
+      }
+    },
+    "/mcp-servers/xhcj-mcp-financial-market": {
+      "tools": {
+        "fund-performance": {
+          "desc": "基金业绩表现",
+          "params": {
+            "GilCode": "基金代码",
+            "BeginDate": "开始日期",
+            "EndDate": "截止日期"
+          }
+        },
+        "fund-periodicreturn": {
+          "desc": "基金阶段回报（包括近一月、近三月、近六月、今年以来、近一年、近二年、近三年、近五年、成立以来、成立以来-年化）",
+          "params": {
+            "GilCode": "基金代码"
+          }
+        },
+        "fund-riskperformanceanalysis": {
+          "desc": "风险收益分析（最大回撤/Alpha/夏普比率）",
+          "params": {
+            "GilCode": "基金代码【必须带市场代码后缀，例：000001.OF】",
+            "MarketIndex": "基准代码【必须带市场代码后缀，例：000300.SH】",
+            "Period": "周期（Week/Month/Year）",
+            "BeginDate": "开始日期（YYYY-MM-DD）",
+            "EndDate": "截止日期（YYYY-MM-DD）",
+            "RiskFreeRatio": "无风险收益率（0-一年期定期存款利率，1-一年期定期存款利率(税后)）【此参数决定最终返回值（只能传入“0”或者“1”）】",
+            "IncomePeriod": "收益率周期（Day/Week/Month/Year）",
+            "DataType": "设置指标（3-Alpha，5-Sharpe比率）【此参数决定最终返回值（如调用 alpha 接口时传 DataType=\"5\"，将返回 Sharpe 而非 Alpha）】"
+          }
+        },
+        "fund-riskperformanceanalysis-alpha": {
+          "desc": "风险收益分析-Alpha",
+          "params": {
+            "GilCode": "基金代码【必须带市场代码后缀，例：000001.OF】",
+            "MarketIndex": "基准代码【必须带市场代码后缀，例：000300.SH】",
+            "Period": "周期（Week/Month/Year）",
+            "BeginDate": "开始日期（YYYY-MM-DD）",
+            "EndDate": "截止日期（YYYY-MM-DD）",
+            "RiskFreeRatio": "无风险收益率（0-一年期定期存款利率，1-一年期定期存款利率(税后)）【此参数决定最终返回值（只能传入“0”或者“1”）】",
+            "IncomePeriod": "收益率周期（Day/Week/Month/Year）"
+          }
+        },
+        "fund-riskperformanceanalysis-sharpe": {
+          "desc": "风险收益分析-夏普比率",
+          "params": {
+            "GilCode": "基金代码【必须带市场代码后缀，例：000001.OF】",
+            "MarketIndex": "基准代码【必须带市场代码后缀，例：000300.SH】",
+            "Period": "周期（Week/Month/Year）",
+            "BeginDate": "开始日期（YYYY-MM-DD）",
+            "EndDate": "截止日期（YYYY-MM-DD）",
+            "RiskFreeRatio": "无风险收益率（0-一年期定期存款利率，1-一年期定期存款利率(税后)）【此参数决定最终返回值（只能传入“0”或者“1”）】",
+            "IncomePeriod": "收益率周期（Day/Week/Month/Year）"
+          }
+        },
+        "fund-relatedannouncementsnews": {
+          "desc": "相关公告新闻",
+          "params": {
+            "gilCode": "基金代码【例：000001.OF】",
+            "pageNo": "页码，从1开始",
+            "pageSize": "每页记录数"
+          }
+        },
+        "fund-fastsheet": {
+          "desc": "基金速览-基本资料",
+          "params": {
+            "GilCode": "基金代码【例：000001.OF】",
+            "SecuAbbr": "基金名称【例：华夏成长混合A】"
+          }
+        },
+        "fund-stockholdings": {
+          "desc": "基金速览-重仓持股",
+          "params": {
+            "GilCode": "基金代码【例：000001.OF】",
+            "Date": "截止日期【季末日期，例：2026-03-31】"
+          }
+        },
+        "fund-bondholdings": {
+          "desc": "基金速览-重仓债券",
+          "params": {
+            "GilCode": "基金代码【例：000001.OF】",
+            "Date": "截止日期【季末日期，例：2026-03-31】"
+          }
+        },
+        "fund-maximum_drawdown": {
+          "desc": "基金最大回撤",
+          "params": {
+            "GilCodes": "基金代码【例：000001.OF】",
+            "BeginDate": "起始日期【例：2026-01-01】",
+            "EndDate": "截止日期【例：2026-05-25】"
+          }
+        },
+        "fund_cat_hierarchy": {
+          "desc": "基金层级查找顺序",
+          "params": {
+            "GilCode": "基金代码",
+            "SecuAbbr": "基金简称"
+          }
+        },
+        "trade-day": {
+          "desc": "市场交易日接口",
+          "params": {
+            "body": "请求体，JSON格式，包含beginDate, endDate, market等字段"
+          }
+        },
+        "xhcj-mcp-stock-xssjj": {
+          "desc": "获取限售股解禁数据",
+          "params": {
+            "BeginDate": "查询开始日期 (YYYY-MM-DD)",
+            "EndDate": "查询结束日期 (YYYY-MM-DD)",
+            "SourceTypes": "资源类型列表【默认[]】",
+            "ApiName": "接口业务名称【默认jy.topic.stock.strutrue.floating.info】",
+            "SectorNums": "行业编码【默认1101001】",
+            "Compress": "是否压缩返回数据【默认false】",
+            "WriteType": "数据写入类型【默认json2】"
+          }
+        },
+        "xhcj-mcp-stocksg-field": {
+          "desc": "股票申购数据",
+          "params": {
+            "DateTime": "查询日期 (YYYY-MM-DD)"
+          }
+        },
+        "xhcj-mcp-stockss-field": {
+          "desc": "股票上市数据",
+          "params": {
+            "DateTime": "查询日期 (YYYY-MM-DD)"
+          }
+        },
+        "get-query-body-for-bond": {
+          "desc": "通过关键词，检索债券浏览器指标编码等入参信息",
+          "params": {
+            "PageNo": "页码【例：1】",
+            "PageSize": "每页数量【例：500】",
+            "CategoryIDs": "栏目码（债券：74）【例：74】",
+            "NodeName": "查询关键词【例：债券简称】"
+          }
+        },
+        "bond-browser": {
+          "desc": "通过指标代码，查询指标各期的数据。",
+          "params": {
+            "Sorts": "排序",
+            "IndicatorExps": "指标",
+            "GilCodes": "债券代码"
+          }
+        },
+        "get-query-body-for-fund": {
+          "desc": "通过关键词，检索基金浏览器指标编码等入参信息。",
+          "params": {
+            "PageNo": "页码",
+            "PageSize": "每页数量",
+            "CategoryIDs": "栏目码（基金：48）",
+            "NodeName": "查询关键词"
+          }
+        },
+        "fund-browser": {
+          "desc": "通过指标代码，查询指标各期的数据。",
+          "params": {
+            "Sorts": "排序",
+            "IndicatorExps": "指标",
+            "GilCodes": "基金代码"
+          }
+        },
+        "get-query-body-for-stock": {
+          "desc": "通过关键词，检索股票浏览器指标编码等入参信息",
+          "params": {
+            "PageNo": "页码【例：1】",
+            "PageSize": "每页数量【例：500】",
+            "CategoryIDs": "栏目码（股票：2202）【例：2202】",
+            "NodeName": "查询关键词【例：销售毛利率】"
+          }
+        },
+        "stock-browser": {
+          "desc": "通过指标代码，查询指标各期的数据",
+          "params": {
+            "Params\\": "",
+            "GilCodes": "股票代码【支持多个，例：[\"300018.SZ\",\"600900.SH\"]】"
+          }
+        },
+        "get-query-body-for-usstock": {
+          "desc": "获取查询参数（美股浏览器）",
+          "params": {
+            "PageNo": "页码",
+            "PageSize": "每页数量",
+            "NodeName": "查询关键词【例：营业总收入】"
+          }
+        },
+        "usstock-browser": {
+          "desc": "美股浏览器",
+          "params": {
+            "Params\\": "",
+            "GilCodes": "股票代码【例：[\"AIG.NY\"]】"
+          }
+        },
+        "lgbn_ct_party_project": {
+          "desc": "专项债_主体统计",
+          "params": {
+            "ConstructionUnits": "当事人名称【例：建设集团】",
+            "CityCode1": "项目所属-省代码【例：110000】",
+            "CityCode2": "项目所属-市（区）代码",
+            "CityCode3": "项目所属-县代码",
+            "IssueYear": "债券发行年份"
+          }
+        },
+        "lgbn_project_f_list": {
+          "desc": "专项债_项目基本面列表",
+          "params": {
+            "ProjectTypeCode": "项目类别代码",
+            "ProjectYears": "查询条件-年份列表",
+            "YorN": "是否做资本金(是/否)",
+            "CityCode1": "省代码",
+            "CityCode2": "市代码",
+            "CityCode3": "县代码",
+            "Keyword": "关键字【项目名称/项目建设主体名称/实施主体/项目主管部门名称/项目所属-省名称/项目所属-市名称（市）/项目所属-县名称（区、县）】",
+            "ProjectSPYN": "查询条件年份+是否做资本金（YYYY是/否）"
+          }
+        },
+        "lgbn_project_f": {
+          "desc": "专项债_项目基本面",
+          "params": {
+            "ProjectName": "项目名称【例：阿苏卫循环经济产业园项目】"
+          }
+        },
+        "lgbn_ct_project_bond": {
+          "desc": "专项债统计_按主体统计项目实施情况",
+          "params": {
+            "CityCode1": "省【例：100000】",
+            "CityCode2": "市",
+            "CityCode3": "区，县，自治州、县",
+            "StartDate": "债券发行开始日期（yyyy-mm-dd）【例：2026-01-01】",
+            "EndDate": "债券发行截止日期（yyyy-mm-dd）【例：2026-06-01】",
+            "BondAreaCode": "债券区域代码"
+          }
+        }
+      }
+    },
+    "/mcp-servers/xhcj-mcp-toplist-mf": {
+      "tools": {
+        "toplist_mf_totalnetasset": {
+          "desc": "基金规模排行查询（排行榜_基金_规模，可以按运作方式、基金类别查询）",
+          "params": {
+            "pageNo": "页码（默认1）",
+            "pageSize": "每页记录数（最大2000，默认10）",
+            "OPType": "运作方式（开放式/LOF/封闭式/ETF）",
+            "FundType": "基金类别（混合型/股票型/债券型/货币型/QDII）"
+          }
+        },
+        "toplist_mf_accumulatedunitnv": {
+          "desc": "基金净值（累计净值）排行查询（排行榜_基金_累计净值，可以按运作方式、基金类别查询）",
+          "params": {
+            "pageNo": "页码（默认1）",
+            "pageSize": "每页记录数（最大2000，默认10）",
+            "OPType": "运作方式（开放式/LOF/封闭式/ETF）",
+            "FundType": "基金类别（混合型/股票型/债券型/货币型/QDII）"
+          }
+        },
+        "toplist_mf_sortino": {
+          "desc": "基金稳健性（索提诺比率）排行查询（排行榜_基金_稳健性，可以按运作方式、基金类别查询，按近半年公布索提诺比率计算值）",
+          "params": {
+            "pageNo": "页码（默认1）",
+            "pageSize": "每页记录数（最大2000，默认10）",
+            "OPType": "运作方式（开放式/LOF/封闭式/ETF）",
+            "FundType": "基金类别（混合型/股票型/债券型/货币型/QDII）"
+          }
+        },
+        "toplist_mf_fundrating": {
+          "desc": "基金评级排行查询（排行榜_基金_评级，可以按运作方式、基金类别查询，按近半年招商、海通、济安金信、天相公布评级计算（不含债券型））",
+          "params": {
+            "pageNo": "页码（默认1）",
+            "pageSize": "每页记录数（最大2000，默认10）",
+            "OPType": "运作方式（开放式/LOF/封闭式/ETF）",
+            "FundType": "基金类别（混合型/股票型/货币型/QDII）"
+          }
+        },
+        "toplist_mf_yieldranking": {
+          "desc": "基金收益率排行查询（排行榜_基金_收益率，可以按运作方式、基金类别查询，按近半年收益率计算）",
+          "params": {
+            "pageNo": "页码（默认1）",
+            "pageSize": "每页记录数（最大2000，默认10）",
+            "OPType": "运作方式（开放式/LOF/封闭式/ETF）",
+            "FundType": "基金类别（混合型/股票型/债券型/货币型/QDII）"
+          }
+        },
+        "toplist_mf_reits": {
+          "desc": "REITs基金规模排行查询（排行榜_基金_REITs（默认规模倒序返回））",
+          "params": {
+            "pageNo": "页码（默认1）",
+            "pageSize": "每页记录数（最大2000，默认10）"
+          }
+        }
+      }
+    },
+    "/mcp-servers/xhcj-mcp-ds-edb-browser": {
+      "tools": {
+        "indicator-search": {
+          "desc": "通过给定的检索词检索指标信息。",
+          "params": {
+            "KeyWord": "检索词，可检索指标名称/指标代码【例：中国创新指数/120039871】",
+            "PageNo": "页码",
+            "PageSize": "每页数量",
+            "Categorys": "指标类别，可选值[\"ChinaMacro\",\"InternationalMacro\",\"MacroIndustry\",\"MacroLocalIndustry\"]，分别对应中国宏观、行业经济、全球宏观、地方经济"
+          }
+        },
+        "data-search": {
+          "desc": "根据指标代码，查询指标各期的数据值。特别的当指标是地方经济库指标，那么指标代码需加后缀-a，例如\"1600087091-a\"。",
+          "params": {
+            "IndicatorCodes": "指标代码列表，【例：[\"530500087\", \"500157319\"]】",
+            "PageNo": "页码",
+            "PageSize": "每页数量",
+            "BeginDate": "数据起始日期【例：2020-01-01】",
+            "EndDate": "数据截止日期【例：2025-12-31】"
+          }
+        },
+        "china-macro-root": {
+          "desc": "中国宏观-指标层级根节点",
+          "params": {}
+        },
+        "china-macro-tree": {
+          "desc": "中国宏观-首次查询需通过china-macro-root工具返回的NodeCode查询作为入参，之后按照指标层级代码NodeCode逐次调用,查询子层级或子节点。当NoteCategory=1，代表当前为层级,可继续查询子层级或子节点；当NoteCategory=2时为子节点，此时NodeCode即为指标的IndicatorCode，可通过china-macro-indicator查询指标信息。",
+          "params": {
+            "NodeCode": "节点编码【例：1000000】",
+            "pageSize": "返回数量",
+            "pageNo": "数据页"
+          }
+        },
+        "china-macro-indicator": {
+          "desc": "中国宏观-根据china-macro-tree工具检索出来的指标代码IndicatorCode，查询指标基本信息。",
+          "params": {
+            "IndicatorCode": "指标代码（当层级是叶子节点时对应层级的NodeCode）【例：110252265】",
+            "pageNo": "分页页码",
+            "pageSize": "每页数量"
+          }
+        },
+        "industry-root": {
+          "desc": "行业经济-指标层级的根节点",
+          "params": {}
+        },
+        "industry-tree": {
+          "desc": "行业经济-首次查询需通过industry-root工具返回的NodeCode查询作为入参，之后按照指标层级代码NodeCode逐次调用,查询子层级或子节点。当NoteCategory=1，代表当前为层级,可继续查询子层级或子节点；当NoteCategory=2时为子节点，此时NodeCode即为指标的IndicatorCode，可通过industry-indicator查询指标信息。",
+          "params": {
+            "NodeCode": "节点编码",
+            "pageSize": "返回数量",
+            "pageNo": "数据页"
+          }
+        },
+        "industry-indicator": {
+          "desc": "行业经济-根据industry-tree工具检索出来的指标代码IndicatorCode，查询指标基本信息。",
+          "params": {
+            "IndicatorCode": "指标代码（当层级是叶子节点时对应层级的NodeCode）",
+            "pageNo": "分页页码",
+            "pageSize": "每页数量"
+          }
+        },
+        "global-macro-root": {
+          "desc": "国际宏观-指标层级的根节点",
+          "params": {}
+        },
+        "global-macro-tree": {
+          "desc": "国际宏观-首次查询需通过global-macro-root工具返回的NodeCode查询作为入参，之后按照指标层级代码NodeCode逐次调用,查询子层级或子节点。当NoteCategory=1，代表当前为层级,可继续查询子层级或子节点；当NoteCategory=2时为子节点，此时NodeCode即为指标的IndicatorCode，global-macro-indicator查询指标信息。",
+          "params": {
+            "NodeCode": "节点编码",
+            "pageSize": "返回数量",
+            "pageNo": "数据页"
+          }
+        },
+        "global-macro-indicator": {
+          "desc": "国际宏观-根据global-macro-tree工具检索出来的指标代码IndicatorCode，查询指标基本信息。",
+          "params": {
+            "IndicatorCode": "指标代码（当层级是叶子节点时对应层级的NodeCode）",
+            "pageNo": "分页页码",
+            "pageSize": "每页数量"
+          }
+        },
+        "loc-macro-root": {
+          "desc": "地方经济-指标层级的根节点",
+          "params": {}
+        },
+        "loc-macro-tree": {
+          "desc": "地方经济-首次查询需通过loc-macro-root工具返回的NodeCode查询作为入参，之后按照指标层级代码NodeCode逐次调用,查询子层级或子节点。当NoteCategory=1，代表当前为层级,可继续查询子层级或子节点；当NoteCategory=2时为子节点，此时NodeCode即为指标的IndicatorCode，loc-macro-indicator查询指标信息。",
+          "params": {
+            "NodeCode": "节点编码",
+            "pageSize": "返回数量",
+            "pageNo": "数据页"
+          }
+        },
+        "loc-macro-indicator": {
+          "desc": "地方经济-根据loc-macro-tree工具检索出来的指标代码IndicatorCode，查询指标基本信息。",
+          "params": {
+            "IndicatorCode": "指标代码（当层级是叶子节点时对应层级的NodeCode）",
+            "pageNo": "分页页码",
+            "pageSize": "每页数量"
+          }
+        },
+        "economic-calendar": {
+          "desc": "查询全球财经日历，各个国家发布的重点指标。",
+          "params": {
+            "OccurDate_S": "发布起始时间【例：2026-04-15】",
+            "OccurDate_E": "发布截止时间【例：2026-04-16】",
+            "HomeCountry": "国家地区【例：中国】"
+          }
+        }
+      }
+    },
+    "/mcp-servers/xhcj-mcp-announcements-news-policy": {
+      "tools": {
+        "get_AStock_News_byStockName": {
+          "desc": "股票资讯",
+          "params": {
+            "stockName": "股票名称"
+          }
+        },
+        "search_prodinfo_stockSector_news": {
+          "desc": "板块资讯",
+          "params": {
+            "endTime": "结束时间",
+            "begTime": "开始时间",
+            "title": "标题",
+            "contentTxt": "正文内容",
+            "tagName": "标签名称"
+          }
+        },
+        "get_xhcj_hotNews": {
+          "desc": "获取新华财经热点新闻",
+          "params": {
+            "begTime": "开始时间（更新时间）",
+            "endTime": "结束时间（更新时间）"
+          }
+        },
+        "search_prodinfo": {
+          "desc": "新华财经资讯搜索，包括成品稿和素材",
+          "params": {
+            "title": "标题",
+            "contentTxt": "正文内容",
+            "begTime": "开始时间",
+            "endTime": "结束时间",
+            "tagName": "标签名称",
+            "pageNo": "页码，从1开始",
+            "pageSize": "每页记录数",
+            "IfProd": "是否为生产环境标识"
+          }
+        },
+        "get_newsflash_Commodities": {
+          "desc": "查询大宗快讯数据",
+          "params": {
+            "startdate": "开始日期",
+            "enddate": "结束日期",
+            "Title": "资讯标题",
+            "news_type": "资讯类型",
+            "ExternalSource": "稿件来源"
+          }
+        },
+        "get_newsflash_foreign_currency": {
+          "desc": "查询外汇自动报价快讯数据",
+          "params": {
+            "startdate": "开始日期",
+            "enddate": "结束日期",
+            "Title": "资讯标题",
+            "news_type": "资讯类型",
+            "ExternalSource": "稿件来源"
+          }
+        },
+        "get_newsflash_stock": {
+          "desc": "查询股票快讯数据",
+          "params": {
+            "startdate": "开始日期",
+            "enddate": "结束日期",
+            "Title": "资讯标题",
+            "news_type": "资讯类型",
+            "ExternalSource": "稿件来源"
+          }
+        },
+        "xhcj-mcp-announce-search": {
+          "desc": "按关键词查找上市公司公告（50种监控事件）",
+          "params": {
+            "keyword": "关键词",
+            "start_date": "开始日期",
+            "end_date": "结束日期",
+            "topN": "返回前N(1-100)"
+          }
+        },
+        "get-las-vector": {
+          "desc": "政策关键字查询",
+          "params": {
+            "keyword": "关键词",
+            "start_date": "开始日期(yyyy-MM-dd HH:mm:ss)",
+            "end_date": "结束日期(yyyy-MM-dd HH:mm:ss)"
+          }
+        },
+        "get_bulletin_type": {
+          "desc": "公告类别代码查询工具，根据场景和关键词检索公告类别编码（type_code）与品类参数（param）",
+          "params": {
+            "keyword": "关键词",
+            "scene": "场景（XM,XN,XO,XL,FIN,HK,SYS）"
+          }
+        },
+        "getBulletinList_gzj_4mcp": {
+          "desc": "标准品类公告列表查询工具，用于查询股票、债券、基金三大标准品类的公告数据",
+          "params": {
+            "topN": "返回前N条",
+            "s_InfoPublDate": "开始日期（秒级时间戳10位）",
+            "e_InfoPublDate": "结束日期（秒级时间戳10位）",
+            "type_code": "公告类别代码（可在get_bulletin_type工具获得）",
+            "param": "公告类型（stock,bond,fund,index 等）",
+            "InfoType": "信息类型",
+            "Market": "市场",
+            "CSRCIndustry": "证监会行业",
+            "RegArea": "区域",
+            "Extend": "扩展字段",
+            "InfoTitle": "公告标题",
+            "Content": "公告内容",
+            "SecuCode": "证券代码"
+          }
+        },
+        "getBulletinList_other_4mcp": {
+          "desc": "其他品类公告列表查询工具，用于查询指数、理财、港股、新三板等其他品类的公告数据",
+          "params": {
+            "topN": "返回前N条",
+            "s_InfoPublDate": "开始日期（秒级时间戳10位）",
+            "e_InfoPublDate": "结束日期（秒级时间戳10位）",
+            "type_code": "公告类别代码（可在get_bulletin_type工具获得）",
+            "param": "公告类型（stock,bond,fund,index 等）",
+            "InfoType": "信息类型",
+            "Market": "市场",
+            "CSRCIndustry": "证监会行业",
+            "RegArea": "区域",
+            "Extend": "扩展字段",
+            "InfoTitle": "公告标题",
+            "Content": "公告内容",
+            "SecuCode": "证券代码"
+          }
+        }
+      }
+    },
+    "/mcp-servers/xhcj-mcp-report-overseas": {
+      "tools": {
+        "search_report_by_date": {
+          "desc": "基于日期获取研报信息，支持按日期范围查询",
+          "params": {
+            "start_date": "开始日期，格式：yyyy-MM-dd",
+            "end_date": "结束日期，格式：yyyy-MM-dd",
+            "PageNo": "数据页【例：1】",
+            "PageSize": "返回数量【例：500】"
+          }
+        },
+        "search_report_by_title": {
+          "desc": "基于标题获取研报信息，支持按标题查询",
+          "params": {
+            "title": "标题",
+            "start_date": "开始日期，格式：yyyy-MM-dd",
+            "end_date": "结束日期，格式：yyyy-MM-dd"
+          }
+        },
+        "search_report_by_institution": {
+          "desc": "基于机构获取研报信息，支持按机构查询",
+          "params": {
+            "institution": "机构名称【例：国泰海通】",
+            "start_date": "开始日期，格式：yyyy-MM-dd【例：2026-06-09】",
+            "end_date": "结束日期，格式：yyyy-MM-dd【例：2026-06-09】",
+            "PageNo": "数据页【例：1】",
+            "PageSize": "返回数量【例：500】"
+          }
+        }
+      }
+    },
+    "/bdc-mcp-service/mcp/zjs_risk/http/": {
+      "tools": {
+        "get_cancellation_announcement": {
+          "desc": "查询注销公告记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_chattel_mortgage_info": {
+          "desc": "查询动产抵押记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_chattel_mortgage_pawn_info": {
+          "desc": "查询动产抵押物记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_chattel_mortgage_change_info": {
+          "desc": "查询动产抵押变更记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_chattel_mortgage_cancel_info": {
+          "desc": "查询动产抵押注销记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_dishonest_info": {
+          "desc": "查询失信被执行人记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number, credit_code"
+          }
+        },
+        "get_executed_person": {
+          "desc": "查询被执行人记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number, credit_code"
+          }
+        },
+        "get_final_case": {
+          "desc": "查询终本案件记录；记录包含立案ID和案号。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number, credit_code"
+          }
+        },
+        "get_gs_stock_pledge_alt": {
+          "desc": "查询股权质押变更记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_limit_highconsume": {
+          "desc": "查询限制高消费记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number, credit_code"
+          }
+        },
+        "get_ipr_pledge_info": {
+          "desc": "查询知识产权质押记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, company_cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_ipr_pledge_change_info": {
+          "desc": "查询知识产权质押变更记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, company_cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_sf_assistance": {
+          "desc": "按企业名称或统一信用代码查询司法协助记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, credit_code"
+          }
+        },
+        "get_sf_assistance_equity_freeze": {
+          "desc": "查询司法协助股权冻结记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, credit_code"
+          }
+        },
+        "get_sf_assistance_alter": {
+          "desc": "查询司法协助变更记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, credit_code"
+          }
+        },
+        "get_company_abnormal_info": {
+          "desc": "查询企业经营异常记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, credit_code"
+          }
+        },
+        "get_gs_stock_pledge": {
+          "desc": "按企业名称或统一信用代码查询股权质押记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, credit_code"
+          }
+        },
+        "get_tax_illegal": {
+          "desc": "查询税收违法记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小",
+            "offset": "分页偏移量"
+          }
+        },
+        "get_tax_owe_detail": {
+          "desc": "按企业名称或统一信用代码查询欠税明细记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, credit_code"
+          }
+        },
+        "get_env_punishment": {
+          "desc": "按企业名称或证照号码查询环保处罚记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number"
+          }
+        },
+        "get_administrative_penalty": {
+          "desc": "按企业名称或证照号码查询行政处罚记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number"
+          }
+        },
+        "get_company_illegal_info": {
+          "desc": "按企业名称或证照号码查询企业严重违法记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number"
+          }
+        },
+        "get_sf_brief_cancel": {
+          "desc": "按企业名称或证照号码查询简易注销记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number"
+          }
+        },
+        "get_sf_brief_cancel_dissent": {
+          "desc": "按企业名称或证照号码查询简易注销异议记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number"
+          }
+        },
+        "get_send_announcement": {
+          "desc": "按案号查询送达公告记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, case_no"
+          }
+        },
+        "get_send_announcement_party": {
+          "desc": "按案号查询送达公告当事人记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, case_no"
+          }
+        },
+        "get_judicial_document_info": {
+          "desc": "按案号查询裁判文书记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, case_number"
+          }
+        },
+        "get_judicial_document_party_relation": {
+          "desc": "按案号查询裁判文书当事人关系记录。",
+          "params": {
+            "query": "查询值",
+            "query_type": "查询类型，可选值：auto, case_number"
+          }
+        },
+        "health_ping": {
+          "desc": "服务健康检查（连通性探测）",
+          "params": {}
+        }
+      }
+    },
+    "/bdc-mcp-service/mcp/zjs_company/http/": {
+      "tools": {
+        "fuzzy_search_company_list": {
+          "desc": "按关键词搜索企业候选列表，适合只知道部分名称时先定位主体",
+          "params": {
+            "keyword": "搜索关键词【例：工商银行】",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_company_profile": {
+          "desc": "查询企业基础画像，例如企业名称、统一社会信用代码、注册状态、法定代表人、注册资本等基础信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name, stock_code, stock_short_name"
+          }
+        },
+        "get_company_info": {
+          "desc": "按企业简称查询企业详情列表，优先解析上市公司证券简称，再按企业简称/分词名称在主库索引中查找",
+          "params": {
+            "short_name": "企业简称/名称【例：小熊电器股份有限公司】",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_latest_company_employee": {
+          "desc": "查询企业最新主要人员/从业人员信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_company_senior_executive": {
+          "desc": "查询企业高管人员信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_company_shareholder": {
+          "desc": "查询企业股东信息，了解股权结构和出资方",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_company_branches": {
+          "desc": "查询企业分支机构信息，了解分公司、分支网点等布局",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_key_personnel": {
+          "desc": "查询企业主要人员信息，例如董事、监事、高管等",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_public_institution": {
+          "desc": "查询事业单位登记延展信息",
+          "params": {
+            "query": "查询值【例：121100004006149687】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_gov_agency": {
+          "desc": "查询政府机关登记延展信息",
+          "params": {
+            "query": "查询值【例：中华人民共和国外交部】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_law_office": {
+          "desc": "查询律所登记延展信息",
+          "params": {
+            "query": "查询值【例：31110000E00017891P】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_social_organization": {
+          "desc": "查询社会组织登记延展信息",
+          "params": {
+            "query": "查询值【例：中国绿化基金会】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_hongkong_company": {
+          "desc": "查询香港公司登记信息",
+          "params": {
+            "query": "查询值【例：汇丰控股有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_company_model": {
+          "desc": "查询企业规模分类信息，例如大型、中型、小型、微型等口径",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_company_controller": {
+          "desc": "查询企业实际控制人信息，辅助判断企业控制关系",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_company_change": {
+          "desc": "查询工商变更记录，了解企业登记事项历史变化",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_direct_investment": {
+          "desc": "查询企业对外直接投资信息，了解企业控股或参股的其他企业",
+          "params": {
+            "query": "查询值【例：贵州茅台酒股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_base_info": {
+          "desc": "查询企业年报基础信息，例如年报年度、经营状态、联系方式等披露内容",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_annual_report_shareholder_info": {
+          "desc": "查询年报股东及出资披露信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_investment_info": {
+          "desc": "查询年报中的对外投资披露信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_asset": {
+          "desc": "查询年报资产状况披露信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_change": {
+          "desc": "查询年报修改记录或年报变更信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_equity_change": {
+          "desc": "查询年报股权变更披露信息",
+          "params": {
+            "query": "查询值【例：91330000202823494D】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_guarantee_info": {
+          "desc": "查询年报对外担保披露信息",
+          "params": {
+            "query": "查询值【例：辽宁申华控股股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_social": {
+          "desc": "查询年报社保披露信息，例如参保人数等",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_annual_report_webinfo": {
+          "desc": "查询年报网站、网店等互联网经营信息",
+          "params": {
+            "query": "查询值【例：91110117MA009G6U3U】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_beneficial_owner": {
+          "desc": "查询企业受益所有人信息，辅助识别最终受益人",
+          "params": {
+            "query": "查询值【例：91310000132209367W】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_company_can_rev": {
+          "desc": "查询企业注销、吊销、撤销等记录",
+          "params": {
+            "query": "查询值【例：浙江奕卓新能源有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        },
+        "get_history_company_name": {
+          "desc": "查询企业历史名称，帮助识别企业曾用名",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, cert_number, credit_code, company_name"
+          }
+        }
+      }
+    },
+    "/bdc-mcp-service/mcp/zjs_operation/http/": {
+      "tools": {
+        "get_bid_announcement_baseinfo": {
+          "desc": "查询招标公告基础信息，包括招标单位、中标单位、项目基本情况等",
+          "params": {
+            "query": "查询值【例：北京大学】",
+            "query_type": "查询类型，可选值：auto, tenderee_name, tenderee_cert_number, wintenderee_name, wintenderee_cert_number",
+            "limit": "分页大小【例：50】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_bid_announcement_content": {
+          "desc": "查询招标公告正文内容，适合查看公告详细描述和采购要求",
+          "params": {
+            "query": "查询值【例：北京大学】",
+            "query_type": "查询类型，可选值：auto, tenderee_name, tenderee_cert_number",
+            "limit": "分页大小【例：50】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_bid_products": {
+          "desc": "查询招标产品、标的或采购内容，了解项目采购对象",
+          "params": {
+            "query": "查询值【例：北京大学】",
+            "query_type": "查询类型，可选值：auto, tenderee_name, tenderee_cert_number",
+            "limit": "分页大小【例：50】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_company_license": {
+          "desc": "查询企业行政许可记录，了解企业获得的各类许可资质",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小（默认50）",
+            "offset": "分页偏移量（默认0）"
+          }
+        },
+        "get_company_spot_check_info": {
+          "desc": "查询企业抽查检查记录，了解工商等部门的检查情况",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_company_customs_import_export_detail": {
+          "desc": "查询企业海关进出口信用登记信息，了解进出口资质",
+          "params": {
+            "query": "查询值【例：深圳雷柏科技股份有限公司】",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小【例：50】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_company_customs_credit_level": {
+          "desc": "查询企业海关信用等级记录，了解海关认证类别",
+          "params": {
+            "query": "查询值【例：深圳雷柏科技股份有限公司】",
+            "query_type": "查询类型，可选值：auto, company_name, cert_number",
+            "limit": "分页大小【例：50】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_related_company": {
+          "desc": "查询招投标项目相关企业，可按公司或项目名称定位",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, related_company_name, company_cert_number, project_name",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "health_ping": {
+          "desc": "服务健康检查（连通性探测）",
+          "params": {}
+        }
+      }
+    },
+    "/bdc-mcp-service/mcp/zjs_ipr/http/": {
+      "tools": {
+        "get_tm_baseinfo": {
+          "desc": "查询商标基础信息，例如商标名称、申请号、申请人、状态等",
+          "params": {
+            "query": "查询值【例：北京大学】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name",
+            "limit": "分页大小【例：50】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_tm_flow_base": {
+          "desc": "查询商标流程信息，用于了解申请、审查、变更等过程节点",
+          "params": {
+            "query": "查询值【例：北京大学】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name",
+            "limit": "分页大小【例：50】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_tm_product_base": {
+          "desc": "查询商标商品或服务项目，了解商标覆盖类别和项目",
+          "params": {}
+        },
+        "get_tm_announce_base": {
+          "desc": "查询商标公告信息，了解初审、注册、变更等公告情况",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, credit_code, company_name",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_company_copyright_detail": {
+          "desc": "查询软件著作权详情，可按企业或登记号定位具体软著",
+          "params": {}
+        },
+        "get_software_copyright": {
+          "desc": "按登记号查询软件著作权登记信息",
+          "params": {
+            "query": "查询值【例：小熊电器股份有限公司】",
+            "query_type": "查询类型，可选值：auto, register_no",
+            "limit": "分页大小【例：10】",
+            "offset": "分页偏移量【例：0】"
+          }
+        },
+        "get_software_copyright_owner": {
+          "desc": "按企业名称或证书号查询软件著作权所有权人",
+          "params": {}
+        }
+      }
+    },
+    "/mcp-servers/xhcj-mcp-fc-event": {
+      "tools": {
+        "get_vcpe_invest": {
+          "desc": "查询创投投资事件（建议时间跨度不超过6个月，否则有可能无法返回相关数据）",
+          "params": {
+            "key_word": "企业名称关键字（需包含%）【例：%北斗%】",
+            "start_date": "投资日期（开始日期）【例：2025-11-01】",
+            "end_date": "投资日期（结束日期）【例：2026-03-01】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_vcpe_exit": {
+          "desc": "查询创投退出事件（建议时间跨度不超过6个月，否则有可能无法返回相关数据）",
+          "params": {
+            "key_word": "企业名称关键字（需包含%）【例：%供应链%】",
+            "start_date": "投资日期（开始日期）【例：2026-02-01】",
+            "end_date": "投资日期（结束日期）【例：2026-05-01】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_equitypledge": {
+          "desc": "查询股权出质信息（建议时间跨度不超过6个月，否则有可能无法返回相关数据）",
+          "params": {
+            "key_word": "企业名称关键字（需包含%）【例：%沧州银行%】",
+            "start_date": "投资日期（开始日期）【例：2026-01-01】",
+            "end_date": "投资日期（结束日期）【例：2026-05-01】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_acreceive": {
+          "desc": "查询应收账款融资事件（建议查询时间跨度不超过6个月，否则可能无法返回相关数据）",
+          "params": {
+            "key_word": "关键字（需包含%，如%万科%）【例：%万科%】",
+            "start_date": "公告日期（开始日期）【例：2026-01-01】",
+            "end_date": "公告日期（结束日期）【例：2026-01-06】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_bankload": {
+          "desc": "查询银行借款事件（建议时间跨度不超过6个月，否则有可能无法返回相关数据）",
+          "params": {
+            "start_date": "公告日期（开始日期）【例：2026-01-01】",
+            "end_date": "公告日期（结束日期）【例：2026-01-03】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_creditline": {
+          "desc": "查询银行授信情况（建议查询时间跨度不超过6个月，否则可能无法返回相关数据）",
+          "params": {
+            "key_word": "主体关键字（需包含%，如%长城汽车%）【例：%长城汽车%】",
+            "start_date": "开始日期【例：2025-01-01】",
+            "end_date": "结束日期【例：2026-03-31】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_finlease": {
+          "desc": "查询融资租赁事件（建议时间跨度不超过6个月，否则有可能无法返回相关数据）",
+          "params": {
+            "key_word": "关键字（需包含%，如%长城汽车%）【例：%长城汽车%】",
+            "start_date": "公告日期（开始日期）【例：2026-01-01】",
+            "end_date": "公告日期（结束日期）【例：2026-01-10】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_fintrust": {
+          "desc": "查询信托融资事件（建议时间跨度不超过6个月，否则无法返回相关数据）",
+          "params": {
+            "key_word": "关键字（需包含%）【例：%陕国投%】",
+            "start_date": "公告日期（开始日期）【例：2026-01-01】",
+            "end_date": "公告日期（结束日期）【例：2026-05-01】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        },
+        "get_otherfin": {
+          "desc": "查询其他融资事件（建议时间跨度不超过6个月，否则可能无法返回相关数据）",
+          "params": {
+            "start_date": "公告日期（开始日期）【例：2026-01-01】",
+            "end_date": "公告日期（结束日期）【例：2026-01-10】",
+            "pageNo": "返回页码【例：1】",
+            "pageSize": "返回每页数量【例：10】"
+          }
+        }
+      }
+    }
+  }
+}

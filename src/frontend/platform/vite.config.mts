@@ -1,5 +1,6 @@
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
+import { readFileSync } from "node:fs";
 import { defineConfig, loadEnv } from "vite";
 import { createHtmlPlugin } from 'vite-plugin-html';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
@@ -62,6 +63,22 @@ const createProxyConfig = (target: string, rewrite = true, isMinio = false) => (
 
 const apiRoutes = ["/api/", "/health"];
 const fileServiceRoutes = ["/bisheng", "/tmp-dir"];
+
+// Optional HTTPS for the dev server (see client/vite.config.ts devHttpsConfig
+// for the rationale — getUserMedia needs a secure context when accessed via a
+// LAN IP). Opt in with VITE_DEV_HTTPS=true; cert defaults to
+// src/frontend/certs/{dev.crt,dev.key} (see scripts/dev-cert.sh).
+function devHttpsConfig(env: Record<string, string>, certDir: string) {
+  if (env.VITE_DEV_HTTPS !== 'true') return undefined;
+  const cert = env.VITE_DEV_HTTPS_CERT || path.join(certDir, 'dev.crt');
+  const key = env.VITE_DEV_HTTPS_KEY || path.join(certDir, 'dev.key');
+  try {
+    return { cert: readFileSync(cert), key: readFileSync(key) };
+  } catch {
+    console.warn(`[vite] VITE_DEV_HTTPS=true but no cert under ${certDir} — serving HTTP. Run scripts/dev-cert.sh first.`);
+    return undefined;
+  }
+}
 
 export default defineConfig(({ command, mode }) => {
   // 必须从 .env.development.local 等文件加载；仅用 process.env 时配置阶段读不到 VITE_ 变量，会回落到 7860，
@@ -179,6 +196,7 @@ export default defineConfig(({ command, mode }) => {
     server: {
       host: '0.0.0.0',
       port: 3001,
+      https: devHttpsConfig(env, path.join(__dirname, '../certs')),
       proxy: {
         ...proxyTargets,
       },

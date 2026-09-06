@@ -282,6 +282,19 @@ CREATE TABLE IF NOT EXISTS knowledge_space_user_pin (
     UNIQUE (user_id, space_id)
 )"""
 
+# F047: agent plaza favorite (mirrors workstation/domain/models/user_app_favorite.py)
+TABLE_USER_APP_FAVORITE = """\
+CREATE TABLE IF NOT EXISTS user_app_favorite (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    app_id VARCHAR(64) NOT NULL,
+    app_type INTEGER NOT NULL,
+    tenant_id INTEGER NOT NULL DEFAULT 1,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE (user_id, app_id, app_type)
+)"""
+
 TABLE_KNOWLEDGE_FILE = """\
 CREATE TABLE IF NOT EXISTS knowledgefile (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -501,6 +514,8 @@ TABLE_DEFINITIONS: dict[str, str] = {
     "org_sync_log": TABLE_ORG_SYNC_LOG,
     # F037: per-user knowledge-space pin, decoupled from membership.
     "knowledge_space_user_pin": TABLE_KNOWLEDGE_SPACE_USER_PIN,
+    # F047: agent plaza favorite.
+    "user_app_favorite": TABLE_USER_APP_FAVORITE,
 }
 
 # Indexes emitted after CREATE TABLE via create_all_tables.

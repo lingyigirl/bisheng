@@ -1,5 +1,5 @@
 knowledges: # 知识库相关配置
-  loader_provider: "etl4lm" # 文档解析模型提供商，支持etl4lm、mineru、paddle_ocr三种选项，默认为etl4lm
+  loader_provider: "mineru" # 文档解析模型提供商，支持etl4lm、mineru、paddle_ocr三种选项，默认为etl4lm
   etl4lm:
     # 文档解析模型服务配置，包括OCR、版式分析、表格识别、公式识别等
     url: ""  # http://192.168.106.12:8180/v1/etl4llm/predict
@@ -8,10 +8,9 @@ knowledges: # 知识库相关配置
     ocr_sdk_url: ""
   mineru:
     # 文档地址 https://opendatalab.github.io/MinerU/zh/reference/output_files/#_15
-    url: "http://192.168.106.20:8033/file_parse"
-    timeout: 60
-    headers:
-      x-api-key: "11"
+    url: "http://172.19.0.3:8010/file_parse"
+    timeout: 600
+    headers: {}
     request_kwargs:
       backend: "pipeline"
   paddle_ocr:

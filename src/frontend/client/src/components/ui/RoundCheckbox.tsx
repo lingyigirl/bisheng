@@ -12,7 +12,7 @@ interface RoundCheckboxProps {
 /**
  * Circular checkbox (~20px) used in the H5 mobile file row.
  * - Unchecked: transparent fill with a 1.5px #D9D9D9 ring.
- * - Checked: a #165DFF ring with a solid blue filled center dot (radio-like).
+ * - Checked: a #004DA4 ring with a solid blue filled center dot (radio-like).
  * Click propagation is stopped so toggling selection never triggers the row's onClick.
  */
 export function RoundCheckbox({ checked, onCheckedChange, className, disabled = false }: RoundCheckboxProps) {

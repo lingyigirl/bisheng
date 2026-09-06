@@ -14,7 +14,8 @@ from pydantic import field_validator as PydanticFieldValidator
 
 from bisheng.api.services import knowledge_imp
 from bisheng.api.v1.schema.chat_schema import APIChatCompletion
-from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum
+from bisheng.common.chat.utils import get_input_snapshot
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode import BaseErrorCode
 from bisheng.common.errcode.http_error import ServerError
@@ -1149,7 +1150,9 @@ async def log_telemetry_events(user_id: str, conversation_id: str, start_time: f
         user_id=user_id,
         event_type=BaseTelemetryTypeEnum.APPLICATION_PROCESS,
         trace_id=trace_id_var.get(),
-        event_data=ApplicationProcessEventData(**common_data, process_time=duration_ms),
+        # F046: reaching here means the chat completed; failure paths raise
+        # before this helper runs and produce no event (same as before)
+        event_data=ApplicationProcessEventData(**common_data, process_time=duration_ms, status=StatusEnum.SUCCESS, input_snapshot=get_input_snapshot(conversation_id)),
     )
 
 

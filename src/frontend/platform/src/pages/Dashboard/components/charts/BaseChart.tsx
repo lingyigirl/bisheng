@@ -301,11 +301,50 @@ const getCartesianChartOption = (
   };
 
   // (Value Axis)
+  // Axis ticks on small ranges are fractional (0, 0.5, 1, 1.5, 2); forcing the
+  // component's decimalPlaces (usually 0) rounds them to "0,1,1,2,2" — duplicated
+  // labels. Format with adaptive decimals so every tick stays distinct.
+  const formatAxisValue = (val: any): string => {
+    const numberFormat = dataConfig?.metrics?.[0]?.numberFormat;
+    if (val === undefined || val === null) return '';
+    let value = Number(val);
+    if (numberFormat?.type === 'percent') {
+      value = value * 100;
+    } else if (numberFormat?.type === 'number' && numberFormat?.unit) {
+      const unitMap: Record<string, number> = { 'Thousand': 1e3, 'Million': 1e6, 'Billion': 1e9 };
+      value = value / (unitMap[numberFormat.unit] || 1);
+    }
+    let text: string;
+    if (Number.isInteger(value)) {
+      text = String(value);
+    } else if (Math.abs(value) >= 1) {
+      text = value.toFixed(2);
+    } else {
+      const decimals = Math.min(2, Math.max(1, Math.ceil(-Math.log10(Math.abs(value)))));
+      text = value.toFixed(decimals);
+    }
+    if (text.includes('.')) {
+      text = text.replace(/0+$/, '').replace(/\.$/, '');
+    }
+    if (numberFormat?.thousandSeparator) {
+      const parts = text.split('.');
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      text = parts.join('.');
+    }
+    return text;
+  };
+
+  // Count-style metrics (decimalPlaces 0, non-percent) must stay on whole
+  // numbers: force integer ticks so the axis never shows 0.5/1.5-style steps.
+  const numberFormat = dataConfig?.metrics?.[0]?.numberFormat;
+  const integerOnlyAxis = numberFormat?.type !== 'percent' && (numberFormat?.decimalPlaces ?? 0) === 0;
+
   const valueAxis = {
     type: 'value',
+    minInterval: integerOnlyAxis ? 1 : undefined,
     axisLabel: {
       show: styleConfig.showAxis ?? true,
-      formatter: (val: any) => unitConversion(val, dataConfig).join(''),
+      formatter: formatAxisValue,
       color: '#666'
     },
     splitLine: { show: styleConfig.showGrid ?? true },
@@ -348,12 +387,17 @@ const getCartesianChartOption = (
       return val;
     });
 
+    // Sparse series (1-3 points) render an invisible line when symbols are
+    // hidden (symbolSize 0): show symbols so single/few-point charts are visible.
+    const visiblePointCount = s.data.filter((val) => val !== null && val !== undefined).length;
+    const isSparse = visiblePointCount > 0 && visiblePointCount <= 3;
+
     const item: any = {
       name: s.name,
       data: processedData,
       type: isLineOrArea ? 'line' : 'bar',
       symbol: 'circle',
-      symbolSize: 0,
+      symbolSize: isLineOrArea && isSparse ? 6 : 0,
       itemStyle: {
         borderRadius: (!isLineOrArea && !isStacked)
           ? (isHorizontal ? [0, 4, 4, 0] : [4, 4, 0, 0])
@@ -361,7 +405,7 @@ const getCartesianChartOption = (
       }
     };
 
-    if (styleConfig.showDataLabel) {
+    if (styleConfig.showDataLabel || (isLineOrArea && isSparse)) {
       item.label = {
         show: true,
         position: 'top',

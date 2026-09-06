@@ -455,3 +455,43 @@ export async function getAllAccessibleAppsApi(params: {
 }) {
     return await request.get('/api/v1/chat/online', { params })
 }
+
+// ---------------------------------------------------------------------------
+// F047: agent plaza (favorites / list / stats)
+// ---------------------------------------------------------------------------
+
+export interface PlazaQuery {
+    keyword?: string;
+    flow_types?: number[];
+    tag_ids?: number[];
+    sort_by?: 'recent' | 'update_time' | 'visit_count';
+    page: number;
+    limit: number;
+}
+
+/** Plaza list: online + view-app-visible apps with inline per-app stats. */
+export async function getPlazaAppsApi(query: PlazaQuery) {
+    return await request.get('/api/v1/workstation/app/plaza', { params: query });
+}
+
+/** Single-app access stats for the preview drawer. */
+export async function getAppStatsApi(appId: number | string, days = 7) {
+    return await request.get(`/api/v1/workstation/app/stats/${appId}`, { params: { days } });
+}
+
+/** Favorite an app (idempotent). */
+export async function addFavoriteApi(appId: number | string, appType: number) {
+    return await request.post('/api/v1/workstation/app/favorite', { app_id: appId, app_type: appType });
+}
+
+/** Unfavorite an app (idempotent). */
+export async function removeFavoriteApi(appId: number | string, appType: number) {
+    return await request.delete('/api/v1/workstation/app/favorite', {
+        data: { app_id: appId, app_type: appType },
+    });
+}
+
+/** The user's favorites, newest-first. */
+export async function getFavoritesApi(page = 1, limit = 50) {
+    return await request.get('/api/v1/workstation/app/favorites', { params: { page, limit } });
+}

@@ -1,9 +1,11 @@
+import sys
 import time
 
 from loguru import logger
 
 from bisheng.api.services.workflow import WorkFlowService
-from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum
+from bisheng.common.chat.utils import get_input_snapshot
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationProcessEventData
 from bisheng.common.services import telemetry_service
 from bisheng.common.services.config_service import settings
@@ -105,6 +107,8 @@ def execute_workflow(unique_id: str, workflow_id: str, chat_id: str, user_id: in
     finally:
         end_time = time.time()
         workflow_info = WorkFlowService.get_one_workflow_simple_info_sync(workflow_id)
+        # F046: an exception propagating through the finally marks the run failed
+        run_status = StatusEnum.FAILED if sys.exc_info()[0] is not None else StatusEnum.SUCCESS
         telemetry_service.log_event_sync(
             user_id=user_id,
             event_type=BaseTelemetryTypeEnum.APPLICATION_PROCESS,
@@ -117,6 +121,8 @@ def execute_workflow(unique_id: str, workflow_id: str, chat_id: str, user_id: in
                 start_time=int(start_time),
                 end_time=int(end_time),
                 process_time=int((end_time - start_time) * 1000),
+                status=run_status,
+                input_snapshot=get_input_snapshot(chat_id),
             ),
         )
 
@@ -156,6 +162,8 @@ def continue_workflow(unique_id: str, workflow_id: str, chat_id: str, user_id: i
     finally:
         end_time = time.time()
         workflow_info = WorkFlowService.get_one_workflow_simple_info_sync(workflow_id)
+        # F046: an exception propagating through the finally marks the run failed
+        run_status = StatusEnum.FAILED if sys.exc_info()[0] is not None else StatusEnum.SUCCESS
         telemetry_service.log_event_sync(
             user_id=user_id,
             event_type=BaseTelemetryTypeEnum.APPLICATION_PROCESS,
@@ -168,6 +176,8 @@ def continue_workflow(unique_id: str, workflow_id: str, chat_id: str, user_id: i
                 start_time=int(start_time),
                 end_time=int(end_time),
                 process_time=int((end_time - start_time) * 1000),
+                status=run_status,
+                input_snapshot=get_input_snapshot(chat_id),
             ),
         )
 

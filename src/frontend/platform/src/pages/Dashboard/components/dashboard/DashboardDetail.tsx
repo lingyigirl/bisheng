@@ -25,7 +25,6 @@ interface DashboardDetailProps {
     isCollapsed: boolean
     setIsCollapsed: (isCollapsed: boolean) => void
     onRename: (id: string, newTitle: string) => void
-    onShare: (id: string) => void
     onDefault: (id: string) => void
     onEdit: (id: string) => void
 }
@@ -37,7 +36,6 @@ export function DashboardDetail({
     setIsCollapsed,
     onRename,
     onDefault,
-    onShare,
     onEdit
 }: DashboardDetailProps) {
     const { t } = useTranslation("dashboard")
@@ -104,12 +102,6 @@ export function DashboardDetail({
         }
     }
 
-    const handleFullscreen = () => {
-        const element = document.getElementById('view-panne');
-        element.requestFullscreen();
-    }
-
-
     const { publish } = usePublishDashboard()
 
     if (isLoading) {
@@ -122,7 +114,6 @@ export function DashboardDetail({
         return <div className="flex-1 flex items-center justify-center text-muted-foreground">{t('selectADashboard')}</div>
     }
     const isPublished = dashboard.status === DashboardStatus.Published
-    console.log('dashboard :>> ', dashboard);
 
     return (
         <div className="flex-1 flex flex-col h-full min-w-0">
@@ -183,9 +174,7 @@ export function DashboardDetail({
 
                 <div className="flex items-center gap-2">
                     <ButtonGroup>
-                        <Button variant="outline" size="sm" onClick={handleFullscreen}>{t('fullScreen')}</Button>
                         {appConfig.isDashboardPro && dashboard.write && <Button variant="outline" size="sm" onClick={() => publish(dashboard.id, isPublished)}>{isPublished ? t('unpublish') : t('publish')}</Button>}
-                        <Button variant="outline" size="sm" onClick={() => onShare(dashboard.id)}>{t('share')}</Button>
                     </ButtonGroup>
 
                     {appConfig.isDashboardPro && <Button

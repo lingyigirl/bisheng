@@ -15,8 +15,9 @@ import { downloadFile } from "@/util/utils";
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import CreateDataSet from "./CreateDataSet";
+import { DataSetContent, DataSetContentRef } from "./DataSetContent";
 
-export default function index() {
+export default function DataSetPage() {
     const { t } = useTranslation();
     const { page, pageSize, data: datalist, total, loading, setPage, search, reload } = useTable({}, (param) =>
         getPresetFileApi({ page_size: 20, page_num: param.page, keyword: param.keyword })
@@ -35,6 +36,7 @@ export default function index() {
     };
 
     const modelRef = useRef(null);
+    const contentRef = useRef<DataSetContentRef>(null);
 
     const { toast } = useToast();
     const handleDownloadFile = async (name, url) => {
@@ -80,6 +82,8 @@ export default function index() {
                                     <div className="truncate-multiline">{el.user_name || '--'}</div>
                                 </TableCell>
                                 <TableCell className="text-right" onClick={() => { window.libname = el.name; }}>
+                                    <Button variant="link" className="px-1" onClick={() => contentRef.current?.open(el)}>{t('dataset.preview')}</Button>
+                                    <Button variant="link" className="px-1" onClick={() => contentRef.current?.open(el, true)}>{t('dataset.edit')}</Button>
                                     <Button variant="link" className="px-1" onClick={() => handleDownloadFile(el.name, el.url)}>{t('dataset.download')}</Button>
                                     <Button variant="link" onClick={() => handleDelete(el.id)} className="ml-4 text-red-500 px-0">{t('delete')}</Button>
                                 </TableCell>
@@ -100,6 +104,7 @@ export default function index() {
                 </div>
             </div>
             <CreateDataSet ref={modelRef} onChange={reload} />
+            <DataSetContent ref={contentRef} onChange={reload} />
         </div>
     );
 }

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 from collections.abc import Iterable
 from typing import Any, Optional
 
@@ -10,6 +11,7 @@ from langchain_core.documents import BaseDocumentCompressor, Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 from loguru import logger
+from openai import APITimeoutError
 
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.common.dependencies.user_deps import UserPayload
@@ -43,7 +45,7 @@ from bisheng.core.storage.minio.minio_manager import get_minio_storage
 from bisheng.database.models.audit_log import AuditLogDao
 from bisheng.database.models.tenant import ROOT_TENANT_ID
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao, KnowledgeState, KnowledgeTypeEnum
-from bisheng.llm.domain.const import LLMModelType
+from bisheng.llm.domain.const import LLMModelStatus, LLMModelType
 from bisheng.llm.domain.models import LLMDao, LLMModel, LLMServer
 from bisheng.llm.domain.models.tenant_system_model_config import TenantSystemModelConfigDao
 from bisheng.llm.domain.schemas import (
@@ -719,38 +721,94 @@ class LLMService:
         return True
 
     @classmethod
-    async def test_model_status(cls, model: LLMModel | LLMModelInfo, login_user: UserPayload):
+    async def test_model_status(cls, model: LLMModel | LLMModelInfo, login_user: UserPayload) -> dict:
+        """Probe a model with a minimal real invocation and persist its status.
+
+        Success flips the model's cached status back to NORMAL(0) with the
+        remark cleared; failure stores the exception message as remark. The
+        result dict is also what the 模型管理「测试连接」button renders.
+        """
         common_params = {
             "app_id": ApplicationTypeEnum.MODEL_TEST.value,
             "app_name": ApplicationTypeEnum.MODEL_TEST.value,
             "app_type": ApplicationTypeEnum.MODEL_TEST,
             "user_id": login_user.user_id,
         }
-        try:
-            if model.model_type == LLMModelType.LLM.value:
-                bisheng_model = await cls.get_bisheng_llm(
-                    model_id=model.id, ignore_online=True, streaming=False, **common_params
-                )
-                await bisheng_model.ainvoke("hello")
-            elif model.model_type == LLMModelType.EMBEDDING.value:
-                bisheng_embed = await cls.get_bisheng_embedding(model_id=model.id, ignore_online=True, **common_params)
-                await bisheng_embed.aembed_query("hello")
-            elif model.model_type == LLMModelType.TTS.value:
-                bisheng_tts = await cls.get_bisheng_tts(model_id=model.id, ignore_online=True, **common_params)
-                await bisheng_tts.ainvoke("hello")
-            elif model.model_type == LLMModelType.ASR.value:
-                example_file_path = os.path.join(os.path.dirname(__file__), "./asr_example.wav")
-                with open(example_file_path, "rb") as f:
-                    bisheng_asr = await cls.get_bisheng_asr(model_id=model.id, ignore_online=True, **common_params)
-                    await bisheng_asr.ainvoke(f)
-            elif model.model_type == LLMModelType.RERANK.value:
-                bisheng_rerank = await cls.get_bisheng_rerank(model_id=model.id, ignore_online=True, **common_params)
-                await bisheng_rerank.acompress_documents(
-                    documents=[Document(page_content="hello world")], query="hello"
-                )
-        except Exception as e:
-            LLMDao.update_model_status(model.id, 1, str(e))
-            logger.exception(f"test model status: {model.id} {model.model_name}")
+        start = time.time()
+        last_timeout = None
+        for attempt in range(2):
+            try:
+                detail = ""
+                if model.model_type == LLMModelType.LLM.value:
+                    bisheng_model = await cls.get_bisheng_llm(
+                        model_id=model.id, ignore_online=True, streaming=False, **common_params
+                    )
+                    resp = await bisheng_model.ainvoke("连接测试，请回复：正常")  # noqa: RUF001 - user-facing Chinese punctuation
+                    detail = (getattr(resp, "content", "") or "")[:200]
+                elif model.model_type == LLMModelType.EMBEDDING.value:
+                    bisheng_embed = await cls.get_bisheng_embedding(
+                        model_id=model.id, ignore_online=True, **common_params
+                    )
+                    vector = await bisheng_embed.aembed_query("连接测试")
+                    detail = f"向量维度 {len(vector)}"
+                elif model.model_type == LLMModelType.TTS.value:
+                    bisheng_tts = await cls.get_bisheng_tts(model_id=model.id, ignore_online=True, **common_params)
+                    await bisheng_tts.ainvoke("连接测试")
+                    detail = "语音合成成功"
+                elif model.model_type == LLMModelType.ASR.value:
+                    example_file_path = os.path.join(os.path.dirname(__file__), "./asr_example.wav")
+                    with open(example_file_path, "rb") as f:
+                        bisheng_asr = await cls.get_bisheng_asr(model_id=model.id, ignore_online=True, **common_params)
+                        await bisheng_asr.ainvoke(f)
+                    detail = "语音识别成功"
+                elif model.model_type == LLMModelType.RERANK.value:
+                    bisheng_rerank = await cls.get_bisheng_rerank(
+                        model_id=model.id, ignore_online=True, **common_params
+                    )
+                    docs = await bisheng_rerank.acompress_documents(
+                        documents=[Document(page_content="hello world")], query="hello"
+                    )
+                    detail = f"重排结果 {len(docs)} 条"
+                else:
+                    return {
+                        "ok": False,
+                        "status": getattr(model, "status", LLMModelStatus.ERROR.value),
+                        "remark": getattr(model, "remark", "") or "",
+                        "detail": "该模型类型暂不支持测试连接",
+                        "elapsed_ms": 0,
+                    }
+                LLMDao.update_model_status(model.id, LLMModelStatus.NORMAL.value, "")
+                return {
+                    "ok": True,
+                    "status": LLMModelStatus.NORMAL.value,
+                    "remark": "",
+                    "detail": detail,
+                    "elapsed_ms": int((time.time() - start) * 1000),
+                }
+            except APITimeoutError as e:
+                # transient provider gateway timeout: retry once before
+                # marking the model abnormal
+                last_timeout = e
+                logger.warning("test model status timed out (attempt {}/2): model_id={}", attempt + 1, model.id)
+                await asyncio.sleep(3)
+            except Exception as e:
+                LLMDao.update_model_status(model.id, LLMModelStatus.ERROR.value, str(e)[:500])
+                logger.exception("test model status failed: model_id={} model_name={}", model.id, model.model_name)
+                return {
+                    "ok": False,
+                    "status": LLMModelStatus.ERROR.value,
+                    "remark": str(e)[:500],
+                    "detail": str(e)[:500],
+                    "elapsed_ms": int((time.time() - start) * 1000),
+                }
+        LLMDao.update_model_status(model.id, LLMModelStatus.ERROR.value, str(last_timeout)[:500])
+        return {
+            "ok": False,
+            "status": LLMModelStatus.ERROR.value,
+            "remark": str(last_timeout)[:500],
+            "detail": str(last_timeout)[:500],
+            "elapsed_ms": int((time.time() - start) * 1000),
+        }
 
     @classmethod
     async def set_default_model(cls, model: LLMModel | LLMModelInfo):
