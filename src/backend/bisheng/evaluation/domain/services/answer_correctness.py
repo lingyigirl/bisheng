@@ -145,9 +145,16 @@ def compute_answer_correctness(
             out["statements_num_overlap"].append(tp)
             out["statements_num_answer_only"].append(fp)
             out["statements_num_gt_only"].append(fn)
-            out["answer_f1"].append(tp / (tp + 0.5 * (fp + fn)))
-            out["answer_precision"].append(tp / (tp + fp) if (tp + fp) != 0 else np.nan)
-            out["answer_recall"].append(tp / (tp + fn) if (tp + fn) != 0 else np.nan)
+            # 0/0 denominators (judge measured nothing at all, e.g. empty answer)
+            # count as 0.0 — "nothing earned" — instead of NaN, which poisons the
+            # aggregate mean (2026-09-05 evaluation NaN cleanup).
+            # Judge parse failures keep NaN and are excluded at aggregation time.
+            denom_precision = tp + fp
+            denom_recall = tp + fn
+            denom_f1 = tp + 0.5 * (fp + fn)
+            out["answer_precision"].append(tp / denom_precision if denom_precision else 0.0)
+            out["answer_recall"].append(tp / denom_recall if denom_recall else 0.0)
+            out["answer_f1"].append(tp / denom_f1 if denom_f1 else 0.0)
         else:
             out["statements_overlap"].append("")
             out["statements_answer_only"].append("")

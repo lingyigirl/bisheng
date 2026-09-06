@@ -1,6 +1,5 @@
 import asyncio
 import time
-from typing import List, Dict
 
 from httpcore._synchronization import ThreadLock
 from loguru import logger
@@ -25,7 +24,7 @@ class StatefulWorker:
         self.thread_lock = ThreadLock()
         self.async_lock = asyncio.Lock()
 
-    def _base_update_alive_nodes(self, alive_nodes: List[str]):
+    def _base_update_alive_nodes(self, alive_nodes: list[str]):
         consistent_nodes = self.consistent_hash.get_all_nodes()
         add_nodes = set(alive_nodes) - set(consistent_nodes)
         remove_nodes = set(consistent_nodes) - set(alive_nodes)
@@ -51,7 +50,7 @@ class StatefulWorker:
             alive_nodes = self.get_all_alive_queues_sync()
             self._base_update_alive_nodes(alive_nodes)
 
-    def _base_get_all_alive_queues(self, all_queues: Dict[bytes, bytes]) -> (List[str], List[str]):
+    def _base_get_all_alive_queues(self, all_queues: dict[bytes, bytes]) -> (list[str], list[str]):
         if not all_queues:
             return [], []
         current_timestamp = int(time.time())
@@ -68,7 +67,7 @@ class StatefulWorker:
                 need_remove_queues.append(queue_name)
         return alive_queues, need_remove_queues
 
-    async def get_all_alive_queues(self) -> List[str]:
+    async def get_all_alive_queues(self) -> list[str]:
         redis_client = await get_redis_client()
         all_queues = await redis_client.ahgetall(WORKER_ALIVE_KEY)
         alive_nodes, remove_nodes = self._base_get_all_alive_queues(all_queues)
@@ -122,7 +121,7 @@ class StatefulWorker:
         return assigned_node
 
     def find_task_node_sync(self, hash_key: str) -> str | None:
-        self.update_alive_nodes()
+        self.update_alive_nodes_sync()
 
         # Get the node bound to the key
         bound_node = self._find_bound_node_sync(hash_key)

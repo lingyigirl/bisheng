@@ -27,6 +27,9 @@ class EvaluationBase(SQLModelSerializable):
     exec_type: str = Field(description="Execute subject categories: assistant/workflow/flow")
     unique_id: str = Field(index=True, description="Unique id of the executing entity")
     version: int | None = Field(default=None, description="Version of workflow or skill id")
+    # F053: dual-version compare group — the two evaluations of one compare flow
+    # share a uuid; single-version evaluations stay NULL.
+    compare_group_id: str | None = Field(default=None, index=True, description="Version compare group id")
     status: int = Field(index=True, default=1, description="Task status: 1 running 2 failed 3 success")
     prompt: str = Field(default="", sa_column=Column(Text), description="Evaluation instruction text")
     result_file_path: str = Field(default="", description="Assessment result minio address")

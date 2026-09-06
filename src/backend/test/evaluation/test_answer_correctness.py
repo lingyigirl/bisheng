@@ -42,3 +42,17 @@ def test_unparseable_output_yields_nan():
         _StubLLM("not json at all"), question=["q"], answer=["x"], ground_truths=[["g"]], human_prompt="")
     assert math.isnan(result["answer_f1"][0])
     assert result["statements_overlap"][0] == ""
+
+
+def test_empty_statement_lists_yield_zero_not_nan():
+    """0/0 denominators (judge measured nothing) -> 0.0, not NaN (2026-09-05)."""
+    payload = json.dumps([{
+        "statements that are present in both the answer and the ground truth": [],
+        "statements present in the answer but not found in the ground truth": [],
+        "relevant statements found in the ground truth but omitted in the answer": [],
+    }])
+    result = compute_answer_correctness(
+        _StubLLM(payload), question=["q"], answer=[""], ground_truths=[["g"]], human_prompt="")
+    assert result["answer_f1"][0] == 0.0
+    assert result["answer_precision"][0] == 0.0
+    assert result["answer_recall"][0] == 0.0

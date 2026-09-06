@@ -16,7 +16,7 @@ import {
   QuestionTooltip
 } from "@/components/bs-ui/tooltip";
 import { TabsContext } from "@/contexts/tabsContext";
-import { createEvaluationApi } from "@/controllers/API/evaluate";
+import { createEvaluationApi, getEvaluationApi } from "@/controllers/API/evaluate";
 import { getAppsApi } from "@/controllers/API/flow";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { TypeModal } from "@/utils";
@@ -28,10 +28,10 @@ import { useDropzone } from "react-dropzone";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import PromptAreaComponent from "./PromptCom";
-import defaultPrompt from "./defaultPrompt";
+import { DEFAULT_EVALUATION_PROMPTS } from "./defaultPrompt";
 
 export default function EvaluatingCreate() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const { id } = useParams();
   const { flow: nextFlow } = useContext(TabsContext);
@@ -44,8 +44,17 @@ export default function EvaluatingCreate() {
   const [selectedVersion, setSelectedVersion] = useState("");
   const [query, setQuery] = useState("");
   const [dataSource, setDataSource] = useState([]);
-  const [prompt, setPrompt] = useState(defaultPrompt);
+  const [prompt, setPrompt] = useState(
+    () => DEFAULT_EVALUATION_PROMPTS[i18n.language] ?? DEFAULT_EVALUATION_PROMPTS["en-US"]
+  );
   const [fileName, setFileName] = useState("");
+
+  // F053: dual-version compare + dataset reuse
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareVersion, setCompareVersion] = useState("");
+  const [datasetSource, setDatasetSource] = useState<"upload" | "reuse">("upload");
+  const [reuseDatasetId, setReuseDatasetId] = useState<number | "">("");
+  const [historyList, setHistoryList] = useState<Evaluation[]>([]);
 
   const [loading, setLoading] = useState(false);
   const fileRef = useRef(null);
@@ -107,6 +116,13 @@ export default function EvaluatingCreate() {
 
   const navigate = useNavigate();
 
+  // F053: history evaluations for the dataset-reuse dropdown
+  useEffect(() => {
+    getEvaluationApi(1, 100)
+      .then((res: { data: Evaluation[] }) => setHistoryList(res.data || []))
+      .catch(() => setHistoryList([]));
+  }, []);
+
   const handleCreateEvaluation = async () => {
     const errorlist = [];
     if (!selectedType) errorlist.push(t("evaluation.enterExecType"));
@@ -120,7 +136,14 @@ export default function EvaluatingCreate() {
     if (selectedKeyId && (selectedType === "workflow" || selectedType === "flow") && !selectedVersion) {
       errorlist.push(t("evaluation.selectVersion"));
     }
+    if (compareMode && compareVersion === selectedVersion) {
+      errorlist.push(t("evaluation.compareSameVersionError"));
+    }
+    if (datasetSource === "reuse" && !reuseDatasetId) {
+      errorlist.push(t("evaluation.compareSelectReuse"));
+    }
     if (
+      datasetSource === "upload" &&
       !fileRef.current &&
       selectedKeyId &&
       (
@@ -141,7 +164,12 @@ export default function EvaluatingCreate() {
       formData.append('version', selectedVersion);     // Version number
       formData.append('prompt', prompt);               // Prompt text
 
-      if (fileRef.current) {
+      if (compareMode && compareVersion) {
+        formData.append('compare_version', compareVersion); // F053: second version to compare
+      }
+      if (datasetSource === "reuse" && reuseDatasetId) {
+        formData.append('reuse_dataset_id', String(reuseDatasetId)); // F053: reuse historical dataset
+      } else if (fileRef.current) {
         formData.append('file', fileRef.current); // Key name 'file' must match backend
       }
       await captureAndAlertRequestErrorHoc(
@@ -340,6 +368,52 @@ export default function EvaluatingCreate() {
                       </SelectContent>
                     </Select>
                   )}
+                  {(selectedType === "workflow" || selectedType === "flow") && selectedVersion && (
+                    <div className="flex items-center gap-2">
+                      {!compareMode ? (
+                        <Button
+                          variant="outline"
+                          className="h-8 text-xs"
+                          onClick={() => setCompareMode(true)}
+                        >
+                          + {t("evaluation.compareAddSecondVersion")}
+                        </Button>
+                      ) : (
+                        <>
+                          <span className="whitespace-nowrap text-xs text-gray-500">vs</span>
+                          <Select value={compareVersion} onValueChange={setCompareVersion}>
+                            <SelectTrigger className="min-w-[50px]">
+                              <SelectValue
+                                className="mt-2"
+                                placeholder={t("evaluation.compareSelectCompareVersion")}
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                {find(dataSource, { id: selectedKeyId })?.version_list
+                                  ?.filter((item) => item.id !== selectedVersion)
+                                  .map((item) => (
+                                    <SelectItem key={item.id} value={item.id}>
+                                      {item.name}
+                                    </SelectItem>
+                                  ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            variant="outline"
+                            className="h-8 px-2 text-xs"
+                            onClick={() => {
+                              setCompareMode(false);
+                              setCompareVersion("");
+                            }}
+                          >
+                            ×
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1">
@@ -348,7 +422,46 @@ export default function EvaluatingCreate() {
                     {t("evaluation.dataLabel")}
                   </Label>
                 </div>
+                <div className="flex gap-1">
+                  <Button
+                    variant={datasetSource === "upload" ? "default" : "outline"}
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setDatasetSource("upload")}
+                  >
+                    {t("evaluation.compareUpload")}
+                  </Button>
+                  <Button
+                    variant={datasetSource === "reuse" ? "default" : "outline"}
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setDatasetSource("reuse")}
+                  >
+                    {t("evaluation.compareReuse")}
+                  </Button>
+                </div>
                 <div className="flex flex-1 items-center justify-between">
+                  {datasetSource === "reuse" ? (
+                    <Select
+                      value={reuseDatasetId === "" ? "" : String(reuseDatasetId)}
+                      onValueChange={(v) => setReuseDatasetId(Number(v))}
+                    >
+                      <SelectTrigger className="max-w-[420px] flex-1">
+                        <SelectValue
+                          className="mt-2"
+                          placeholder={t("evaluation.compareSelectReuse")}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {historyList.map((item) => (
+                            <SelectItem key={item.id} value={String(item.id)}>
+                              {item.file_name}
+                              {item.version_name ? ` · ${item.version_name}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  ) : (
                   <div
                     {...getRootProps()}
                     className="flex w-0 flex-1 items-center"
@@ -367,6 +480,7 @@ export default function EvaluatingCreate() {
                       &nbsp;{t("evaluation.fileExpandName")}&nbsp;csv
                     </Label>
                   </div>
+                  )}
                   <Button
                     className="ml-2"
                     variant="link"

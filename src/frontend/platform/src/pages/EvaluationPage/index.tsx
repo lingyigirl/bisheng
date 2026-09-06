@@ -27,8 +27,9 @@ import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { useTable } from "@/util/hook";
 import { downloadFile } from "@/util/utils";
 import { map } from "lodash-es";
+import { CompareSheet } from "./compare/CompareSheet";
 import { CircleHelpIcon } from "lucide-react";
-import { useEffect } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   EvaluationScore,
@@ -55,6 +56,9 @@ export default function EvaluationPage() {
   } = useTable({ cancelLoadingWhenReload: true }, (param) =>
     getEvaluationApi(param.page, param.pageSize)
   );
+
+  // F053: compare group opened in the sheet (groupId + the two rows)
+  const [compareGroup, setCompareGroup] = useState<{ groupId: string; rows: Evaluation[] } | null>(null);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -128,7 +132,35 @@ export default function EvaluationPage() {
               </TableHeader>
 
               <TableBody>
-                {datalist.map((el: Evaluation) => (
+                {datalist.map((el: Evaluation, idx: number) => {
+                    const prev = idx > 0 ? datalist[idx - 1] : null;
+                    const isGroupStart =
+                      el.compare_group_id && (!prev || prev.compare_group_id !== el.compare_group_id);
+                    const nextRow = isGroupStart ? datalist[idx + 1] : null;
+                    return (
+                    <Fragment key={el.id}>
+                      {isGroupStart && (
+                        <TableRow className="bg-blue-50/60 dark:bg-blue-950/20">
+                          <TableCell colSpan={7} className="py-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">
+                                {t("evaluation.compareGroupLabel")} · {t("evaluation.compareVersion")} {el.version}
+                                {" vs "}
+                                {t("evaluation.compareVersion")} {nextRow?.version}
+                              </span>
+                              <Button
+                                variant="outline"
+                                className="h-7 px-3 text-xs"
+                                onClick={() =>
+                                  setCompareGroup({ groupId: el.compare_group_id as string, rows: [el, nextRow as Evaluation] })
+                                }
+                              >
+                                {t("evaluation.compareButton")}
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
                   <TableRow key={el.id}>
                     <TableCell className="font-medium">{el.id}</TableCell>
                     <TableCell>{el.file_name || "--"}</TableCell>
@@ -222,13 +254,20 @@ export default function EvaluationPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                    </Fragment>
+                    );
+                })}
               </TableBody>
             </Table>
           </TabsContent>
           <TabsContent value="password"></TabsContent>
         </Tabs>
       </div>
+      <CompareSheet
+        groupId={compareGroup?.groupId ?? null}
+        rows={compareGroup?.rows ?? []}
+        onClose={() => setCompareGroup(null)}
+      />
       <div className="bisheng-table-footer px-6 bg-background-login">
         <p className="desc">{t("evaluation.evaluationCollection")}</p>
         <div>

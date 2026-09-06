@@ -38,6 +38,17 @@ class EvaluationRepository:
             return session.exec(select(Evaluation).where(Evaluation.id == evaluation_id)).first()
 
     @classmethod
+    def get_compare_group(cls, group_id: str, user_id: int) -> list[Evaluation]:
+        """F053: the (up to two) evaluations of one compare group, scoped to its owner."""
+        with get_sync_db_session() as session:
+            statement = select(Evaluation).where(
+                and_(Evaluation.compare_group_id == group_id,
+                     Evaluation.is_delete == 0,
+                     Evaluation.user_id == user_id)
+            )
+            return list(session.exec(statement).all())
+
+    @classmethod
     def update_evaluation(cls, evaluation: Evaluation) -> Evaluation:
         with get_sync_db_session() as session:
             session.add(evaluation)

@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS evaluation (
     exec_type VARCHAR(255),
     unique_id VARCHAR(255),
     version INTEGER,
+    compare_group_id VARCHAR(36),
     status INTEGER DEFAULT 1,
     prompt TEXT,
     result_file_path VARCHAR(255) DEFAULT '',
