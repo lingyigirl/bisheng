@@ -139,7 +139,11 @@ export default function KnowledgeTagSelect({
             return;
         }
 
-        const newTag = result as KnowledgeTagItem;
+        // captureAndAlertRequestErrorHoc passes the full response body through;
+        // the created tag lives under `data` (using the body itself leaves id
+        // undefined, so saving then sends an invalid tag_id and the backend
+        // rejects the whole set — tags never show up on the file).
+        const newTag = (result as { data: KnowledgeTagItem }).data;
         setTags(prev => [newTag, ...prev.filter(tag => tag.id !== newTag.id)]);
         setSelectedTagIds((prev) => (prev.includes(newTag.id) ? prev : [...prev, newTag.id]));
         setInputValue("");
@@ -261,7 +265,7 @@ export default function KnowledgeTagSelect({
                                         key={tag.id}
                                         onClick={() => toggleTag(tag.id)}
                                         className={`flex h-7 items-center justify-center gap-1 rounded-[4px] px-2 text-[12px] leading-[20px] transition-colors ${isSelected
-                                            ? "cursor-default bg-primary/10 text-[#165dff]"
+                                            ? "cursor-default bg-primary/10 text-[#004DA4]"
                                             : "cursor-pointer bg-[#f2f3f5] text-[#4e5969] hover:bg-[#e5e6eb]"
                                             }`}
                                     >
@@ -295,7 +299,7 @@ export default function KnowledgeTagSelect({
                     </button>
                     <button
                         type="button"
-                        className="h-8 rounded-[6px] bg-[#335CFF] px-4 text-[14px] font-normal text-white transition-colors hover:bg-[#5A7EFF] disabled:cursor-not-allowed disabled:opacity-60"
+                        className="h-8 rounded-[6px] bg-[#004DA4] px-4 text-[14px] font-normal text-white transition-colors hover:bg-[#5A7EFF] disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={() => void handleSave()}
                         disabled={loading || !isEditable}
                     >
