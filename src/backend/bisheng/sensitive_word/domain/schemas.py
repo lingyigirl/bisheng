@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -9,6 +10,8 @@ from pydantic import BaseModel, Field, field_validator
 class SensitiveWordBusinessType(str, Enum):
     KNOWLEDGE_SPACE_FILE_PARSE = 'knowledge_space_file_parse'
     CHANNEL_ARTICLE = 'channel_article'
+    CHAT_INPUT = 'chat_input'
+    CHAT_OUTPUT = 'chat_output'
 
 
 class SensitiveWordScopeType(str, Enum):
@@ -20,16 +23,16 @@ SensitiveWordType = Literal['builtin', 'custom']
 
 class SensitiveWordPolicyPayload(BaseModel):
     enabled: bool = False
-    words_types: List[SensitiveWordType] = Field(default_factory=list)
+    words_types: list[SensitiveWordType] = Field(default_factory=list)
     custom_words: str = ''
     auto_reply: str = ''
-    extra_config: Dict[str, Any] = Field(default_factory=dict)
+    extra_config: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator('words_types')
     @classmethod
-    def dedupe_words_types(cls, value: List[str]) -> List[str]:
+    def dedupe_words_types(cls, value: list[str]) -> list[str]:
         allowed = {'builtin', 'custom'}
-        result: List[str] = []
+        result: list[str] = []
         for item in value or []:
             if item in allowed and item not in result:
                 result.append(item)
@@ -50,5 +53,19 @@ class SensitiveWordHit(BaseModel):
 
 class SensitiveWordCheckResult(BaseModel):
     enabled: bool = False
-    hits: List[SensitiveWordHit] = Field(default_factory=list)
-    auto_reply: Optional[str] = None
+    hits: list[SensitiveWordHit] = Field(default_factory=list)
+    auto_reply: str | None = None
+
+
+class SensitiveWordHitLogItem(BaseModel):
+    """One hit-log row for the platform log page (summary only, never raw text)."""
+
+    id: int
+    business_type: str
+    direction: str
+    flow_id: str | None = None
+    chat_id: str | None = None
+    user_id: int | None = None
+    hits: list[SensitiveWordHit] = Field(default_factory=list)
+    action: str
+    create_time: datetime

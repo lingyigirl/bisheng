@@ -61,6 +61,10 @@ class ChatClient:
         self.work_type = work_type
         self.websocket = websocket
         self.kwargs = kwargs
+        # F056 guardrail callables, injected by the API layer (common must not import
+        # domain services — constitution C1). None = guard disabled.
+        self.input_guard = kwargs.get('input_guard')
+        self.output_guard = kwargs.get('output_guard')
 
         # Business Custom Parameters
         self.db_assistant = None
@@ -90,10 +94,25 @@ class ChatClient:
         trace_id = trace_id_var.get()
         # Handling messages from clients, Submit to Thread Pool for Execution
         if self.work_type == WorkType.GPTS:
+            if self.input_guard is not None:
+                blocked_reply = await self._guard_input_text(message)
+                if blocked_reply:
+                    # Blocked input is answered as an ordinary message (design 决策 6B).
+                    await self.send_response("answer", "end", blocked_reply)
+                    await self.send_response("processing", "close", "")
+                    return
             thread_pool.submit(
                 trace_id, self.wrapper_task, trace_id, self.handle_gpts_message, message, trace_id=trace_id
             )
             # await self.handle_gpts_message(message)
+
+    async def _guard_input_text(self, message: dict[any, any]) -> str | None:
+        """Guard the assistant user question; session-switch messages carry no
+        ``inputs.input`` and pass through unguarded (design 坑 10)."""
+        text = (message.get("inputs") or {}).get("input")
+        if isinstance(text, str) and text.strip():
+            return await self.input_guard(self.chat_id, text)
+        return None
 
     async def wrapper_task(self, task_id: str, fn: Callable, *args, **kwargs):
         # The wrapper handler function is an asynchronous task
@@ -295,6 +314,8 @@ class ChatClient:
                     "chat_id": self.chat_id,
                     "user_id": self.user_id,
                     "stream_queue": self.stream_queue,
+                    # F056: 与最终答案重写共用同一守卫闭包, 避免双重检测/双重日志
+                    "output_guard": self.output_guard,
                 }
             )
         ]
@@ -368,6 +389,16 @@ class ChatClient:
             result = await self.gpts_agent.run(input_msg, chat_history, self.gpts_async_callback)
             logger.debug(f"gpts agent {self.client_key} result: {result}")
             answer = result[-1].content
+            if self.output_guard is not None and isinstance(answer, str):
+                # 流式模型: 分片已逐 token 守卫, 用累计守卫文本重写最终答案;
+                # 非流式模型: 整段过一遍守卫 (design 坑 6 — 历史与回显均为守卫后文本)
+                await self.output_guard(self.chat_id, '')
+                guarded_full = await self.output_guard.full_text()
+                if guarded_full:
+                    answer = guarded_full
+                else:
+                    guarded = await self.output_guard(self.chat_id, answer)
+                    answer = guarded.safe_text
 
             # Record contains
             new_history = result[len(chat_history) : -1]

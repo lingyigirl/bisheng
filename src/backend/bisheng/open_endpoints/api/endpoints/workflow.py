@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from starlette.responses import StreamingResponse
 
+from bisheng.api.services.guardrail import build_input_guard, build_output_guard
 from bisheng.api.services.workflow import WorkFlowService
 from bisheng.api.v1.chat import chat_manager
 from bisheng.api.v1.schema.workflow import WorkflowStream, WorkflowEvent, WorkflowEventType
@@ -165,7 +166,16 @@ async def workflow_ws(*,
         # Authorize.jwt_required(auth_from='websocket', websocket=websocket)
         # payload = Authorize.get_jwt_subject()
         login_user = await get_default_operator_async()
-        await chat_manager.dispatch_client(websocket, workflow_id, chat_id, login_user, WorkType.WORKFLOW, websocket)
+        await chat_manager.dispatch_client(
+            websocket,
+            workflow_id,
+            chat_id,
+            login_user,
+            WorkType.WORKFLOW,
+            websocket,
+            input_guard=build_input_guard(login_user, workflow_id),
+            output_guard=build_output_guard(login_user, workflow_id),
+        )
     except WebSocketException as exc:
         logger.error(f'Websocket exception: {str(exc)}')
         await websocket.close(code=http_status.WS_1011_INTERNAL_ERROR, reason=str(exc))

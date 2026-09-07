@@ -2,7 +2,7 @@ import asyncio
 import copy
 import json
 from queue import Queue
-from typing import Any, Dict, List, Union
+from typing import Any, Union
 
 from fastapi import WebSocket
 from langchain_classic.callbacks.base import AsyncCallbackHandler, BaseCallbackHandler
@@ -11,12 +11,13 @@ from langchain_classic.schema.agent import AgentAction
 from langchain_classic.schema.document import Document
 from langchain_classic.schema.messages import BaseMessage
 from langchain_core.messages import ToolMessage
+from loguru import logger
 
 from bisheng.api.v1.schemas import ChatResponse
+from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.database.models.message import ChatMessage as ChatMessageModel
 from bisheng.database.models.message import ChatMessageDao
 from bisheng.llm.domain.utils import extract_reasoning_content
-from loguru import logger
 
 
 # https://github.com/hwchase17/chat-langchain/blob/master/callback.py
@@ -33,6 +34,13 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
         self.flow_id = flow_id
         self.chat_id = chat_id
         self.user_id = user_id
+
+        # F056 output guard, lazily built on first token (api layer may import the
+        # domain service directly — unlike common/chat, see guardrail.py). The
+        # assistant client injects its own guard so tokens and the final answer
+        # rewrite share one closure (no double detection / double logging).
+        self._output_guard = kwargs.get('output_guard')
+        self._output_guard_blocked = False
 
         # Cache for tool calls intool_endWhen stitching the start and end together, store it in the database
         self.tool_cache = {}
@@ -54,8 +62,17 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
         reasoning_content = extract_reasoning_content(chunk)
         if token is None:
             token = ''
+        if self._output_guard_blocked:
+            return  # 命中后剩余 token 帧整帧丢弃 (AC-10)
+        out_token = token
+        if token:
+            guard = self._ensure_output_guard()
+            if guard is not None:
+                result = await guard(self.chat_id, token)
+                out_token = result.safe_text
+                self._output_guard_blocked = result.blocked
         resp = ChatResponse(message={
-            'content': token,
+            'content': out_token,
             'reasoning_content': reasoning_content
         },
             type='stream',
@@ -66,13 +83,36 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
         if self.stream_queue:
             if reasoning_content:
                 self.stream_queue.put({'type': 'reasoning', 'content': reasoning_content})
-            if token:
-                self.stream_queue.put({'type': 'answer', 'content': token})
+            if out_token:
+                self.stream_queue.put({'type': 'answer', 'content': out_token})
 
-    async def on_llm_start(self, serialized: Dict[str, Any], prompts: List[str],
+    def _ensure_output_guard(self):
+        """Lazily build the per-conversation output guard (F056).
+
+        None when the tenant context is unavailable (e.g. non-HTTP invocation) —
+        the stream then passes through unchanged.
+        """
+        if self._output_guard is None:
+            tenant_id = get_current_tenant_id()
+            if tenant_id is not None:
+                # 惰性导入打破 import 环: guardrail → common/chat/__init__ → client.py
+                # → 本模块（callback）→ guardrail
+                from bisheng.api.services.guardrail import build_output_guard_for_callback
+
+                self._output_guard = build_output_guard_for_callback(
+                    tenant_id=tenant_id, user_id=self.user_id, flow_id=self.flow_id
+                )
+        return self._output_guard
+
+    async def on_llm_start(self, serialized: dict[str, Any], prompts: list[str],
                            **kwargs: Any) -> Any:
         """Run when LLM starts running."""
         logger.debug(f'llm_start prompts={prompts}')
+        # Each LLM run is a fresh guard round — a blocked previous answer must not
+        # mute the next one.
+        if self._output_guard is not None:
+            await self._output_guard.reset()
+        self._output_guard_blocked = False
 
     async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> Any:
         """Run when LLM ends running."""
@@ -82,13 +122,13 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
         """Run when LLM errors."""
         logger.debug(f'on_llm_error error={error} kwargs={kwargs}')
 
-    async def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any],
+    async def on_chain_start(self, serialized: dict[str, Any], inputs: dict[str, Any],
                              **kwargs: Any) -> Any:
         """Run when chain starts running."""
         logger.debug(f'on_chain_start inputs={inputs} kwargs={kwargs}')
         logger.info('k=s act=on_chain_start flow_id={} input_dict={}', self.flow_id, inputs)
 
-    async def on_chain_end(self, outputs: Dict[str, Any], **kwargs: Any) -> Any:
+    async def on_chain_end(self, outputs: dict[str, Any], **kwargs: Any) -> Any:
         """Run when chain ends running."""
         logger.debug(f'on_chain_end outputs={outputs} kwargs={kwargs}')
         tmp_output = copy.deepcopy(outputs)
@@ -101,7 +141,7 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
         """Run when chain errors."""
         logger.debug(f'on_chain_error error={error} kwargs={kwargs}')
 
-    async def on_tool_start(self, serialized: Dict[str, Any], input_str: str,
+    async def on_tool_start(self, serialized: dict[str, Any], input_str: str,
                             **kwargs: Any) -> Any:
         """Run when tool starts running."""
         logger.debug(
@@ -120,7 +160,7 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
         logger.debug(f'on_tool_end  output={output} kwargs={kwargs}')
         logger.info("k=s act=on_tool_end flow_id={} output='{}'", self.flow_id, output)
         observation_prefix = kwargs.get('observation_prefix', 'Tool output: ')
-        # from langchain_classic.docstore.document import Document # noqa
+        # from langchain_classic.docstore.document import Document
         # result = eval(output).get('result')
         result = output if isinstance(output, str) else getattr(output, 'content', output)
 
@@ -228,14 +268,14 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
                             intermediate_steps=finish.log)
         await self.websocket.send_json(resp.dict())
 
-    async def on_retriever_start(self, serialized: Dict[str, Any], query: str,
+    async def on_retriever_start(self, serialized: dict[str, Any], query: str,
                                  **kwargs: Any) -> Any:
         """Run when retriever start running."""
         logger.debug(f'on_retriever_start serialized={serialized} query={query} kwargs={kwargs}')
         logger.info('k=s act=on_retriever_start flow_id={} query={} meta={}', self.flow_id, query,
                     serialized.get('repr'))
 
-    async def on_retriever_end(self, result: List[Document], **kwargs: Any) -> Any:
+    async def on_retriever_end(self, result: list[Document], **kwargs: Any) -> Any:
         """Run when retriever end running."""
         # todo Determine skill permissions
         logger.debug(f'on_retriever_end result={result} kwargs={kwargs}')
@@ -245,8 +285,8 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
             logger.info('k=s act=on_retriever_end flow_id={} result_without_bbox={}', self.flow_id,
                         tmp_result)
 
-    async def on_chat_model_start(self, serialized: Dict[str, Any],
-                                  messages: List[List[BaseMessage]], **kwargs: Any) -> Any:
+    async def on_chat_model_start(self, serialized: dict[str, Any],
+                                  messages: list[list[BaseMessage]], **kwargs: Any) -> Any:
         # """Run when retriever end running."""
         # content = messages[0][0] if isinstance(messages[0][0], str) else messages[0][0].get('content')
         # stream = ChatResponse(message=f'{content}', type='stream')
@@ -315,7 +355,7 @@ class StreamingLLMCallbackHandler(BaseCallbackHandler):
             asyncio.run_coroutine_threadsafe(coroutine, loop)
         logger.info('k=s act=on_agent_finish {}', finish)
 
-    def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs: Any) -> Any:
+    def on_tool_start(self, serialized: dict[str, Any], input_str: str, **kwargs: Any) -> Any:
         """Run when tool starts running."""
         resp = ChatResponse(type='stream',
                             intermediate_steps=f'Tool input: {input_str}',
@@ -332,7 +372,7 @@ class StreamingLLMCallbackHandler(BaseCallbackHandler):
         """Run when tool ends running."""
         observation_prefix = kwargs.get('observation_prefix', 'Tool output: ')
 
-        # from langchain_classic.docstore.document import Document # noqa
+        # from langchain_classic.docstore.document import Document
         # result = eval(output).get('result')
         result = output if isinstance(output, str) else getattr(output, 'content', output)
         # Create a formatted message.
@@ -354,12 +394,12 @@ class StreamingLLMCallbackHandler(BaseCallbackHandler):
             logger.error(e)
         logger.info("k=s act=on_tool_end flow_id={} output='{}'", self.flow_id, output)
 
-    def on_retriever_start(self, serialized: Dict[str, Any], query: str, **kwargs: Any) -> Any:
+    def on_retriever_start(self, serialized: dict[str, Any], query: str, **kwargs: Any) -> Any:
         """Run when retriever start running."""
         logger.info('k=s act=on_retriever_start flow_id={} query={} meta={}', self.flow_id, query,
                     serialized.get('repr'))
 
-    def on_retriever_end(self, result: List[Document], **kwargs: Any) -> Any:
+    def on_retriever_end(self, result: list[Document], **kwargs: Any) -> Any:
         """Run when retriever end running."""
         # todo Determine skill permissions
         logger.debug(f'retriver_result result={result}')
@@ -369,13 +409,13 @@ class StreamingLLMCallbackHandler(BaseCallbackHandler):
             logger.info('k=s act=on_retriever_end flow_id={} result_without_bbox={}', self.flow_id,
                         tmp_result)
 
-    def on_chain_start(self, serialized: Dict[str, Any], inputs: Dict[str, Any],
+    def on_chain_start(self, serialized: dict[str, Any], inputs: dict[str, Any],
                        **kwargs: Any) -> Any:
         """Run when chain starts running."""
         logger.debug(f'on_chain_start inputs={inputs}')
         logger.info('k=s act=on_chain_start flow_id={} input_dict={}', self.flow_id, inputs)
 
-    def on_chain_end(self, outputs: Dict[str, Any], **kwargs: Any) -> Any:
+    def on_chain_end(self, outputs: dict[str, Any], **kwargs: Any) -> Any:
         """Run when chain ends running."""
         logger.debug(f'on_chain_end outputs={outputs}')
         tmp_output = copy.deepcopy(outputs)
@@ -383,7 +423,7 @@ class StreamingLLMCallbackHandler(BaseCallbackHandler):
             tmp_output.pop('source_documents', '')
         logger.info('k=s act=on_chain_end flow_id={} output_dict={}', self.flow_id, tmp_output)
 
-    def on_chat_model_start(self, serialized: Dict[str, Any], messages: List[List[BaseMessage]],
+    def on_chat_model_start(self, serialized: dict[str, Any], messages: list[list[BaseMessage]],
                             **kwargs: Any) -> Any:
         """Run when retriever end running."""
         # sender = kwargs['sender']
@@ -411,7 +451,7 @@ class StreamingLLMCallbackHandler(BaseCallbackHandler):
 
 class AsyncGptsLLMCallbackHandler(AsyncStreamingLLMCallbackHandler):
 
-    async def on_tool_start(self, serialized: Dict[str, Any], input_str: str,
+    async def on_tool_start(self, serialized: dict[str, Any], input_str: str,
                             **kwargs: Any) -> Any:
         """Run when tool starts running."""
         logger.debug(
@@ -442,8 +482,8 @@ class AsyncGptsDebugCallbackHandler(AsyncGptsLLMCallbackHandler):
             tool_name = tool_name.replace('knowledge_', '')
         return tool_name, tool_category
 
-    async def on_chat_model_start(self, serialized: Dict[str, Any],
-                                  messages: List[List[BaseMessage]], **kwargs: Any) -> Any:
+    async def on_chat_model_start(self, serialized: dict[str, Any],
+                                  messages: list[list[BaseMessage]], **kwargs: Any) -> Any:
         # """Run when retriever end running."""
         # content = messages[0][0] if isinstance(messages[0][0], str) else messages[0][0].get('content')
         # stream = ChatResponse(message=f'{content}', type='stream')
@@ -474,7 +514,7 @@ class AsyncGptsDebugCallbackHandler(AsyncGptsLLMCallbackHandler):
                             chat_id=self.chat_id)
         await self.websocket.send_json(resp.dict())
 
-    async def on_tool_start(self, serialized: Dict[str, Any], input_str: str,
+    async def on_tool_start(self, serialized: dict[str, Any], input_str: str,
                             **kwargs: Any) -> Any:
         """Run when tool starts running."""
         logger.debug(

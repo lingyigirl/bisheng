@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from bisheng.sensitive_word.domain.schemas import SensitiveWordCheckResult
 
@@ -10,7 +10,7 @@ class ContentSafetyViolation(Exception):
         self.result = result
         super().__init__(result.auto_reply or 'content safety violation')
 
-    def to_remark(self) -> Dict[str, Any]:
+    def to_remark(self) -> dict[str, Any]:
         return {
             'reason': 'sensitive_check',
             'auto_reply': self.result.auto_reply,

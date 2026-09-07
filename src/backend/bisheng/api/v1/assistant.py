@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from bisheng.api.services.assistant import AssistantService
+from bisheng.api.services.guardrail import build_input_guard, build_output_guard
 from bisheng.api.v1.schemas import AssistantCreateReq, AssistantUpdateReq, StreamData, resp_200
 from bisheng.common.chat.manager import ChatManager
 from bisheng.common.chat.types import WorkType
@@ -231,7 +232,16 @@ async def chat(
                 reason="No permission to use this app",
             )
             return
-        await chat_manager.dispatch_client(websocket, assistant_id, chat_id, login_user, WorkType.GPTS, websocket)
+        await chat_manager.dispatch_client(
+            websocket,
+            assistant_id,
+            chat_id,
+            login_user,
+            WorkType.GPTS,
+            websocket,
+            input_guard=build_input_guard(login_user, assistant_id),
+            output_guard=build_output_guard(login_user, assistant_id),
+        )
     except WebSocketException as exc:
         logger.error(f"Websocket exception: {exc!s}")
         await websocket.close(code=http_status.WS_1011_INTERNAL_ERROR, reason=str(exc))

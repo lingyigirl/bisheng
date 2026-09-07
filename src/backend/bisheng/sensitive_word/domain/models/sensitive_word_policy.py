@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import Boolean, Column, DateTime, Integer, String, UniqueConstraint, text
 from sqlalchemy.exc import IntegrityError
@@ -30,7 +30,7 @@ class SensitiveWordPolicyBase(SQLModelSerializable):
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default=text('0'), comment='是否启用'),
     )
-    words_types: List[str] = Field(
+    words_types: list[str] = Field(
         default_factory=list,
         sa_column=Column(JsonType, nullable=True, comment='词表类型：builtin/custom'),
     )
@@ -42,17 +42,17 @@ class SensitiveWordPolicyBase(SQLModelSerializable):
         default='',
         sa_column=Column(String(500), nullable=False, server_default=text("''"), comment='命中提示话术'),
     )
-    extra_config: Dict[str, Any] = Field(
+    extra_config: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JsonType, nullable=True, comment='扩展配置'),
     )
-    created_by: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True, comment='创建人ID'))
-    updated_by: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True, comment='更新人ID'))
-    create_time: Optional[datetime] = Field(
+    created_by: int | None = Field(default=None, sa_column=Column(Integer, nullable=True, comment='创建人ID'))
+    updated_by: int | None = Field(default=None, sa_column=Column(Integer, nullable=True, comment='更新人ID'))
+    create_time: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime, nullable=False, server_default=text('CURRENT_TIMESTAMP')),
     )
-    update_time: Optional[datetime] = Field(
+    update_time: datetime | None = Field(
         default=None,
         sa_column=Column(
             DateTime,
@@ -81,7 +81,7 @@ class SensitiveWordPolicy(SensitiveWordPolicyBase, table=True):
         {'mysql_charset': 'utf8mb4', 'mysql_collate': 'utf8mb4_unicode_ci'},
     )
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
 
 
 class SensitiveWordPolicyDao:
@@ -91,7 +91,7 @@ class SensitiveWordPolicyDao:
         tenant_id: int,
         business_type: str,
         scope_type: str = 'tenant',
-        scope_id: Optional[str] = None,
+        scope_id: str | None = None,
     ):
         return select(SensitiveWordPolicy).where(
             SensitiveWordPolicy.tenant_id == tenant_id,
@@ -107,8 +107,8 @@ class SensitiveWordPolicyDao:
         tenant_id: int,
         business_type: str,
         scope_type: str = 'tenant',
-        scope_id: Optional[str] = None,
-    ) -> Optional[SensitiveWordPolicy]:
+        scope_id: str | None = None,
+    ) -> SensitiveWordPolicy | None:
         with get_sync_db_session() as session:
             return session.exec(cls._scope_stmt(tenant_id, business_type, scope_type, scope_id)).first()
 
@@ -118,8 +118,8 @@ class SensitiveWordPolicyDao:
         tenant_id: int,
         business_type: str,
         scope_type: str = 'tenant',
-        scope_id: Optional[str] = None,
-    ) -> Optional[SensitiveWordPolicy]:
+        scope_id: str | None = None,
+    ) -> SensitiveWordPolicy | None:
         async with get_async_db_session() as session:
             result = await session.exec(cls._scope_stmt(tenant_id, business_type, scope_type, scope_id))
             return result.first()
@@ -131,13 +131,13 @@ class SensitiveWordPolicyDao:
         business_type: str,
         *,
         enabled: bool,
-        words_types: List[str],
+        words_types: list[str],
         custom_words: str,
         auto_reply: str,
-        extra_config: Dict[str, Any],
+        extra_config: dict[str, Any],
         operator_id: int,
         scope_type: str = 'tenant',
-        scope_id: Optional[str] = None,
+        scope_id: str | None = None,
     ) -> SensitiveWordPolicy:
         final_scope_id = scope_id or str(tenant_id)
         async with get_async_db_session() as session:

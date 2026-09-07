@@ -1,8 +1,8 @@
 import json
-from abc import abstractmethod, ABC
-from typing import Dict, Callable
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 
-from fastapi import WebSocket, Request
+from fastapi import Request, WebSocket
 from loguru import logger
 
 from bisheng.api.v1.schemas import ChatMessage, ChatResponse
@@ -27,6 +27,11 @@ class BaseClient(ABC):
         self.websocket = websocket
         self.kwargs = kwargs
 
+        # F056 guardrail callables, injected by the API layer (common must not import
+        # domain services — constitution C1). None = guard disabled (zero behaviour change).
+        self.input_guard: Callable[[str, str], Awaitable[str | None]] | None = kwargs.get('input_guard')
+        self.output_guard = kwargs.get('output_guard')
+
         # Asynchronous Task List
         self.task_ids = []
         # wsMessage Queues, Used to store thewebsocketMessages sent by the client
@@ -43,7 +48,7 @@ class BaseClient(ABC):
             return
         await self.websocket.send_json(message.model_dump())
 
-    async def handle_message(self, message: Dict[any, any]):
+    async def handle_message(self, message: dict[any, any]):
         """ Handling messages from clients, Submit to Thread Pool for Execution """
         trace_id = trace_id_var.get()
         logger.info(f'client_id={self.client_key} trace_id={trace_id} message={message}')
@@ -51,6 +56,16 @@ class BaseClient(ABC):
         if message.get('action') == 'stop':
             await self._handle_message(message)
             return
+        if self.input_guard is not None:
+            blocked_reply = await self._guard_input_texts(message)
+            if blocked_reply:
+                # Blocked input is answered as an ordinary message (design 决策 6B):
+                # the frontend renders it natively and the round never executes.
+                # type='over' is the workflow answer frame the client renders as a
+                # complete bot message (same shape as the engine's error frames).
+                await self.send_response('processing', 'over', blocked_reply)
+                await self.send_response('processing', 'close', '')
+                return
         thread_pool.submit(trace_id,
                            self.wrapper_task,
                            trace_id,
@@ -58,8 +73,24 @@ class BaseClient(ABC):
                            message,
                            trace_id=trace_id)
 
+    async def _guard_input_texts(self, message: dict[any, any]) -> str | None:
+        """Return the policy auto_reply when any user text payload in ``message`` hits
+        the input policy, None otherwise. Control frames and non-text payloads
+        (forms, structured data) pass through unguarded (design 坑 10)."""
+        if message.get('action') != 'input':
+            return None
+        for node_info in (message.get('data') or {}).values():
+            if not isinstance(node_info, dict):
+                continue
+            text = node_info.get('message')
+            if isinstance(text, str) and text.strip():
+                reply = await self.input_guard(self.chat_id, text)
+                if reply:
+                    return reply
+        return None
+
     @abstractmethod
-    async def _handle_message(self, message: Dict[any, any]):
+    async def _handle_message(self, message: dict[any, any]):
         raise Exception('handle_message must be implemented')
 
     async def wrapper_task(self, task_id: str, fn: Callable, *args, **kwargs):
@@ -69,7 +100,7 @@ class BaseClient(ABC):
         try:
             # Execute Handling Functions
             await fn(*args, **kwargs)
-        except Exception as e:
+        except Exception:
             logger.exception("handle message error")
         finally:
             # When the execution is complete, the task will beidRemove from list
@@ -118,7 +149,7 @@ class BaseClient(ABC):
             citation_registry_items=citation_registry_items or citations,
         ))
 
-    async def stop_handle_message(self, message: Dict[any, any]):
+    async def stop_handle_message(self, message: dict[any, any]):
         # Abort message processing logic
         logger.info(f'need stop agent, client_key: {self.client_key}, task_ids: {self.task_ids}')
 

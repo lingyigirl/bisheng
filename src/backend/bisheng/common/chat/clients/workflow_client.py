@@ -38,6 +38,9 @@ class WorkflowClient(BaseClient):
         self.hash_key = None
         self.ws_closed = False
         self.run_lock = asyncio.Lock()
+        # F056: once the output policy blocks, remaining stream frames are dropped
+        # until the next run resets the guard.
+        self._output_blocked = False
 
     async def close(self, force_stop=False):
         # If the user is not actively stopping, setwsTurn the flag off, but there is no need to abortworkflowExecution
@@ -131,6 +134,7 @@ class WorkflowClient(BaseClient):
 
         await self.send_response("processing", "begin", "")
         logger.debug("init workflow over, continue run workflow")
+        await self._reset_output_guard()
         await self.workflow_run()
         return False, unique_id
 
@@ -159,6 +163,7 @@ class WorkflowClient(BaseClient):
                 [unique_id, workflow_id, self.chat_id, self.user_id], queue=await self.get_execute_worker()
             )
             await self.send_response("processing", "begin", "")
+            await self._reset_output_guard()
             await self.workflow_run()
         except Exception as e:
             logger.exception("init_workflow_error")
@@ -170,6 +175,50 @@ class WorkflowClient(BaseClient):
         async with self.run_lock:
             return await self._workflow_run()
 
+    async def _reset_output_guard(self):
+        """Start a fresh guard round before each new run."""
+        self._output_blocked = False
+        if self.output_guard is not None and hasattr(self.output_guard, 'reset'):
+            await self.output_guard.reset()
+
+    async def _guard_output_event(self, event):
+        """Guard streamed workflow answer events (F056, AC-09..14).
+
+        ``RedisCallback.get_response_until_break`` yields ``ChatResponse`` models:
+        stream chunks are type='stream' / category='stream_msg' with the text in
+        ``message['msg']``; the stream-over frame (type='end') carries the final
+        full answer and is rewritten with the guarded accumulated text (design 坑 6).
+        Returns None to drop a frame. Duck-typed on purpose: importing ChatResponse
+        here would add a common→api import (RULE-1), so only the attributes this
+        guard needs are read.
+        """
+        guard = self.output_guard
+        if guard is None:
+            return event
+        event_type = getattr(event, 'type', None)
+        if event_type not in ('stream', 'end', 'end_cover'):
+            return event
+        if getattr(event, 'category', None) != WorkflowEventType.StreamMsg.value:
+            return event
+        message = getattr(event, 'message', None)
+        if not isinstance(message, dict) or not isinstance(message.get('msg'), str):
+            return event
+        if event_type == 'stream':
+            if self._output_blocked:
+                return None
+            result = await guard(self.chat_id, message['msg'])
+            if result.blocked:
+                self._output_blocked = True
+            new_message = {**message, 'msg': result.safe_text}
+        else:
+            await guard(self.chat_id, '')  # flush the mask-mode hold-back tail
+            new_message = {**message, 'msg': await guard.full_text()}
+        if hasattr(event, 'model_copy'):
+            return event.model_copy(update={'message': new_message})
+        if isinstance(event, dict):
+            return {**event, 'message': new_message}
+        return event
+
     async def _workflow_run(self):
         logger.debug("start workflow run")
         if not self.workflow:
@@ -178,7 +227,10 @@ class WorkflowClient(BaseClient):
 
         # Needs to constantly evolve fromredisGet inworkflowReturned Message
         async for event in self.workflow.get_response_until_break():
-            await self.send_json(event)
+            guarded = await self._guard_output_event(event)
+            if guarded is None:
+                continue
+            await self.send_json(guarded)
 
         status_info = await self.workflow.async_get_workflow_status()
         if not status_info or status_info["status"] in [WorkflowStatus.FAILED.value, WorkflowStatus.SUCCESS.value]:

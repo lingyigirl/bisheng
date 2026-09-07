@@ -3,18 +3,18 @@ import json
 import time
 from collections import defaultdict
 from queue import Queue
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import Request, WebSocket, WebSocketDisconnect, status
 from loguru import logger
 
 from bisheng.api.services.assistant import AssistantService
 from bisheng.api.services.workflow import WorkFlowService
-from bisheng.api.v1.schemas import ChatMessage, ChatResponse, FileResponse
+from bisheng.api.v1.schemas import ChatMessage, FileResponse
 from bisheng.common.chat.client import ChatClient
 from bisheng.common.chat.clients.workflow_client import WorkflowClient
 from bisheng.common.chat.types import IgnoreException, WorkType
-from bisheng.common.constants.enums.telemetry import BaseTelemetryTypeEnum, ApplicationTypeEnum
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationAliveEventData
 from bisheng.common.services import telemetry_service
@@ -31,7 +31,7 @@ class ChatHistory(Subject):
 
     def __init__(self):
         super().__init__()
-        self.history: Dict[str, List[ChatMessage]] = defaultdict(list)
+        self.history: dict[str, list[ChatMessage]] = defaultdict(list)
 
     def add_message(
             self,
@@ -71,17 +71,17 @@ class ChatHistory(Subject):
 class ChatManager:
 
     def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
+        self.active_connections: dict[str, WebSocket] = {}
         self.chat_history = ChatHistory()
         self.cache_manager = cache_manager
         self.cache_manager.attach(self.update)
         self.in_memory_cache = InMemoryCache()
-        self.task_manager: List[asyncio.Task] = []
+        self.task_manager: list[asyncio.Task] = []
         # Connected clients
-        self.active_clients: Dict[str, ChatClient] = {}
+        self.active_clients: dict[str, ChatClient] = {}
 
         # Record Streaming Output Results
-        self.stream_queue: Dict[str, Queue] = {}
+        self.stream_queue: dict[str, Queue] = {}
 
     def update(self):
         if self.cache_manager.current_client_id in self.active_connections:
@@ -132,7 +132,7 @@ class ChatManager:
                                chat_id: str,
                                code: int,
                                reason: str,
-                               key_list: List[str] = None):
+                               key_list: list[str] = None):
         """close and clean ws"""
         if websocket := self.active_connections.get(get_cache_key(flow_id, chat_id)):
             try:
@@ -208,7 +208,9 @@ class ChatManager:
             login_user: UserPayload,
             work_type: WorkType,
             websocket: WebSocket,
-            graph_data: dict = None):
+            graph_data: dict = None,
+            input_guard=None,
+            output_guard=None):
         start_time = time.time()
         client_key = generate_uuid()
         if work_type == WorkType.GPTS:
@@ -220,7 +222,9 @@ class ChatManager:
                                      login_user,
                                      work_type,
                                      websocket,
-                                     graph_data=graph_data)
+                                     graph_data=graph_data,
+                                     input_guard=input_guard,
+                                     output_guard=output_guard)
         else:
             chat_client = WorkflowClient(request,
                                          client_key,
@@ -229,7 +233,9 @@ class ChatManager:
                                          login_user.user_id,
                                          login_user,
                                          work_type,
-                                         websocket)
+                                         websocket,
+                                         input_guard=input_guard,
+                                         output_guard=output_guard)
         await self.accept_client(client_key, chat_client, websocket)
         logger.debug(
             f'act=accept_client client_key={client_key} client_id={client_id} chat_id={chat_id}')
@@ -238,7 +244,7 @@ class ChatManager:
                 try:
                     json_payload_receive = await asyncio.wait_for(websocket.receive_json(),
                                                                   timeout=2.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 try:
                     payload = json.loads(json_payload_receive) if json_payload_receive else {}

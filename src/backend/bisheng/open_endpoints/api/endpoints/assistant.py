@@ -12,14 +12,17 @@ from loguru import logger
 
 from bisheng.api.services.assistant import AssistantService
 from bisheng.api.services.assistant_agent import AssistantAgent
+from bisheng.api.services.guardrail import build_input_guard, build_output_guard
 from bisheng.api.v1.chat import chat_manager
 from bisheng.api.v1.schemas import OpenAIChatCompletionReq, OpenAIChatCompletionResp, OpenAIChoice
 from bisheng.common.chat.types import WorkType
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
+from bisheng.common.errcode.sensitive_word import SensitiveWordInputBlockedError
 from bisheng.common.schemas.api import PageData, resp_200
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationAliveEventData, ApplicationProcessEventData
 from bisheng.common.services import telemetry_service
 from bisheng.common.services.config_service import settings
+from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.core.logger import trace_id_var
 from bisheng.llm.domain.utils import extract_reasoning_content
 from bisheng.open_endpoints.domain.utils import get_default_operator
@@ -74,6 +77,20 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
         if chat_history and chat_history[-1].content == question:
             chat_history = chat_history[:-1]
 
+        # F056 安全围栏: 输入检测 + 输出检测 (design 决策 2/3 的 HTTP 落点)
+        tenant_id = get_current_tenant_id()
+        input_guard = build_input_guard(login_user, assistant_id) if tenant_id is not None else None
+        output_guard = build_output_guard(login_user, assistant_id) if tenant_id is not None else None
+
+        if input_guard is not None:
+            blocked_reply = await input_guard(None, question)
+            if blocked_reply:
+                # AC-08: HTTP 400 + 错误码 11201 + 话术
+                return JSONResponse(
+                    status_code=400,
+                    content=SensitiveWordInputBlockedError.return_resp(msg=blocked_reply).model_dump(),
+                )
+
         # Initialization Assistantagent
         agent = AssistantAgent(assistant_info, "", invoke_user_id=login_user.user_id)
         await agent.init_assistant()
@@ -88,6 +105,10 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
         if not req_data.stream or not model_supports_streaming:
             answer = await agent.run(question, chat_history)
             answer = answer[-1].content
+            if output_guard is not None and isinstance(answer, str):
+                await output_guard(None, '')  # flush (无流式分片时为 no-op)
+                guarded_full = await output_guard.full_text()
+                answer = guarded_full if guarded_full else (await output_guard(None, answer)).safe_text
 
             openai_resp_id = generate_uuid()
 
@@ -124,6 +145,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
             try:
                 # Use True Streaming Calls
                 chunk_counter = 0
+                output_blocked = False
                 try:
                     async for message_chunk in agent.astream(question, chat_history):
                         chunk_counter += 1
@@ -137,6 +159,12 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
                             continue
                         reasoning_content = extract_reasoning_content(latest_message)
                         content = latest_message.content
+                        if output_blocked:
+                            continue  # F056: 命中后剩余分片不再外发 (AC-10)
+                        if output_guard is not None and isinstance(content, str):
+                            guarded = await output_guard(None, content)
+                            content = guarded.safe_text
+                            output_blocked = guarded.blocked
 
                         chunk_data = {
                             "id": openai_resp_id,
@@ -157,6 +185,19 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
                 except Exception as astream_error:
                     logger.exception("[APIStreamed] agent.astream()Error calling")
                     raise astream_error
+
+                # F056: 冲刷 mask 模式缓冲尾部, 作为最后一个内容分片外发
+                if output_guard is not None and not output_blocked:
+                    flushed = await output_guard(None, '')
+                    if flushed.safe_text:
+                        tail_chunk = {
+                            "id": openai_resp_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": req_data.model,
+                            "choices": [{"index": 0, "delta": {"content": flushed.safe_text}, "finish_reason": None}],
+                        }
+                        yield f"data: {json.dumps(tail_chunk, ensure_ascii=False)}\n\n"
 
                 logger.info(f"[APIStreamed] astreamLoop ended, total processed{chunk_counter}Pcschunk")
 
@@ -296,7 +337,16 @@ async def chat(*, websocket: WebSocket, assistant_id: str, chat_id: str | None =
     login_user = get_default_operator()
     try:
         request = websocket
-        await chat_manager.dispatch_client(request, assistant_id, chat_id, login_user, WorkType.GPTS, websocket)
+        await chat_manager.dispatch_client(
+            request,
+            assistant_id,
+            chat_id,
+            login_user,
+            WorkType.GPTS,
+            websocket,
+            input_guard=build_input_guard(login_user, assistant_id),
+            output_guard=build_output_guard(login_user, assistant_id),
+        )
     except WebSocketException as exc:
         logger.error(f"Websocket exception: {exc!s}")
         await websocket.close(code=http_status.WS_1011_INTERNAL_ERROR, reason=str(exc))
