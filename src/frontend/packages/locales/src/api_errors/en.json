@@ -396,5 +396,7 @@
   "90002": "Your current role does not have permission to access the workbench. Please contact the administrator if needed.",
   "personIdAlreadyExists": "Person ID already exists",
   "fallback": "The operation failed. Please try again later.",
-  "15026": "Failed to connect to the MCP service: {{exception}}. Hint: on 401/403, check the auth setup — the API key can be passed as a header, e.g. \"headers\": {\"Authorization\": \"Bearer <key>\"}, instead of a URL query parameter"
+  "15026": "Failed to connect to the MCP service: {{exception}}. Hint: on 401/403, check the auth setup — the API key can be passed as a header, e.g. \"headers\": {\"Authorization\": \"Bearer <key>\"}, instead of a URL query parameter",
+  "11201": "Message blocked: input contains sensitive words",
+  "11202": "Output truncated: generated content contains sensitive words"
 }

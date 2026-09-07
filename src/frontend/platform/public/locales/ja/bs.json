@@ -1203,7 +1203,8 @@
     "fetchKbFailed": "ナレッジベース取得に失敗しました",
     "addMoreModels": "モデルを追加",
     "home": "ホーム",
-    "appCenter": "アプリ"
+    "appCenter": "アプリ",
+    "guardrail": "ガードレール"
   },
   "tools": {
     "addTool": "ツール追加",
@@ -2163,5 +2164,34 @@
       "githubRateLimit": "GitHub のレート制限に達しました。しばらくしてから再試行してください",
       "unknown": "操作に失敗しました。再試行してください"
     }
+  },
+  "guardrail": {
+    "chatInput": "チャット入力",
+    "chatInputDesc": "ユーザー入力のチャット内容を検査し、ヒット時はブロックして設定メッセージを返します",
+    "chatOutput": "チャット出力",
+    "chatOutputDesc": "モデル生成内容をリアルタイム検査し、ヒット時はアクションに応じて遮断またはマスクします",
+    "outputAction": "出力アクション",
+    "actionBlock": "遮断して返信",
+    "actionMask": "マスクして継続",
+    "autoReply": "返信メッセージ",
+    "customWords": "カスタムワード",
+    "customWordsEmpty": "カスタムワードを入力してください",
+    "hitLogs": "ヒットログ",
+    "hitLogsDesc": "ヒット記録(要約のみ、会話原文は含まれません)",
+    "direction": "方向",
+    "directionAll": "すべて",
+    "directionInput": "入力",
+    "directionOutput": "出力",
+    "app": "アプリ",
+    "appPlaceholder": "アプリID",
+    "hitTime": "時間",
+    "words": "ヒットワード",
+    "count": "回数",
+    "action": "アクション",
+    "empty": "ヒット記録はありません",
+    "totalRecords": "合計 {{total}} 件",
+    "previous": "前へ",
+    "next": "次へ",
+    "defaultAutoReply": "機密ワードが検出されたためブロックされました。"
   }
 }

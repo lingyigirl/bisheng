@@ -1,0 +1,180 @@
+import { Badge } from "@/components/bs-ui/badge";
+import { Button } from "@/components/bs-ui/button";
+import { Input } from "@/components/bs-ui/input";
+import SelectSearch from "@/components/bs-ui/select/select";
+import {
+    getSensitiveWordHitLogsApi,
+    type SensitiveWordHitLogItem,
+} from "@/controllers/API/sensitiveWordHitLog";
+import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+
+const PAGE_SIZE = 20;
+
+function formatTime(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    const pad = (num: number) => String(num).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+export function LLMGuardrailHitLogs() {
+    const { t } = useTranslation();
+    const [rows, setRows] = useState<SensitiveWordHitLogItem[]>([]);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
+    const [direction, setDirection] = useState("");
+    const [flowId, setFlowId] = useState("");
+    const [loading, setLoading] = useState(false);
+    // 查询条件快照：点击「查询」后生效，翻页沿用同一条件
+    const [appliedDirection, setAppliedDirection] = useState("");
+    const [appliedFlowId, setAppliedFlowId] = useState("");
+
+    const load = async (targetPage: number, nextDirection?: string, nextFlowId?: string) => {
+        const useDirection = nextDirection !== undefined ? nextDirection : appliedDirection;
+        const useFlowId = nextFlowId !== undefined ? nextFlowId : appliedFlowId;
+        setLoading(true);
+        const res = await captureAndAlertRequestErrorHoc(
+            getSensitiveWordHitLogsApi({
+                direction: useDirection || undefined,
+                flow_id: useFlowId || undefined,
+                page: targetPage,
+                page_size: PAGE_SIZE,
+            }),
+        );
+        setLoading(false);
+        if (res) {
+            setRows(res.data || []);
+            setTotal(res.total || 0);
+            setPage(targetPage);
+        }
+    };
+
+    useEffect(() => {
+        load(1);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const search = async () => {
+        if (loading) return;
+        setAppliedDirection(direction);
+        setAppliedFlowId(flowId.trim());
+        await load(1, direction, flowId.trim());
+    };
+
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    return (
+        <div className="rounded-lg border border-[#ECECEC] bg-white p-5">
+            <div>
+                <p className="text-lg font-bold">{t("guardrail.hitLogs")}</p>
+                <p className="mt-1 text-sm text-[#86909C]">{t("guardrail.hitLogsDesc")}</p>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                    <span className="text-sm text-[#86909C]">{t("guardrail.direction")}</span>
+                    <SelectSearch
+                        selectClass="w-[140px]"
+                        value={direction}
+                        options={[
+                            { label: t("guardrail.directionAll"), value: "" },
+                            { label: t("guardrail.directionInput"), value: "input" },
+                            { label: t("guardrail.directionOutput"), value: "output" },
+                        ]}
+                        onValueChange={setDirection}
+                        onChange={() => undefined}
+                    />
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="text-sm text-[#86909C]">{t("guardrail.app")}</span>
+                    <Input
+                        className="w-[220px]"
+                        value={flowId}
+                        onChange={(event) => setFlowId(event.target.value)}
+                        placeholder={t("guardrail.appPlaceholder")}
+                    />
+                </div>
+                <Button size="sm" onClick={search} disabled={loading}>
+                    {t("search")}
+                </Button>
+            </div>
+
+            <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                    <thead>
+                        <tr className="border-b border-[#ECECEC] text-left text-[#86909C]">
+                            <th className="py-2 pr-4 font-normal">{t("guardrail.hitTime")}</th>
+                            <th className="py-2 pr-4 font-normal">{t("guardrail.direction")}</th>
+                            <th className="py-2 pr-4 font-normal">{t("guardrail.app")}</th>
+                            <th className="py-2 pr-4 font-normal">{t("guardrail.words")}</th>
+                            <th className="py-2 pr-4 font-normal">{t("guardrail.count")}</th>
+                            <th className="py-2 pr-4 font-normal">{t("guardrail.action")}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row) => (
+                            <tr key={row.id} className="border-b border-[#ECECEC] last:border-0">
+                                <td className="py-2 pr-4">{formatTime(row.create_time)}</td>
+                                <td className="py-2 pr-4">
+                                    {row.direction === "input"
+                                        ? t("guardrail.directionInput")
+                                        : t("guardrail.directionOutput")}
+                                </td>
+                                <td className="py-2 pr-4">{row.flow_id || "-"}</td>
+                                <td className="py-2 pr-4">
+                                    <div className="flex flex-wrap gap-1">
+                                        {(row.hits || []).map((hit) => (
+                                            <Badge key={hit.word} variant="secondary">
+                                                {hit.word}
+                                            </Badge>
+                                        ))}
+                                    </div>
+                                </td>
+                                <td className="py-2 pr-4">
+                                    {(row.hits || []).map((hit) => (
+                                        <div key={hit.word}>{hit.count}</div>
+                                    ))}
+                                </td>
+                                <td className="py-2 pr-4">
+                                    {row.action === "block" ? t("guardrail.actionBlock") : t("guardrail.actionMask")}
+                                </td>
+                            </tr>
+                        ))}
+                        {!loading && rows.length === 0 && (
+                            <tr>
+                                <td colSpan={6} className="py-8 text-center text-[#86909C]">
+                                    {t("guardrail.empty")}
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-3 text-sm">
+                <span className="text-[#86909C]">{t("guardrail.totalRecords", { total })}</span>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page <= 1 || loading}
+                    onClick={() => load(page - 1)}
+                >
+                    {t("guardrail.previous")}
+                </Button>
+                <span>
+                    {page} / {totalPages}
+                </span>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={page >= totalPages || loading}
+                    onClick={() => load(page + 1)}
+                >
+                    {t("guardrail.next")}
+                </Button>
+            </div>
+        </div>
+    );
+}

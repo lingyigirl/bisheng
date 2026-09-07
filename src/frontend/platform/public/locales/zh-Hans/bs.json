@@ -1209,7 +1209,8 @@
     "fetchKbFailed": "获取知识库列表失败",
     "addMoreModels": "添加更多模型",
     "home": "首页",
-    "appCenter": "应用"
+    "appCenter": "应用",
+    "guardrail": "安全围栏"
   },
   "tools": {
     "addTool": "添加工具",
@@ -2163,5 +2164,34 @@
       "githubRateLimit": "GitHub 访问已达速率限制，请稍后再试",
       "unknown": "操作失败，请重试"
     }
+  },
+  "guardrail": {
+    "chatInput": "对话输入",
+    "chatInputDesc": "对用户输入的对话内容进行敏感词检测，命中即拦截并回复提示话术",
+    "chatOutput": "对话输出",
+    "chatOutputDesc": "对模型生成内容进行流式实时检测，命中时按动作截断或打码",
+    "outputAction": "输出动作",
+    "actionBlock": "截断并回复话术",
+    "actionMask": "打码继续输出",
+    "autoReply": "命中话术",
+    "customWords": "自定义词表",
+    "customWordsEmpty": "自定义词表不能为空",
+    "hitLogs": "命中日志",
+    "hitLogsDesc": "输入/输出敏感词命中的监测记录，仅保存命中摘要，不含对话原文",
+    "direction": "方向",
+    "directionAll": "全部",
+    "directionInput": "输入",
+    "directionOutput": "输出",
+    "app": "应用",
+    "appPlaceholder": "应用ID",
+    "hitTime": "时间",
+    "words": "命中词",
+    "count": "次数",
+    "action": "动作",
+    "empty": "暂无命中记录",
+    "totalRecords": "共 {{total}} 条",
+    "previous": "上一页",
+    "next": "下一页",
+    "defaultAutoReply": "命中敏感词，已被系统拦截。"
   }
 }

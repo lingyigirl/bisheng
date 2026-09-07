@@ -1220,7 +1220,8 @@
     "fetchKbFailed": "Failed to fetch knowledge bases",
     "addMoreModels": "Add more models",
     "home": "Home",
-    "appCenter": "Apps"
+    "appCenter": "Apps",
+    "guardrail": "Guardrail"
   },
   "tools": {
     "addTool": "Add Tool",
@@ -2218,5 +2219,34 @@
       "githubRateLimit": "GitHub rate limit exceeded, please retry later",
       "unknown": "Operation failed, please retry"
     }
+  },
+  "guardrail": {
+    "chatInput": "Chat Input",
+    "chatInputDesc": "Detect sensitive words in user input; block the round and reply with the configured message",
+    "chatOutput": "Chat Output",
+    "chatOutputDesc": "Stream-guard model output in real time; truncate or mask on hit",
+    "outputAction": "Output Action",
+    "actionBlock": "Truncate and reply",
+    "actionMask": "Mask and continue",
+    "autoReply": "Auto Reply",
+    "customWords": "Custom Words",
+    "customWordsEmpty": "Custom words cannot be empty",
+    "hitLogs": "Hit Logs",
+    "hitLogsDesc": "Guardrail hit records (summary only, no raw conversation text)",
+    "direction": "Direction",
+    "directionAll": "All",
+    "directionInput": "Input",
+    "directionOutput": "Output",
+    "app": "App",
+    "appPlaceholder": "App ID",
+    "hitTime": "Time",
+    "words": "Hit Words",
+    "count": "Count",
+    "action": "Action",
+    "empty": "No hit records",
+    "totalRecords": "{{total}} records",
+    "previous": "Previous",
+    "next": "Next",
+    "defaultAutoReply": "Sensitive content detected and blocked."
   }
 }

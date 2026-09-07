@@ -396,5 +396,7 @@
   "90002": "您当前角色没有访问工作台的权限。如有需要，请联系管理员开通。",
   "personIdAlreadyExists": "人员 ID 已存在",
   "fallback": "操作失败，请稍后重试",
-  "15026": "MCP 服务连接失败：{{exception}}。提示：若返回 401/403，请检查鉴权配置——API key 可配置为请求头，例如 \"headers\": {\"Authorization\": \"Bearer <key>\"}，而不是拼接在 URL 的 query 中"
+  "15026": "MCP 服务连接失败：{{exception}}。提示：若返回 401/403，请检查鉴权配置——API key 可配置为请求头，例如 \"headers\": {\"Authorization\": \"Bearer <key>\"}，而不是拼接在 URL 的 query 中",
+  "11201": "对话内容命中敏感词，请求已被拦截",
+  "11202": "模型输出命中敏感词，已按策略处理"
 }

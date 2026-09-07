@@ -7,6 +7,8 @@ import { AppCenter } from "./AppCenter";
 import Index from "./index";
 import Subscribe from "./Subscribe";
 import KnowledgeSpace from "./KnowledgeSpace";
+import { LLMGuardrailPolicy } from "./LLMGuardrailPolicy";
+import { LLMGuardrailHitLogs } from "./LLMGuardrailHitLogs";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/bs-ui/tabs";
 
 export default function DialogueWork() {
@@ -38,6 +40,7 @@ export default function DialogueWork() {
             <TabsTrigger value="knowledgeSpace">{t('bench.knowledgeSpace')}</TabsTrigger>
             <TabsTrigger value="subscribe">{t('bench.subscribe')}</TabsTrigger>
             <TabsTrigger value="appCenter">{t('bench.appCenter')}</TabsTrigger>
+            <TabsTrigger value="guardrail">{t('bench.guardrail')}</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="client" key="client-tab">
@@ -51,6 +54,10 @@ export default function DialogueWork() {
         </TabsContent>
         <TabsContent value="appCenter">
           <AppCenter scopeVersion={scopeVersion} />
+        </TabsContent>
+        <TabsContent value="guardrail">
+          <LLMGuardrailPolicy />
+          <LLMGuardrailHitLogs />
         </TabsContent>
       </Tabs>
     </div>
