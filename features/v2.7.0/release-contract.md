@@ -31,6 +31,8 @@
 | 评测数据集 `form_values` 列的解析与校验 | F054-eval-form-workflows | 新增可选 CSV 列（JSON，按表单项 label 引用）；创建评测时校验；仅本 Feature 定义其语义 |
 | 知识库/文档的时效性字段（生效日期 / 失效日期）与权重、优先级配置 | F055-risk-compliance-knowledge | 扩展既有 knowledge / knowledgefile 对象：新增时效与权重/优先级字段及其写入行为；检索期的时效过滤注入与加权排序由本 Feature 定义；不拥有 knowledge/knowledgefile 对象本身（沿用既有知识库模块归属） |
 | 工作流知识检索节点（rag / knowledge_retriever / qa_retriever）的检索注入扩展（时效过滤、标签过滤、权重排序、top_k / 分数阈值参数） | F055-risk-compliance-knowledge | 扩展既有检索节点的参数与召回后处理（`workflow/common/knowledge.py` 检索构建链路）；不改变未配置新参数时的既有行为（AC-11/AC-13 兼容）；仅本 Feature 写入该扩展逻辑 |
+| 敏感词策略的对话场景（business_type=`chat_input` / `chat_output` 的配置语义与检测行为） | F056-llm-guardrail | 扩展 v2.6.0 F036 既有的 `SensitiveWordPolicy` 对象到对话输入/输出场景（新增枚举值 + `extra_config` 中 action 语义 + 检测点接入）；**不拥有**策略表本身（F036 归属），不改变知识库文件解析 / 订阅文章两个既有场景的行为 |
+| 敏感词命中日志表（sensitive_word_hit_log） | F056-llm-guardrail | 新增独立表（租户 / 方向 / 应用 / 命中词摘要 / 动作 / 时间）；仅本 Feature 写入；平台日志页只读展示 |
 
 **规则**：
 - 非 Owner Feature 的 AC 中不得出现其他对象的"创建/修改/删除"行为，只能"读取"或"调用" Owner 的 Service
@@ -66,6 +68,7 @@
 | F053-agent-version-eval-compare | 无（既有 flow_version 版本列表 + 评估执行链已上线） | 复用版本列表 API 与「按版本执行评测」能力；不依赖 F051/F052 |
 | F054-eval-form-workflows | F053-agent-version-eval-compare（对比组机制已上线） | 复用 F053 的对比组与对比端点；只改评测执行链的表单分支，不依赖 F051/F052 |
 | F055-risk-compliance-knowledge | 无（既有知识库模块 / 工作流检索节点已上线） | 扩展既有知识库对象与检索链路；复用 metadata 过滤、双引擎（Milvus+ES）AND 组合机制；不依赖其他 feature 的新增能力 |
+| F056-llm-guardrail | 无（v2.6.0 F036 sensitive_word 模块已上线） | 扩展既有策略基础设施到对话链路；复用 AC 自动机 / 策略表 / 管理 API；不依赖本版本其他 feature 的新增能力 |
 
 ---
 
@@ -78,6 +81,7 @@
 | —（F045 不新增错误码，复用 `common/errcode/server.py` Tts* 系列） | — | — |
 | —（F051 不新增错误码，复用 `common/errcode/flow.py` 10500 NotFoundVersionError） | — | — |
 | —（F052 不新增错误码：窗口/参数校验沿用 F046 call-logs 的 HTTP 400 口径） | — | — |
+| 112 | 敏感词 / 安全围栏（`common/errcode/sensitive_word.py` 新增：11201=输入命中拦截、11202=输出命中截断） | F056-llm-guardrail |
 
 ---
 
@@ -91,3 +95,4 @@
 | 2026-09-05 | 登记 F053-agent-version-eval-compare（evaluation.compare_group_id 字段 + 创建端点扩展 + 只读对比端点） | — |
 | 2026-09-05 | 登记 F054-eval-form-workflows（评测执行链表单型分支 + 数据集 form_values 列语义） | — |
 | 2026-09-06 | 登记 F055-risk-compliance-knowledge（知识库/文档时效与权重/优先级字段 + 检索注入） | — |
+| 2026-09-07 | 登记 F056-llm-guardrail（敏感词策略 chat_input/chat_output 场景扩展 + 命中日志表 + 错误码模块 112） | — |
