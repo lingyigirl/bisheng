@@ -1572,7 +1572,7 @@
     "workbench_daily": "Workbench (Daily Mode)",
     "agentMonitor": "Agent Monitor",
     "monitorTransactionId": "Transaction",
-    "monitorKeywordPlaceholder": "Search transactions",
+    "monitorKeywordPlaceholder": "Search transaction / trace ID",
     "monitorRefresh": "Refresh",
     "monitorDetail": "Transaction Detail",
     "monitorRunInfo": "Run Info",
@@ -1596,7 +1596,8 @@
       "running": "Running",
       "success": "Success",
       "failed": "Failed"
-    }
+    },
+    "monitorTraceId": "Trace ID"
   },
   "tag": {
     "labelMaxLength": "Label name cannot exceed 10 characters",

@@ -1517,7 +1517,7 @@
     "workbench_daily": "ワークベンチ（通常モード）",
     "agentMonitor": "エージェント監視",
     "monitorTransactionId": "トランザクション",
-    "monitorKeywordPlaceholder": "トランザクションを検索",
+    "monitorKeywordPlaceholder": "トランザクション／トレースIDで検索",
     "monitorRefresh": "更新",
     "monitorDetail": "トランザクション詳細",
     "monitorRunInfo": "実行情報",
@@ -1541,7 +1541,8 @@
       "running": "実行中",
       "success": "成功",
       "failed": "失敗"
-    }
+    },
+    "monitorTraceId": "トレースID"
   },
   "tag": {
     "labelMaxLength": "タグ名は 10 文字以内で入力してください",

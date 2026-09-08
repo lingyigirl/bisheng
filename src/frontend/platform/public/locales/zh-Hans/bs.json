@@ -1517,7 +1517,7 @@
     "workbench_daily": "工作台（日常模式）",
     "agentMonitor": "智能体监控",
     "monitorTransactionId": "交易标识",
-    "monitorKeywordPlaceholder": "搜索交易标识",
+    "monitorKeywordPlaceholder": "搜索交易标识/流水号",
     "monitorRefresh": "刷新",
     "monitorDetail": "交易详情",
     "monitorRunInfo": "运行信息",
@@ -1541,7 +1541,8 @@
       "running": "运行中",
       "success": "成功",
       "failed": "失败"
-    }
+    },
+    "monitorTraceId": "调用流水号"
   },
   "tag": {
     "labelMaxLength": "标签名不能超过10个字符",
