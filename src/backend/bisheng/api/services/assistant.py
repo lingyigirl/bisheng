@@ -568,6 +568,20 @@ class AssistantService(BaseService, AssistantUtils):
         assistant = AssistantDao.get_one_assistant(assistant_id)
         if not assistant:
             raise AssistantNotExistsError()
+        if status == AssistantStatus.ONLINE.value:
+            # F056-审批: 上线需过智能体发布审批网关（场景未配置/停用 → 直接发布）
+            from bisheng.api.services.agent_publish import gate_agent_publish
+
+            outcome = await gate_agent_publish(
+                login_user,
+                app_type='assistant',
+                app_id=assistant_id,
+                business_name=assistant.name,
+            )
+            if outcome.pending:
+                from bisheng.common.errcode.approval import ApprovalPendingError
+
+                raise ApprovalPendingError(msg=f'发布申请已提交审批（单号 {outcome.instance_id}），审批通过后自动上线')
         # Determine permissions
         required_permission = "publish_app" if status == AssistantStatus.ONLINE.value else "unpublish_app"
         if not await ApplicationPermissionService.has_any_permission_async(

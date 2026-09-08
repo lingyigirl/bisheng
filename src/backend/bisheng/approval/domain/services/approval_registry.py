@@ -11,7 +11,7 @@ class ApprovalRegistry:
         self._handlers: dict[str, Any] = {}
 
     @classmethod
-    def with_default_presets(cls) -> 'ApprovalRegistry':
+    def with_default_presets(cls) -> ApprovalRegistry:
         registry = cls()
         registry.register_preset(
             ApprovalScenarioPreset(
@@ -40,6 +40,15 @@ class ApprovalRegistry:
                 handler_key='knowledge_space_subscribe_request',
                 condition_fields=['applicant_role'],
                 approver_source_types=['direct_user', 'department_admin', 'knowledge_space_owner', 'knowledge_space_manager'],
+            )
+        )
+        registry.register_preset(
+            ApprovalScenarioPreset(
+                scenario_code='agent_publish_request',
+                scenario_name='智能体发布申请',
+                handler_key='agent_publish_request',
+                condition_fields=['applicant_role'],
+                approver_source_types=['direct_user', 'department_admin', 'tenant_admin'],
             )
         )
         return registry

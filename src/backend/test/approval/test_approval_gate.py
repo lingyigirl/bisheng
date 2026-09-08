@@ -30,6 +30,17 @@ from bisheng.approval.domain.services.approval_registry import ApprovalRegistry
 from bisheng.common.errcode.approval import ApprovalScenarioDisabledError
 
 
+@pytest.fixture(autouse=True)
+def _patch_audit_dao(monkeypatch):
+    # The gate writes audit rows through the real async engine; unit tests run on
+    # per-test event loops, so reusing pooled connections crashes with "Future
+    # attached to a different loop". Keep audit off the real engine here.
+    monkeypatch.setattr(
+        "bisheng.database.models.audit_log.AuditLogDao.ainsert_v2",
+        AsyncMock(return_value=None),
+    )
+
+
 @pytest_asyncio.fixture
 async def approval_db_engine():
     engine = create_async_engine(
@@ -333,7 +344,7 @@ async def test_gate_raises_disabled_error_when_scenario_disabled():
 
 
 @pytest.mark.asyncio
-async def test_gate_pass_when_route_direct_approve():
+async def test_gate_pass_when_route_direct_approve(monkeypatch):
     handler = SimpleNamespace(
         build_detail=AsyncMock(return_value={"menu_name": "知识管理"}),
         build_title=AsyncMock(return_value="知识管理"),
@@ -358,7 +369,10 @@ async def test_gate_pass_when_route_direct_approve():
         create_instance=AsyncMock(side_effect=lambda row: row.model_copy(update={"id": 201})),
         create_exception=AsyncMock(),
         create_task=AsyncMock(),
+        create_outbox=AsyncMock(return_value=SimpleNamespace(id=901)),
     )
+    # Do not publish to the real Celery broker from unit tests.
+    monkeypatch.setattr(ApprovalGate, "_dispatch_outbox_task", lambda self, outbox_id: None)
     gate = ApprovalGate(
         registry=registry,
         scenario_repository=scenario_repository,
@@ -424,6 +438,7 @@ async def test_gate_pending_when_route_hits_flow():
         create_instance=AsyncMock(side_effect=lambda row: row.model_copy(update={"id": 300})),
         create_exception=AsyncMock(),
         create_task=AsyncMock(side_effect=lambda row: row.model_copy(update={"id": next(task_ids)})),
+        create_action_log=AsyncMock(),
     )
     gate = ApprovalGate(
         registry=registry,
@@ -757,5 +772,7 @@ def test_registry_exposes_default_presets():
         "menu_access_request",
         "channel_subscribe_request",
         "knowledge_space_subscribe_request",
+        "agent_publish_request",
     }
     assert presets["menu_access_request"].handler_key == "menu_access_request"
+    assert presets["agent_publish_request"].scenario_name == "智能体发布申请"

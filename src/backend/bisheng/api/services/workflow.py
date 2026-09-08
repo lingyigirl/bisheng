@@ -845,6 +845,21 @@ class WorkFlowService(BaseService):
         db_flow = await FlowDao.aget_flow_by_id(flow_id)
         if not db_flow:
             raise NotFoundError()
+        if status == FlowStatus.ONLINE.value:
+            # F056-审批: 上线需过智能体发布审批网关（场景未配置/停用 → 直接发布）
+            from bisheng.api.services.agent_publish import gate_agent_publish
+
+            outcome = await gate_agent_publish(
+                login_user,
+                app_type='workflow',
+                app_id=flow_id,
+                business_name=db_flow.name,
+                version_id=version_id,
+            )
+            if outcome.pending:
+                from bisheng.common.errcode.approval import ApprovalPendingError
+
+                raise ApprovalPendingError(msg=f'发布申请已提交审批（单号 {outcome.instance_id}），审批通过后自动上线')
         required_permission = "publish_app" if status == FlowStatus.ONLINE.value else "unpublish_app"
         if not await ApplicationPermissionService.has_any_permission_async(
             login_user,

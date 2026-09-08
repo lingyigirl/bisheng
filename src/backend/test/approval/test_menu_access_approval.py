@@ -117,8 +117,19 @@ async def test_apply_menu_access_request_uses_gate_when_mode_enabled():
         patch(
             "bisheng.approval.domain.services.approval_center_service.ApprovalGate.request_or_pass",
             new_callable=AsyncMock,
-            return_value=SimpleNamespace(model_dump=lambda: {"decision": "pending", "instance_id": 99}),
+            return_value=SimpleNamespace(
+                decision="pending",
+                task_ids=[],
+                instance_id=99,
+                model_dump=lambda: {"decision": "pending", "instance_id": 99},
+            ),
         ) as mock_request,
+        # Primary-department lookup would otherwise hit the real async engine.
+        patch(
+            "bisheng.approval.domain.services.approval_center_service.UserDepartmentDao.aget_user_primary_department",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         result = await ApprovalCenterService.apply_menu_access_request(
             login_user=login_user,
@@ -212,6 +223,12 @@ async def test_revoke_menu_grant_uses_instance_payload_menu_key():
             "bisheng.approval.domain.services.approval_center_service.ApprovalCenterService._write_audit_log",
             new_callable=AsyncMock,
         ) as mock_audit_log,
+        # Post-revoke notification lookup hits the real engine; not the subject here.
+        patch(
+            "bisheng.approval.domain.services.approval_center_service.UserDao.aget_user",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         result = await ApprovalCenterService.revoke_menu_grant(
             instance_id=22,
@@ -258,7 +275,10 @@ async def test_get_roles_web_menu_includes_personal_menu_grants():
 
     assert role == [2]
     assert set(web_menu) == {"apps", "workstation", "home"}
-    mock_personal_menu.assert_awaited_once_with(3, 7)
+    # Tenant comes from the ContextVar (C3 tenant isolation), not user.tenant_id.
+    from bisheng.core.context.tenant import DEFAULT_TENANT_ID
+
+    mock_personal_menu.assert_awaited_once_with(DEFAULT_TENANT_ID, 7)
 
 
 @pytest.mark.asyncio

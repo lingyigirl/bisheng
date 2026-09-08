@@ -14,6 +14,7 @@ from bisheng.api.v1.schemas import FlowVersionCreate, resp_200
 from bisheng.common.chat.types import WorkType
 from bisheng.common.constants.enums.telemetry import BaseTelemetryTypeEnum
 from bisheng.common.dependencies.user_deps import UserPayload
+from bisheng.common.errcode.approval import ApprovalPendingError
 from bisheng.common.errcode.flow import WorkflowNameExistsError, WorkFlowOnlineEditError, AppWriteAuthError
 from bisheng.common.errcode.http_error import UnAuthorizedError, NotFoundError
 from bisheng.common.services import telemetry_service
@@ -326,6 +327,19 @@ async def update_flow(*,
     if db_flow.status == FlowStatus.ONLINE.value and (
             'status' not in flow_data or flow_data['status'] != FlowStatus.OFFLINE.value):
         raise WorkFlowOnlineEditError.http_exception()
+
+    # F056-审批: 上线需过智能体发布审批网关（场景未配置/停用 → 直接发布）
+    if flow_data.get('status') == FlowStatus.ONLINE.value:
+        from bisheng.api.services.agent_publish import gate_agent_publish
+
+        outcome = await gate_agent_publish(
+            login_user,
+            app_type='workflow',
+            app_id=flow_id,
+            business_name=db_flow.name,
+        )
+        if outcome.pending:
+            raise ApprovalPendingError(msg=f'发布申请已提交审批（单号 {outcome.instance_id}），审批通过后自动上线')
 
     for key, value in flow_data.items():
         if key in ['data', 'create_time', 'update_time']:

@@ -41,6 +41,20 @@ class ApprovalRouteNotMatchedError(BaseErrorCode):
     Msg: str = 'No matching route rule found for this approval request'
 
 
+class ApprovalPendingError(BaseErrorCode):
+    """发布类业务已提交审批, 本次不执行 (前端 toast 展示, 不视为失败)."""
+
+    Code: int = 18120
+    Msg: str = '已提交审批，审批通过后将自动执行'
+
+
+class ApprovalScenarioExceptionError(BaseErrorCode):
+    """审批场景配置异常 (路由缺失/审批人为空), 阻止业务执行, 管理员已被通知."""
+
+    Code: int = 18121
+    Msg: str = '审批流程配置异常，请联系管理员处理'
+
+
 class ApprovalApproverEmptyError(BaseErrorCode):
     Code: int = 18108
     Msg: str = 'No approvers resolved for this approval node'

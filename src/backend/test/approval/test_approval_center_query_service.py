@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -124,8 +125,12 @@ async def test_list_my_tasks_aggregates_instance_summary(monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(
         ApprovalInstanceRepository,
-        'get_instance',
-        AsyncMock(return_value=instance),
+        'get_instances_by_ids',
+        AsyncMock(return_value=[instance]),
+    )
+    monkeypatch.setattr(
+        'bisheng.approval.domain.repositories.user_menu_access_repository.UserMenuAccessRepository.get_revoked_instance_ids',
+        AsyncMock(return_value=[]),
     )
 
     result = await ApprovalCenterService.list_my_tasks(tenant_id=1, approver_user_id=9)
@@ -153,6 +158,11 @@ async def test_get_instance_detail_blocks_unrelated_user_and_returns_action_logs
     monkeypatch.setattr(ApprovalInstanceRepository, 'get_instance', AsyncMock(return_value=instance))
     monkeypatch.setattr(ApprovalInstanceRepository, 'list_tasks', AsyncMock(return_value=[task]))
     monkeypatch.setattr(ApprovalInstanceRepository, 'list_action_logs', AsyncMock(return_value=[action_log]))
+    # Approver-name enrichment would otherwise hit the real async engine.
+    monkeypatch.setattr(
+        'bisheng.user.domain.models.user.UserDao.aget_user_by_ids',
+        AsyncMock(return_value=[SimpleNamespace(user_id=9, user_name='reviewer')]),
+    )
 
     with pytest.raises(ApprovalRequestPermissionDeniedError):
         await ApprovalCenterService.get_instance_detail(instance_id=1, login_user=_User(user_id=88))
@@ -177,6 +187,17 @@ async def test_withdraw_instance_cancels_pending_tasks_and_records_log(monkeypat
     monkeypatch.setattr(ApprovalInstanceRepository, 'create_action_log', repo.create_action_log)
     monkeypatch.setattr(ApprovalInstanceRepository, 'list_action_logs', AsyncMock(return_value=[]))
     monkeypatch.setattr(ApprovalCenterService, '_write_audit_log', audit_log)
+    # Keep off the real engine: approver notification, user-name enrichment and
+    # the runtime handler hook are not the subject of this test.
+    monkeypatch.setattr(ApprovalCenterService, '_send_approval_notify', AsyncMock())
+    monkeypatch.setattr(
+        'bisheng.user.domain.models.user.UserDao.aget_user_by_ids',
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        'bisheng.approval.domain.services.approval_runtime_handler_factory.build_runtime_handler',
+        AsyncMock(return_value=SimpleNamespace(on_withdrawn=AsyncMock())),
+    )
 
     result = await ApprovalCenterService.withdraw_instance(
         instance_id=1,
@@ -187,9 +208,9 @@ async def test_withdraw_instance_cancels_pending_tasks_and_records_log(monkeypat
 
     assert repo.instances[1].status == ApprovalInstanceStatus.WITHDRAWN
     assert repo.tasks[1].status == ApprovalTaskStatus.CANCELLED
-    assert repo.tasks[1].comment == 'cancel request'
     assert repo.tasks[2].status == ApprovalTaskStatus.APPROVED
     assert repo.action_logs[-1].action == 'withdrawn'
+    assert repo.action_logs[-1].detail == {'reason': 'cancel request'}
     assert result['status'] == ApprovalInstanceStatus.WITHDRAWN
     audit_log.assert_awaited_once()
 
@@ -264,11 +285,14 @@ async def test_admin_service_lists_and_creates_scenarios(monkeypatch: pytest.Mon
     monkeypatch.setattr(ApprovalScenarioRepository, 'list_flow_definitions', AsyncMock(return_value=[flow]))
     monkeypatch.setattr(ApprovalScenarioRepository, 'update_flow_definition', AsyncMock(return_value=flow))
     monkeypatch.setattr(ApprovalScenarioRepository, 'get_active_flow_version', AsyncMock(return_value=version))
+    monkeypatch.setattr(ApprovalScenarioRepository, 'update_flow_version', AsyncMock(return_value=version))
     monkeypatch.setattr(ApprovalScenarioRepository, 'get_node_definition', AsyncMock(return_value=node))
     monkeypatch.setattr(ApprovalScenarioRepository, 'create_node_definition', AsyncMock(return_value=node))
     monkeypatch.setattr(ApprovalScenarioRepository, 'list_node_definitions', AsyncMock(return_value=[node]))
     monkeypatch.setattr(ApprovalScenarioRepository, 'update_node_definition', AsyncMock(return_value=node))
     monkeypatch.setattr(ApprovalQueryRepository, 'list_open_exceptions', AsyncMock(return_value=[exception]))
+    # list_open_exceptions enriches each row via get_instance — keep it mocked.
+    monkeypatch.setattr(ApprovalInstanceRepository, 'get_instance', AsyncMock(return_value=None))
     monkeypatch.setattr(
         'bisheng.approval.domain.services.approval_scenario_admin_service.AuditLogDao.ainsert_v2',
         AsyncMock(),
@@ -308,15 +332,12 @@ async def test_admin_service_lists_and_creates_scenarios(monkeypatch: pytest.Mon
         payload={'flow_code': 'menu_updated', 'flow_name': '更新流程'},
     )
     flows = await ApprovalScenarioAdminService.list_flows(tenant_id=1, scenario_id=1)
-    created_node = await ApprovalScenarioAdminService.create_node(
+    submitted = await ApprovalScenarioAdminService.set_flow_nodes(
         tenant_id=1,
         flow_definition_id=3,
-        payload={'node_code': 'n1', 'node_name': '一级审批', 'node_order': 1, 'node_mode': 'or'},
-    )
-    updated_node = await ApprovalScenarioAdminService.update_node(
-        tenant_id=1,
-        node_definition_id=5,
-        payload={'node_code': 'n1b', 'node_name': '更新节点', 'node_mode': 'and'},
+        nodes_payload=[{'node_code': 'n1', 'node_name': '一级审批', 'node_order': 1, 'node_mode': 'or'}],
+        operator_user_id=1,
+        operator_user_name='admin',
     )
     nodes = await ApprovalScenarioAdminService.list_nodes(tenant_id=1, flow_definition_id=3)
     exceptions = await ApprovalScenarioAdminService.list_open_exceptions(tenant_id=1)
@@ -328,11 +349,13 @@ async def test_admin_service_lists_and_creates_scenarios(monkeypatch: pytest.Mon
     assert updated_route['route_type'] == 'pass'
     assert routes[0]['route_type'] == 'pass'
     assert created_flow['flow_code'] == 'menu_default'
-    assert updated_flow['flow_code'] == 'menu_updated'
+    # flow_code is auto-generated and not user-editable; only flow_name changes
+    assert updated_flow['flow_code'] == 'menu_default'
+    assert updated_flow['flow_name'] == '更新流程'
     assert flows[0]['flow_name'] == '更新流程'
-    assert created_node['node_code'] == 'n1'
-    assert updated_node['node_mode'] == 'and'
-    assert nodes[0]['node_name'] == '更新节点'
+    assert submitted['version_no'] == 2  # active v1 exists → node submit creates v2
+    assert submitted['nodes'][0]['node_code'] == 'n1'
+    assert nodes[0]['node_name'] == '一级审批'
     assert exceptions[0]['exception_type'] == 'route_missing'
 
 

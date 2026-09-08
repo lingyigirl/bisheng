@@ -32,6 +32,11 @@ async def build_runtime_handler(scenario_code: str) -> Any:
             update_member=SpaceChannelMemberDao.update,
             sync_permissions=KnowledgeSpaceService.sync_direct_space_user_permissions,
         )
+    if scenario_code == "agent_publish_request":
+        from bisheng.api.services.agent_publish import publish_app_by_snapshot
+        from bisheng.approval.domain.services.agent_publish_handler import AgentPublishApprovalHandler
+
+        return AgentPublishApprovalHandler(publish_app=publish_app_by_snapshot)
     raise KeyError(f"handler not registered for scenario_code={scenario_code}")
 
 

@@ -170,6 +170,7 @@ async def test_outbox_failure_emits_handler_failed_audit_with_error_summary():
     instance = SimpleNamespace(
         id=11,
         tenant_id=1,
+        applicant_user_id=7,
         scenario_code="menu_access_request",
         handler_key="menu_access_request",
         business_name="菜单权限申请",
@@ -191,9 +192,16 @@ async def test_outbox_failure_emits_handler_failed_audit_with_error_summary():
         create_exception=AsyncMock(),
     )
 
-    with patch(
-        "bisheng.approval.domain.services.approval_outbox_service.AuditLogDao.ainsert_v2",
-        new=AsyncMock(side_effect=lambda **kw: captured.append(kw)),
+    with (
+        patch(
+            "bisheng.approval.domain.services.approval_outbox_service.AuditLogDao.ainsert_v2",
+            new=AsyncMock(side_effect=lambda **kw: captured.append(kw)),
+        ),
+        # Notifications write messages through the real engine; not the subject here.
+        patch(
+            "bisheng.approval.domain.services.approval_notification_service.ApprovalNotificationService.notify_admins",
+            new=AsyncMock(return_value=None),
+        ),
     ):
         service = ApprovalOutboxService(instance_repository=repo)
         result = await service.execute_outbox(

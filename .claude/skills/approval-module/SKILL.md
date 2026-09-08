@@ -99,13 +99,14 @@ ApprovalCenterService.decide_task()
 | `approval/api/endpoints/approval_admin.py` | Platform 管理 API（`/api/v1/approval/admin/...`） | — |
 | `approval/api/endpoints/approval.py` | 旧系统 legacy API（`/api/v1/approval/requests/...`），**已废弃** | — |
 
-### 三个场景 Handler
+### 四个场景 Handler
 
 | 文件 | 类 |
 |------|----|
 | `approval/domain/services/menu_access_handler.py` | `MenuAccessApprovalHandler` |
 | `approval/domain/services/channel_subscribe_scenario_handler.py` | `ChannelSubscribeScenarioHandler` |
 | `approval/domain/services/knowledge_space_subscribe_scenario_handler.py` | `KnowledgeSpaceSubscribeScenarioHandler` |
+| `approval/domain/services/agent_publish_handler.py` | `AgentPublishApprovalHandler`（发布执行体 `publish_app` 由 `api/services/agent_publish.py` 注入） |
 
 ### 前端
 
@@ -122,7 +123,7 @@ ApprovalCenterService.decide_task()
 
 ## 4. 预置场景
 
-三个场景由 `ApprovalRegistry.with_default_presets()` 注册（仅是"目录/下拉来源"，**不等于已启用**）。每个场景的业务入口在创建 `ApprovalGateRequest` 时**都需要传 `applicant_department_id`**（供 `department_admin` 审批人来源使用，查 `UserDepartmentDao.aget_user_primary_department()`）。
+四个场景由 `ApprovalRegistry.with_default_presets()` 注册（仅是"目录/下拉来源"，**不等于已启用**）。每个场景的业务入口在创建 `ApprovalGateRequest` 时**都需要传 `applicant_department_id`**（供 `department_admin` 审批人来源使用，查 `UserDepartmentDao.aget_user_primary_department()`）。
 
 **首次部署自动落库**：4.2 频道订阅审批、4.3 知识空间加入审批由 `common/init_data.py::_init_default_approval_scenarios()`（在 `init_default_data` 内）为默认租户幂等 seed——各建「默认分支(catch-all, route_type=flow) → 默认流程 → 单节点(node_mode=or 或签)」，审批人来源即资源 owner+manager（频道 `channel_owner`/`channel_manager`，知识空间 `knowledge_space_owner`/`knowledge_space_manager`），场景 `enabled=True`。按 `tenant_id+scenario_code` 判存在即跳过，绝不覆盖人工改动。菜单权限申请(4.1)**不**自动 seed。新租户不自动 seed，需管理后台手工配置。
 
@@ -145,6 +146,14 @@ ApprovalCenterService.decide_task()
 - 通过 / ACTIVE 路径调 `sync_direct_space_user_permissions()` 写 ReBAC 关系
 - PENDING 时调 `_send_space_approval_notification()` 通知审批人
 - **不变量：先过网关、再落 membership。** `subscribe_space` 对 APPROVAL 空间必须先 `await gate.request_or_pass()`，按 gate 结果（pass→ACTIVE / pending·exception→PENDING）才通过 `_persist_space_member()` 写 `space_channel_member`。**严禁在调网关前预写 PENDING membership**——否则场景未配置/未启用时网关 `raise ApprovalScenarioDisabledError`，但 PENDING 行已落库，下次点"关注"会被 `subscribe_space` 顶部"已 PENDING 直接返回 pending"的早退分支短路，掩盖错误（首次报错、二次假成功）。无场景时每次点击都应一致报错。
+
+### 4.4 智能体发布申请 (`agent_publish_request`)
+- **入口**：仅 ONLINE 方向，下线不经审批——`PATCH /api/v1/workflow/status`（版本级上线）、`PATCH /api/v1/workflow/update/{flow_id}`（应用列表开关）、`POST /api/v1/assistant/status`（助手上线），三处统一调 `api/services/agent_publish.py::gate_agent_publish()`。
+- **Handler**：`AgentPublishApprovalHandler`（`approval/domain/services/agent_publish_handler.py`）；outbox 执行体 `publish_app_by_snapshot`（api 层注入，见 `agent_publish.py`）——workflow 走 `_publish_workflow_snapshot`（版本级：图初始化校验 + 切当前版本 + 置 ONLINE），assistant 走 `_publish_assistant_snapshot`（`AssistantAgent.init_assistant` 校验 + 置 ONLINE）。执行期不做权限校验（提交时已校验 + 已过审批）。
+- **口径（用户明确要求）**：场景未配置/停用 → **fail-open 直接发布**（捕获 `ApprovalScenarioDisabledError` → `publish_now=True`）；场景启用 + flow 路由 → PENDING（`ApprovalPendingError` 18120，前端 toast「已提交审批，通过后自动执行」）；pass 路由 → 直接发布；配置异常（route_missing/approver_empty）→ **阻止发布** `ApprovalScenarioExceptionError` 18121，管理员已被网关通知。
+- **审批人来源**（预置建议）：`direct_user` / `department_admin` / `tenant_admin`；条件字段 `applicant_role`。
+- **自动 seed**：`_DEFAULT_APPROVAL_SCENARIO_SEEDS` 含 agent_publish 条目——默认流程单节点 or，审批人来源 `tenant_admin`（`common/init_data.py`，与其他场景同口径幂等 seed）。场景已存在（含手工创建）时跳过，绝不覆盖人工配置。
+- **注意**：`Workflow` 类在 `bisheng.workflow.graph.workflow`（`common.workflow` 只有 `WorkflowStatus`）——历史 bug 曾从后者 import 导致审批通过后 outbox 执行必崩。
 
 ---
 

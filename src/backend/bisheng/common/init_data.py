@@ -336,6 +336,15 @@ _DEFAULT_APPROVAL_SCENARIO_SEEDS = [
         "node_name": "知识空间负责人审批",
         "sources": [{"type": "knowledge_space_owner"}, {"type": "knowledge_space_manager"}],
     },
+    {
+        "scenario_code": "agent_publish_request",
+        "scenario_name": "智能体发布申请",
+        "flow_code": "agent_publish_default_flow",
+        "flow_name": "默认流程",
+        "node_code": "tenant_admin_review",
+        "node_name": "租户管理员审批",
+        "sources": [{"type": "tenant_admin"}],
+    },
 ]
 
 

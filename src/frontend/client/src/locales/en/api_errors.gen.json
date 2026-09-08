@@ -175,6 +175,8 @@
   "11171": "{{sop_name}} content too long",
   "11180": "Invalid invite code",
   "11190": "Invite code already bound",
+  "11201": "Message blocked: input contains sensitive words",
+  "11202": "Output truncated: generated content contains sensitive words",
   "11403": "No permission to view",
   "12040": "web_search tool not found",
   "12041": "Session not found",

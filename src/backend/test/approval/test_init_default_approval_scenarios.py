@@ -43,14 +43,11 @@ async def session(approval_db_engine):
         yield s
 
 
-async def test_seeds_two_scenarios_with_default_branch_and_or_node(session):
+async def test_seeds_default_scenarios_with_default_branch_and_or_node(session):
     await _init_default_approval_scenarios(session)
 
     scenarios = (await session.exec(select(ApprovalScenario))).all()
-    assert {s.scenario_code for s in scenarios} == {
-        "channel_subscribe_request",
-        "knowledge_space_subscribe_request",
-    }
+    assert {s.scenario_code for s in scenarios} == {seed["scenario_code"] for seed in _DEFAULT_APPROVAL_SCENARIO_SEEDS}
 
     for seed in _DEFAULT_APPROVAL_SCENARIO_SEEDS:
         scenario = next(s for s in scenarios if s.scenario_code == seed["scenario_code"])
