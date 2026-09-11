@@ -1,11 +1,12 @@
 # Convert the string to the format required by the docx replacement tool.
+import base64
 import os
 import re
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Dict, Tuple, Any
-from urllib.parse import urlparse, unquote
+from typing import Any, Dict, List, Tuple
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 import pandas as pd
@@ -61,6 +62,20 @@ Patterns = [
         pattern=r"([^\s]*[/\\][^\s]*\.(?:xlsx?|csv))",
         flags=re.IGNORECASE,
         handler_method="_handle_http_excel_csv",
+    ),
+    MatchPattern(
+        name="markdown_base64_image",
+        resource_type=ResourceType.IMAGE,
+        pattern=r"!\[[^\]]*\]\(data:image/[^)\s]+;base64,[^)]+\)",
+        flags=re.IGNORECASE,
+        handler_method="_handle_base64_image",
+    ),
+    MatchPattern(
+        name="base64_image",
+        resource_type=ResourceType.IMAGE,
+        pattern=r"data:image/(?:png|jpe?g|bmp|gif|webp|tiff?);base64,[A-Za-z0-9+/=\r\n]+",
+        flags=re.IGNORECASE,
+        handler_method="_handle_base64_image",
     ),
     MatchPattern(
         name="markdown_image",
@@ -140,6 +155,18 @@ Patterns = [
 
 
 class TextClassificationReport:
+    # Magic bytes of image formats python-docx can render (WEBP checked precisely at render time)
+    _IMAGE_SIGNATURES = (
+        b"\x89PNG",
+        b"\xff\xd8",  # JPEG
+        b"GIF87a",
+        b"GIF89a",
+        b"BM",  # BMP
+        b"RIFF",  # WEBP (bytes[8:12] == b"WEBP" verified when rendering)
+        b"II*\x00",  # TIFF little-endian
+        b"MM\x00*",  # TIFF big-endian
+    )
+
     def __init__(self, static_resource_path: str):
         # Ensure the static resource path exists, save some downloaded files in there
         self.static_resource_path = static_resource_path or tempfile.gettempdir()
@@ -227,8 +254,19 @@ class TextClassificationReport:
         return {"type": "heading", "content": heading_text, "level": level}
 
     def _handle_http_image(self, pattern: MatchPattern, string_data: List[Dict]):
-        # Placeholder for actual implementation
-        return self._base_handle_string_data(pattern, string_data, self._parse_http_image_data)
+        new_string_data = []
+        for one in string_data:
+            if one["type"] != "text" or not one["content"]:
+                new_string_data.append(one)
+                continue
+            # Pre-filter: only content containing an image extension can match.
+            # Without this the URL patterns backtrack pathologically on long
+            # strings without extensions (e.g. base64 data URIs in table cells).
+            if not re.search(r'\.(?:png|jpe?g|bmp|gif|webp|tif)', one["content"], re.IGNORECASE):
+                new_string_data.append(one)
+                continue
+            new_string_data.extend(self._base_handle_string_data(pattern, [one], self._parse_http_image_data))
+        return new_string_data
 
     def _parse_http_image_data(self, image_str: str) -> Dict:
         # image_str: ![xxx](http://example.com/image.png)  or http://example.com/image.png or /local/path/image.png
@@ -244,6 +282,34 @@ class TextClassificationReport:
             }
         except Exception as e:
             logger.error(f"Failed to parse http image data: {str(e)}")
+            return {"type": "text", "content": image_str}
+
+    def _handle_base64_image(self, pattern: MatchPattern, string_data: List[Dict]):
+        return self._base_handle_string_data(pattern, string_data, self._parse_base64_image_data)
+
+    @staticmethod
+    def _parse_base64_image_data(image_str: str) -> Dict:
+        # image_str: data:image/png;base64,xxx or ![alt](data:image/png;base64,xxx)
+        try:
+            if image_str.startswith("!["):
+                payload = image_str.split("](", 1)[1].rstrip(")")
+            else:
+                payload = image_str
+            _, b64_data = payload.split(",", 1)
+            b64_data = re.sub(r"\s+", "", b64_data)
+            try:
+                image_bytes = base64.b64decode(b64_data, validate=True)
+            except Exception:
+                # LLM output may drop padding; retry with padding restored
+                image_bytes = base64.b64decode(b64_data + "=" * (-len(b64_data) % 4))
+            if not any(image_bytes.startswith(signature) for signature in TextClassificationReport._IMAGE_SIGNATURES):
+                raise ValueError("decoded bytes are not a supported image")
+            return {
+                "type": "image",
+                "content": image_bytes
+            }
+        except Exception as e:
+            logger.error(f"Failed to parse base64 image data: {str(e)}")
             return {"type": "text", "content": image_str}
 
     def _handle_http_excel_csv(self, pattern: MatchPattern, string_data: List[Dict]):
@@ -286,11 +352,20 @@ class TextClassificationReport:
             one_row_data = []
             for index, cell in enumerate(row):
                 # convert each cell to text type with image alignment
-                markdown_image_pattern = Patterns[3]  # markdown_image pattern
-                http_image_pattern = Patterns[4]  # http_image pattern
-                bold_text_pattern = Patterns[6]  # bold_text pattern
-                cell_data = getattr(self, markdown_image_pattern.handler_method)(markdown_image_pattern,
-                                                                                 [{"type": "text", "content": cell}])
+                # look up by name: hardcoded indices silently shift when Patterns is reordered
+                patterns_by_name = {pattern.name: pattern for pattern in Patterns}
+                markdown_base64_image_pattern = patterns_by_name["markdown_base64_image"]
+                base64_image_pattern = patterns_by_name["base64_image"]
+                markdown_image_pattern = patterns_by_name["markdown_image"]
+                http_image_pattern = patterns_by_name["http_image"]
+                bold_text_pattern = patterns_by_name["bold_text"]
+                cell_data = [{"type": "text", "content": cell}]
+                # base64 data URIs first, so the URL patterns never see their
+                # slash-heavy payloads (which trigger regex backtracking)
+                cell_data = getattr(self, markdown_base64_image_pattern.handler_method)(
+                    markdown_base64_image_pattern, cell_data)
+                cell_data = getattr(self, base64_image_pattern.handler_method)(base64_image_pattern, cell_data)
+                cell_data = getattr(self, markdown_image_pattern.handler_method)(markdown_image_pattern, cell_data)
                 cell_data = getattr(self, http_image_pattern.handler_method)(http_image_pattern, cell_data)
                 cell_data = getattr(self, bold_text_pattern.handler_method)(bold_text_pattern, cell_data)
                 cell_data[0]["alignment"] = self._convert_docx_alignment(

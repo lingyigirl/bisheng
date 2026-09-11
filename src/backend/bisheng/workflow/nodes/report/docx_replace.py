@@ -1,13 +1,14 @@
 import re
 from io import BytesIO
-from typing import List, Dict, Any, IO
+from typing import IO, Any, Dict, List
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
-from docx.shared import Pt, Inches, RGBColor
+from docx.shared import Inches, Pt, RGBColor
 from docx.table import _Cell
 from docx.text.paragraph import Paragraph
+from PIL import Image
 
 
 class DocxReplacer:
@@ -199,7 +200,9 @@ class DocxReplacer:
             'italic': run.italic,
             'underline': run.underline,
             'font_name': run.font.name,
-            'font_size': run.font.size,
+            # store points: run.font.size is an EMU Length which subclasses int,
+            # and would otherwise be mistaken for a point value by _apply_run_format
+            'font_size': run.font.size.pt if run.font.size else None,
             'font_color': run.font.color.rgb if run.font.color.rgb else None,
         }
 
@@ -234,10 +237,8 @@ class DocxReplacer:
         if format_data.get('underline'):
             run.underline = True
         if format_data.get('font_size'):
-            if isinstance(format_data['font_size'], int):
-                run.font.size = Pt(format_data['font_size'])
-            else:
-                run.font.size = format_data['font_size']
+            # font_size is in points (see _extract_run_format); Pt() converts points to EMU
+            run.font.size = Pt(format_data['font_size'])
         if format_data.get('font_name'):
             run.font.name = format_data['font_name']
         if format_data.get('color'):
@@ -342,26 +343,39 @@ class DocxReplacer:
         try:
             width = Inches(image_data.get('width', 2))
             height = Inches(image_data.get('height')) if image_data.get('height') else None
+            # str = local file path, bytes = raw image data (e.g. decoded base64)
+            content = self._normalize_image_content(image_data['content'])
+            if isinstance(content, bytes):
+                content = BytesIO(content)
 
-            if isinstance(image_data['content'], str):
-                # local file path
-                if height:
-                    run.add_picture(image_data['content'], width=width, height=height)
-                else:
-                    run.add_picture(image_data['content'], width=width)
-            elif isinstance(image_data['content'], bytes):
-                # bytes data
-                image_stream = BytesIO(image_data['content'])
-                if height:
-                    run.add_picture(image_stream, width=width, height=height)
-                else:
-                    run.add_picture(image_stream, width=width)
+            if height:
+                run.add_picture(content, width=width, height=height)
+            else:
+                run.add_picture(content, width=width)
         except Exception as e:
             paragraph.add_run(f"Image add failed: {str(e)}]")
 
         # set alignment
         if image_data.get('alignment'):
             paragraph.alignment = image_data['alignment']
+
+    @staticmethod
+    def _normalize_image_content(content):
+        """Convert WEBP (file path or bytes) to PNG bytes — python-docx has no WEBP header factory."""
+        if isinstance(content, str) and content.lower().endswith('.webp'):
+            with Image.open(content) as image:
+                return DocxReplacer._image_to_png_bytes(image)
+        if isinstance(content, bytes) and content[:4] == b'RIFF' and content[8:12] == b'WEBP':
+            with Image.open(BytesIO(content)) as image:
+                return DocxReplacer._image_to_png_bytes(image)
+        return content
+
+    @staticmethod
+    def _image_to_png_bytes(image) -> BytesIO:
+        stream = BytesIO()
+        image.convert('RGBA').save(stream, 'PNG')
+        stream.seek(0)
+        return stream
 
     def _insert_image_at_index(self, parent, index: int, item: Dict[str, Any], paragraph_format: Dict[str, Any]):
         paragraph = self._insert_paragraph_at_index(parent, index, paragraph_format)
