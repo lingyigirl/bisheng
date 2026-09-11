@@ -217,6 +217,7 @@
   "retrievalResultLength": "Retrieval result length",
   "controlResultTextLengthForModel": "Control the length of the result text passed to the model. Exceeding the model's maximum context length may cause errors.",
   "rerankModelCannotBeEmpty": "Rerank model cannot be empty",
+  "retrievalTagsEmpty": "No tags in the selected knowledge bases",
   "insertVariable": "Insert variable",
   "uploadFile": "Upload file",
   "messageContentVariable": "Message content variable",
@@ -507,6 +508,18 @@
       "metadata_filter": {
         "label": "Metadata Filter"
       },
+      "tags": {
+        "label": "Tag filter",
+        "help": "Only recall documents carrying the selected tags; tags resolve per selected knowledge base, KBs without selected tags stay unrestricted"
+      },
+      "top_k": {
+        "label": "Recall count top_k",
+        "help": "Limits the number of recalled chunks (default 100 when unset)"
+      },
+      "score_threshold": {
+        "label": "Score threshold",
+        "help": "Drops chunks whose fused RRF score is below the threshold (no filtering when unset)"
+      },
       "advanced_retrieval_switch": {
         "label": "Advanced Retrieval Settings"
       },
@@ -554,6 +567,18 @@
       "metadata_filter": {
         "label": "Metadata Filter"
       },
+      "tags": {
+        "label": "Tag filter",
+        "help": "Only recall documents carrying the selected tags; tags resolve per selected knowledge base, KBs without selected tags stay unrestricted"
+      },
+      "top_k": {
+        "label": "Recall count top_k",
+        "help": "Limits the number of recalled chunks (default 100 when unset)"
+      },
+      "score_threshold": {
+        "label": "Score threshold",
+        "help": "Drops chunks whose fused RRF score is below the threshold (no filtering when unset)"
+      },
       "advanced_retrieval_switch": {
         "label": "Advanced Retrieval Settings"
       },
@@ -596,6 +621,56 @@
       "output": {
         "label": "Output Variable"
       }
+    },
+    "agent_flow": {
+      "name": "Agent Flow",
+      "description": "Synchronously runs a published workflow as a sub-flow and exposes its outputs to downstream nodes.",
+      "agent_flow_config": {
+        "label": "Select Agent",
+        "placeholder": "Select a published workflow to invoke",
+        "help": "The selected workflow runs synchronously inside the parent flow; checked output variables are exposed to downstream nodes. Circular calls are not supported.",
+        "outputLabel": "Output variables (checked items are exposed downstream)"
+      },
+      "output": {
+        "label": "Output variables",
+        "help": "Check the variables to expose to downstream nodes after the sub-flow completes."
+      },
+      "agentFlowSettings": "Agent Flow Settings",
+      "outputGroup": "Output"
+    },
+    "loop": {
+      "name": "Loop",
+      "description": "Iterates a list variable, running a published sub-flow per element and collecting each output into a list for downstream nodes.",
+      "loop_config": {
+        "label": "Loop configuration",
+        "help": "Pick the list variable to iterate and the sub-flow to run. Each element is injected into the sub-flow as the loop item; the sub-flow cannot contain dialog input and every form field must be mapped.",
+        "loopVarLabel": "Loop variable",
+        "loopVarPlaceholder": "Select the list variable to iterate",
+        "itemVarLabel": "Item variable name",
+        "itemVarPlaceholder": "Loop item variable name, default: item",
+        "itemVarHelp": "Item variable name must not contain . or #",
+        "maxIterationsLabel": "Max iterations",
+        "maxIterationsHelp": "Safety cap against runaway loops; iterations beyond it are truncated. Default 100",
+        "flowLabel": "Select sub-flow",
+        "flowPlaceholder": "Select a published workflow",
+        "outputLabel": "Outputs (each collected into a list)",
+        "useItem": "Use loop item",
+        "constantPlaceholder": "Enter a constant value"
+      },
+      "loopSettings": "Loop configuration",
+      "outputGroup": "Output"
     }
-  }
+  },
+  "agentFlowModeVar": "Variable",
+  "agentFlowModeConstant": "Constant",
+  "agentFlowUnsupported": "File fields are not supported",
+  "agentFlowEmpty": "No published workflows",
+  "agentFlowOutputEmpty": "This flow exposes no output variables",
+  "agentFlowInputMapping": "Input mapping (unmapped fields keep the callee defaults)",
+  "agentFlowConstantPlaceholder": "Enter a constant value",
+  "agentFlowSchemaUnavailable": "Input/output info for this flow is unavailable",
+  "loopItemVar": "Loop item",
+  "loopEmpty": "No published workflows",
+  "loopOutputEmpty": "This flow has no exposable output variables",
+  "loopSchemaUnavailable": "The input/output schema of this flow is unavailable"
 }

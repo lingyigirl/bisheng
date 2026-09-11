@@ -217,6 +217,7 @@
   "retrievalResultLength": "检索结果长度",
   "controlResultTextLengthForModel": "通过此参数控制最终传给模型的知识库检索结果文本长度，超过模型支持的最大上下文长度可能会导致报错。",
   "rerankModelCannotBeEmpty": "重排模型不可为空",
+  "retrievalTagsEmpty": "所选知识库暂无标签",
   "insertVariable": "插入变量",
   "uploadFile": "上传文件",
   "messageContentVariable": "消息内容变量",
@@ -507,6 +508,18 @@
       "metadata_filter": {
         "label": "元数据过滤"
       },
+      "tags": {
+        "label": "标签过滤",
+        "help": "仅召回带有所选标签的文档；标签按所选知识库解析，未选标签的知识库不受限制"
+      },
+      "top_k": {
+        "label": "召回数量 top_k",
+        "help": "限制召回的文档片段数量（未配置时使用默认值 100）"
+      },
+      "score_threshold": {
+        "label": "相似度阈值",
+        "help": "过滤 RRF 融合分数低于阈值的片段（未配置时不过滤）"
+      },
       "advanced_retrieval_switch": {
         "label": "高级检索配置"
       },
@@ -554,6 +567,18 @@
       "metadata_filter": {
         "label": "元数据过滤"
       },
+      "tags": {
+        "label": "标签过滤",
+        "help": "仅召回带有所选标签的文档；标签按所选知识库解析，未选标签的知识库不受限制"
+      },
+      "top_k": {
+        "label": "召回数量 top_k",
+        "help": "限制召回的文档片段数量（未配置时使用默认值 100）"
+      },
+      "score_threshold": {
+        "label": "相似度阈值",
+        "help": "过滤 RRF 融合分数低于阈值的片段（未配置时不过滤）"
+      },
       "advanced_retrieval_switch": {
         "label": "高级检索配置"
       },
@@ -596,6 +621,56 @@
       "output": {
         "label": "输出变量"
       }
+    },
+    "agent_flow": {
+      "name": "智能体",
+      "description": "同步调用一个已发布的工作流作为子流程，将其输出作为本节点的变量供下游使用。",
+      "agent_flow_config": {
+        "label": "选择智能体",
+        "placeholder": "请选择要调用的已发布工作流",
+        "help": "智能体会在父流程内同步执行所选工作流，执行完成后将勾选的输出变量暴露给下游节点。不支持循环调用。",
+        "outputLabel": "输出变量（勾选后暴露给下游节点）"
+      },
+      "output": {
+        "label": "输出变量",
+        "help": "勾选子流程执行完成后需要暴露给下游节点的变量。"
+      },
+      "agentFlowSettings": "智能体配置",
+      "outputGroup": "输出"
+    },
+    "loop": {
+      "name": "循环",
+      "description": "遍历一个列表变量，对每个元素执行一个已发布的子流程，并将每次输出收集为列表供下游使用。",
+      "loop_config": {
+        "label": "循环配置",
+        "help": "选择要遍历的列表变量与要调用的子流程。每个元素都会作为循环项注入子流程，子流程不能包含对话输入且所有表单字段必须完成映射。",
+        "loopVarLabel": "循环变量",
+        "loopVarPlaceholder": "请选择要遍历的列表变量",
+        "itemVarLabel": "循环项变量名",
+        "itemVarPlaceholder": "循环项变量名，默认 item",
+        "itemVarHelp": "循环项变量名不能包含 . 或 #",
+        "maxIterationsLabel": "最大循环次数",
+        "maxIterationsHelp": "防止循环失控的安全上限，超过后截断，默认 100",
+        "flowLabel": "选择子流程",
+        "flowPlaceholder": "请选择要调用的已发布工作流",
+        "outputLabel": "输出变量（每个输出会收集为列表）",
+        "useItem": "使用循环项",
+        "constantPlaceholder": "输入固定值"
+      },
+      "loopSettings": "循环配置",
+      "outputGroup": "输出"
     }
-  }
+  },
+  "agentFlowModeVar": "引用变量",
+  "agentFlowModeConstant": "固定值",
+  "agentFlowUnsupported": "暂不支持文件类型字段",
+  "agentFlowEmpty": "暂无已发布的工作流",
+  "agentFlowOutputEmpty": "该流程没有可输出的变量",
+  "agentFlowInputMapping": "输入映射（未映射字段使用被调流程默认值）",
+  "agentFlowConstantPlaceholder": "输入固定值",
+  "agentFlowSchemaUnavailable": "该流程的输入输出信息暂不可用",
+  "loopItemVar": "循环项",
+  "loopEmpty": "暂无已发布的工作流",
+  "loopOutputEmpty": "该流程没有可输出的变量",
+  "loopSchemaUnavailable": "该流程的输入输出信息暂不可用"
 }

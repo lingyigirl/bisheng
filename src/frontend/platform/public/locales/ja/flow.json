@@ -217,6 +217,7 @@
   "retrievalResultLength": "検索結果の長さ",
   "controlResultTextLengthForModel": "このパラメータで、最終的にモデルに渡す知識ベース検索結果のテキストの長さを制御します。モデルの最大コンテキスト長を超えるとエラーが発生する可能性があります",
   "rerankModelCannotBeEmpty": "再ランキングモデルは空にできません",
+  "retrievalTagsEmpty": "選択した知識ベースにタグがありません",
   "insertVariable": "変数を挿入",
   "uploadFile": "ファイルをアップロード",
   "messageContentVariable": "メッセージ内容変数",
@@ -507,6 +508,18 @@
       "metadata_filter": {
         "label": "メタデータフィルタ"
       },
+      "tags": {
+        "label": "タグフィルター",
+        "help": "選択したタグを持つドキュメントのみを取得します。タグは選択した知識ベースごとに解決され、タグ未選択の知識ベースは制限されません"
+      },
+      "top_k": {
+        "label": "取得件数 top_k",
+        "help": "取得するチャンク数を制限します（未設定時はデフォルト 100）"
+      },
+      "score_threshold": {
+        "label": "スコアしきい値",
+        "help": "RRF 融合スコアがしきい値未満のチャンクを除外します（未設定時はフィルタなし）"
+      },
       "advanced_retrieval_switch": {
         "label": "高度な検索設定"
       },
@@ -554,6 +567,18 @@
       "metadata_filter": {
         "label": "メタデータフィルタ"
       },
+      "tags": {
+        "label": "タグフィルター",
+        "help": "選択したタグを持つドキュメントのみを取得します。タグは選択した知識ベースごとに解決され、タグ未選択の知識ベースは制限されません"
+      },
+      "top_k": {
+        "label": "取得件数 top_k",
+        "help": "取得するチャンク数を制限します（未設定時はデフォルト 100）"
+      },
+      "score_threshold": {
+        "label": "スコアしきい値",
+        "help": "RRF 融合スコアがしきい値未満のチャンクを除外します（未設定時はフィルタなし）"
+      },
       "advanced_retrieval_switch": {
         "label": "高度な検索設定"
       },
@@ -596,6 +621,56 @@
       "output": {
         "label": "出力変数"
       }
+    },
+    "agent_flow": {
+      "name": "エージェントフロー",
+      "description": "公開済みワークフローをサブフローとして同期的に実行し、その出力を後続ノードの変数として公開します。",
+      "agent_flow_config": {
+        "label": "エージェントを選択",
+        "placeholder": "呼び出す公開済みワークフローを選択してください",
+        "help": "選択したワークフローは親フロー内で同期的に実行され、チェックした出力変数が後続ノードに公開されます。循環呼び出しはサポートされません。",
+        "outputLabel": "出力変数（チェックした項目が後続ノードに公開されます）"
+      },
+      "output": {
+        "label": "出力変数",
+        "help": "サブフロー完了後に後続ノードへ公開する変数をチェックしてください。"
+      },
+      "agentFlowSettings": "エージェントフロー設定",
+      "outputGroup": "出力"
+    },
+    "loop": {
+      "name": "ループ",
+      "description": "リスト変数を走査し、各要素に対して公開済みサブフローを実行し、各回の出力をリストに収集して後続ノードへ渡します。",
+      "loop_config": {
+        "label": "ループ設定",
+        "help": "走査するリスト変数と呼び出すサブフローを選択します。各要素はループ項目としてサブフローに注入されます。サブフローに対話入力は含められず、すべてのフォーム項目をマッピングする必要があります。",
+        "loopVarLabel": "ループ変数",
+        "loopVarPlaceholder": "走査するリスト変数を選択してください",
+        "itemVarLabel": "ループ項目変数名",
+        "itemVarPlaceholder": "ループ項目の変数名（既定: item）",
+        "itemVarHelp": "ループ項目変数名に . または # は使用できません",
+        "maxIterationsLabel": "最大反復回数",
+        "maxIterationsHelp": "暴走防止の上限。超過分は切り捨てられます。既定 100",
+        "flowLabel": "サブフローを選択",
+        "flowPlaceholder": "公開済みワークフローを選択してください",
+        "outputLabel": "出力変数（各出力はリストに収集されます）",
+        "useItem": "ループ項目を使用",
+        "constantPlaceholder": "固定値を入力"
+      },
+      "loopSettings": "ループ設定",
+      "outputGroup": "出力"
     }
-  }
+  },
+  "agentFlowModeVar": "変数を参照",
+  "agentFlowModeConstant": "固定値",
+  "agentFlowUnsupported": "ファイル型フィールドは未対応",
+  "agentFlowEmpty": "公開済みワークフローがありません",
+  "agentFlowOutputEmpty": "このフローに出力変数はありません",
+  "agentFlowInputMapping": "入力マッピング（未マッピングのフィールドは呼び出し先のデフォルト値を使用）",
+  "agentFlowConstantPlaceholder": "固定値を入力",
+  "agentFlowSchemaUnavailable": "このフローの入出力情報は利用できません",
+  "loopItemVar": "ループ項目",
+  "loopEmpty": "公開済みワークフローがありません",
+  "loopOutputEmpty": "出力可能な変数がありません",
+  "loopSchemaUnavailable": "このフローの入出力情報は現在利用できません"
 }

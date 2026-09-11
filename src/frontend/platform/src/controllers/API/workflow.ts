@@ -5,7 +5,15 @@ import axios from "../request";
 /**
  * 获取工作流节点模板s
  */
+// F056 智能体节点：读取被调用工作流的输入/输出 schema
+export const getAgentFlowSchemaApi = async (
+    flowId: string
+): Promise<{ data: { flow_id: string; flow_name: string; input: any[]; outputs: any[] } }> => {
+    return await axios.get(`/api/v1/workflow/${flowId}/agent_flow_schema`);
+};
+
 export const getWorkflowNodeTemplate = async (): Promise<any[]> => {
+
     return new Promise(res => setTimeout(() => {
         res(workflowTemplate)
     }, 100));
@@ -772,6 +780,44 @@ const workflowTemplate = [
         ]
     },
     {
+        "id": "agent_flow_xxx",
+        "name": "true",
+        "description": "true",
+        "type": "agent_flow",
+        "v": "1",
+        "group_params": [
+            {
+                "name": "agentFlowSettings",
+                "params": [
+                    {
+                        "key": "agent_flow_config",
+                        "label": "true",
+                        "type": "agent_flow_config",
+                        "help": "true",
+                        "value": {
+                            "flow_id": "",
+                            "input_mapping": [],
+                            "outputs": []
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "outputGroup",
+                "params": [
+                    {
+                        "key": "output",
+                        "global": "code:value.map(el => ({ label: el.label, value: el.key }))",
+                        "label": "true",
+                        "type": "var",
+                        "help": "true",
+                        "value": []
+                    }
+                ]
+            }
+        ]
+    },
+    {
         "id": "qa_retriever_xxx",
         "name": "true",
         "description": "true",
@@ -864,6 +910,32 @@ const workflowTemplate = [
                         "label": "true",
                         "type": "metadata_filter",
                         "value": {},
+                    },
+                    {
+                        "key": "tags",
+                        "label": "true",
+                        "type": "knowledge_tags",
+                        "value": [],
+                        "help": "true",
+                    },
+                    {
+                        "key": "top_k",
+                        "label": "true",
+                        "type": "optional_number",
+                        "value": null,
+                        "min": 1,
+                        "max": 500,
+                        "step": 1,
+                        "help": "true",
+                    },
+                    {
+                        "key": "score_threshold",
+                        "label": "true",
+                        "type": "optional_number",
+                        "value": null,
+                        "min": 0,
+                        "step": 0.001,
+                        "help": "true",
                     },
                     {
                         "key": "advanced_retrieval_switch",
@@ -980,6 +1052,32 @@ const workflowTemplate = [
                         "value": {},
                     },
                     {
+                        "key": "tags",
+                        "label": "true",
+                        "type": "knowledge_tags",
+                        "value": [],
+                        "help": "true",
+                    },
+                    {
+                        "key": "top_k",
+                        "label": "true",
+                        "type": "optional_number",
+                        "value": null,
+                        "min": 1,
+                        "max": 500,
+                        "step": 1,
+                        "help": "true",
+                    },
+                    {
+                        "key": "score_threshold",
+                        "label": "true",
+                        "type": "optional_number",
+                        "value": null,
+                        "min": 0,
+                        "step": 0.001,
+                        "help": "true",
+                    },
+                    {
                         "key": "advanced_retrieval_switch",
                         "label": "true",
                         "type": "search_switch",
@@ -1083,6 +1181,47 @@ const workflowTemplate = [
                                 "type": "str"
                             }
                         ]
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "loop_xxx",
+        "name": "true",
+        "description": "true",
+        "type": "loop",
+        "v": "1",
+        "group_params": [
+            {
+                "name": "loopSettings",
+                "params": [
+                    {
+                        "key": "loop_config",
+                        "label": "true",
+                        "type": "loop_config",
+                        "help": "true",
+                        "value": {
+                            "loop_var": "",
+                            "item_var": "item",
+                            "flow_id": "",
+                            "input_mapping": [],
+                            "outputs": [],
+                            "max_iterations": 100
+                        }
+                    }
+                ]
+            },
+            {
+                "name": "outputGroup",
+                "params": [
+                    {
+                        "key": "output",
+                        "global": "code:value.map(el => ({ label: el.label, value: el.key }))",
+                        "label": "true",
+                        "type": "var",
+                        "help": "true",
+                        "value": []
                     }
                 ]
             }

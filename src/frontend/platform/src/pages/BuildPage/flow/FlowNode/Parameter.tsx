@@ -13,7 +13,11 @@ import InputItem from "./component/InputItem";
 import InputListItem from "./component/InputListItem";
 import KnowledgeQaSelectItem from "./component/KnowledgeQaSelectItem";
 import KnowledgeSelectItem from "./component/KnowledgeSelectItem";
+import AgentFlowConfigItem from "./component/AgentFlowConfigItem";
+import LoopConfigItem from "./component/LoopConfigItem";
+import KnowledgeTagsSelect from "./component/KnowledgeTagsSelect";
 import MetadataFilter from "./component/MetadataFilter";
+import OptionalNumberInput from "./component/OptionalNumberInput";
 import ModelItem from "./component/ModelItem";
 import OutputItem from "./component/OutputItem";
 import ReportItem from "./component/ReportItem";
@@ -246,6 +250,37 @@ export default function Parameter({
                 i18nPrefix={i18nPrefix}
             />
         );
+        // F055 (AC-03): tag filter — chips merged from the selected knowledge bases
+        case "knowledge_tags":
+            return <KnowledgeTagsSelect data={item} onChange={handleOnNewValue} i18nPrefix={i18nPrefix}
+                selectedKnowledgeIds={selectedKnowledgeIds}
+            />;
+        // F055 (AC-12/AC-13): optional numeric params (empty = unset, legacy default)
+        case "optional_number":
+            return <OptionalNumberInput data={item} onChange={handleOnNewValue} i18nPrefix={i18nPrefix}
+            />;
+        // F056 智能体节点：选择被调工作流 + 输入映射 + 输出勾选
+        case "agent_flow_config":
+            return <AgentFlowConfigItem
+                nodeId={nodeId}
+                data={item}
+                onChange={handleOnNewValue}
+                onOutPutChange={onOutPutChange}
+                onValidate={bindValidate}
+                onVarEvent={bindVarValidate}
+                i18nPrefix={i18nPrefix}
+            />;
+        // F057 循环节点：列表变量 + 循环体子流程 + 输入映射 + 输出收集
+        case "loop_config":
+            return <LoopConfigItem
+                nodeId={nodeId}
+                data={item}
+                onChange={handleOnNewValue}
+                onOutPutChange={onOutPutChange}
+                onValidate={bindValidate}
+                onVarEvent={bindVarValidate}
+                i18nPrefix={i18nPrefix}
+            />;
         default:
             return <div>Unsupported parameter type,{item.type}</div>;
     }

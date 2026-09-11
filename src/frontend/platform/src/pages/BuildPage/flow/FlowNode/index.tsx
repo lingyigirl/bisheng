@@ -154,7 +154,8 @@ function CustomNode({ data: node, selected, isConnectable }: { data: WorkflowNod
         node.group_params.some(group => {
             return group.params.some(param => {
                 if (param.key === key) {
-                    const prefix = key.split('_')[0]
+                    // F057: loop node outputs are unprefixed (backend returns {key: [...]})
+                    const prefix = node.type === 'loop' && key === 'output' ? '' : key.split('_')[0]
                     const values = Array.isArray(value) ? value : [value];
                     param.value = values.map(item => ({
                         key: `${prefix}_${item.key}`,
