@@ -171,3 +171,27 @@ def test_legacy_v2_path_returns_value_untouched():
     node.is_dialog_input = lambda: False
     ki = _key_info("all", INGEST)
     assert node._parse_upload_file_variables(ki, dict(_KEY_VALUE)) == _KEY_VALUE
+
+
+# --- handle_input: static form key → runtime file key translation (F056 v2) ---
+
+
+def _make_translating_node(static_to_runtime: dict):
+    node = InputNode.__new__(InputNode)
+    node._runtime_key_of_static = static_to_runtime
+    node.node_params = {}
+    return node
+
+
+def test_handle_input_translates_static_file_keys():
+    """agent_flow input_mapping addresses file fields by their static item keys;
+    handle_input translates them to this run's regenerated file_<uuid8> keys."""
+    node = _make_translating_node({"financial_report_files": "file_abc12345"})
+    node.handle_input({"financial_report_files": ["https://minio/f1.pdf"], "user_input": "hi"})
+    assert node.node_params == {"file_abc12345": ["https://minio/f1.pdf"], "user_input": "hi"}
+
+
+def test_handle_input_passes_non_file_keys_through_untouched():
+    node = _make_translating_node({})
+    node.handle_input({"file_abc12345": ["https://minio/f1.pdf"]})
+    assert node.node_params == {"file_abc12345": ["https://minio/f1.pdf"]}

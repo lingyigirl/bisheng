@@ -11,6 +11,10 @@ class NodeType(Enum):
     END = "end"
     INPUT = "input"
     AGENT = "agent"
+    # F056: synchronously invoke another published WORKFLOW flow as an inline sub-flow
+    AGENT_FLOW = "agent_flow"
+    # F057: iterate a list variable, running a published WORKFLOW sub-flow per element
+    LOOP = "loop"
     CODE = "code"
     CONDITION = "condition"
     LLM = "llm"

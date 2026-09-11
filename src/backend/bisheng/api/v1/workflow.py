@@ -398,3 +398,11 @@ async def read_flows(*,
         permission_id=permission_id,
     )
     return resp_200(data=result)
+
+
+@router.get('/{flow_id}/agent_flow_schema', status_code=200)
+def get_agent_flow_schema(*, flow_id: str, login_user: UserPayload = Depends(UserPayload.get_login_user)):
+    """F056: input/output schema of a published workflow used as the callee of an
+    agent_flow node — input-node fields for the mapping UI + exposed output
+    variables. Gate = use_app (same as the runtime node enforces)."""
+    return resp_200(data=WorkFlowService.get_agent_flow_schema(login_user, flow_id))

@@ -772,6 +772,104 @@ class WorkFlowService(BaseService):
         return {app_id for app_id, permissions in permission_map.items() if "edit_app" in permissions}
 
     @classmethod
+    def get_agent_flow_schema(cls, login_user: UserPayload, flow_id: str) -> dict:
+        """F056: schema of a published workflow used as the callee of an agent_flow node.
+
+        Pure JSON parse of ``flow.data`` (never instantiates the callee's nodes —
+        some node __init__s hit DB-heavy services). Mirrors the frontend
+        SelectVar enumeration rules for outputs. Gate = use_app, the same
+        permission the runtime node enforces.
+        """
+        flow_info = FlowDao.get_flow_by_id(flow_id)
+        if not flow_info or flow_info.flow_type != FlowType.WORKFLOW.value:
+            raise NotFoundError()
+        if not ApplicationPermissionService.has_any_permission_sync(
+            login_user, "workflow", str(flow_id), ["use_app"]
+        ):
+            raise UnAuthorizedError()
+
+        data = flow_info.data or {}
+        inputs, outputs = [], []
+        for node in data.get("nodes", []):
+            nd = node.get("data", {}) or {}
+            nid, ntype = nd.get("id"), nd.get("type")
+            if ntype == NodeType.INPUT.value:
+                tab = (nd.get("tab") or {}).get("value")
+                if tab == "dialog_input":
+                    fields = [{"key": "user_input", "label": "用户输入", "type": "text",
+                               "required": False, "supported": True}]
+                else:
+                    fields = []
+                    for group in nd.get("group_params", []):
+                        for param in group.get("params", []):
+                            if param.get("key") == "form_input" and isinstance(param.get("value"), list):
+                                for f in param["value"]:
+                                    # v2: file fields are mappable — input_mapping
+                                    # addresses them by their static item keys, and the
+                                    # callee's InputNode.handle_input translates them to
+                                    # the per-run file_<uuid8> runtime keys.
+                                    fields.append({**f, "supported": True})
+                if fields:
+                    inputs.append({"node_id": nid, "node_name": nd.get("name", ""),
+                                   "tab": tab or "form_input", "fields": fields})
+            # Output enumeration mirrors the frontend SelectVar rules — variables a
+            # DIFFERENT node (the parent) can reference: global 'key' (visible to
+            # other nodes), code: expressions with the output*/retrieved* fallback,
+            # item: lists. 'self' globals are only visible to the node itself and
+            # are intentionally excluded.
+            for group in nd.get("group_params", []):
+                for param in group.get("params", []):
+                    g = param.get("global")
+                    if not g:
+                        continue
+                    label = param.get("label")
+                    if label in (None, "true"):
+                        label = param["key"]
+                    if g == "key":
+                        outputs.append({"ref": f"{nid}.{param['key']}", "key": param["key"], "label": label})
+                    elif g.startswith("code:") and isinstance(param.get("value"), list):
+                        for item in param["value"]:
+                            if isinstance(item, dict) and item.get("key"):
+                                outputs.append(
+                                    {
+                                        "ref": f"{nid}.{item['key']}",
+                                        "key": item["key"],
+                                        "label": item.get("label") or item["key"],
+                                    }
+                                )
+                        # Fallback mirroring SelectVar.tsx:136-145 — when the
+                        # picked list is empty, output*/retrieved* params expose
+                        # their own key.
+                        if not param["value"] and (
+                            param["key"].startswith("output") or param["key"].startswith("retrieved")
+                        ):
+                            outputs.append({"ref": f"{nid}.{param['key']}", "key": param["key"], "label": label})
+                    elif g.startswith("item:") and isinstance(param.get("value"), list):
+                        for item in param["value"]:
+                            if isinstance(item, dict) and item.get("key"):
+                                outputs.append(
+                                    {
+                                        "ref": f"{nid}.{item['key']}",
+                                        "key": item["key"],
+                                        "label": item.get("label") or item.get("value") or item["key"],
+                                    }
+                                )
+        # dedupe by ref, preserving the first label
+        seen: set[str] = set()
+        unique: list[dict] = []
+        for o in outputs:
+            if o["ref"] in seen:
+                continue
+            seen.add(o["ref"])
+            unique.append(o)
+        return {
+            "flow_id": flow_id,
+            "flow_name": flow_info.name,
+            "input": inputs,
+            "outputs": unique,
+        }
+
+    @classmethod
     def run_once(cls, login_user: UserPayload, node_input: dict[str, any], node_data: dict[any, any], workflow_id: str):
         workflow_info = FlowDao.get_flow_by_id(workflow_id)
         if not workflow_info:
@@ -828,6 +926,10 @@ class WorkFlowService(BaseService):
                 if node_data.type == NodeType.LLM.value and one["type"] != "variable":
                     continue
                 if node_data.type == NodeType.AGENT.value and one["type"] not in ["tool", "variable"]:
+                    continue
+                if node_data.type == NodeType.AGENT_FLOW.value and one["type"] != "variable":
+                    continue
+                if node_data.type == NodeType.LOOP.value and one["type"] != "variable":
                     continue
                 if node_data.type == NodeType.CODE.value and one["key"] != "code_output":
                     continue

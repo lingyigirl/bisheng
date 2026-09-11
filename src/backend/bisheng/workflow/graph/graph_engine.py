@@ -3,6 +3,7 @@ from typing import Annotated, Any
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import StateGraph
 from loguru import logger
 from typing_extensions import TypedDict
@@ -36,6 +37,7 @@ class GraphEngine:
         callback: BaseCallback = None,
         tenant_id: int = None,
         flow_user_id: int = None,
+        skip_input_interrupt: bool = False,
     ):
         self.user_id = user_id
         self.workflow_id = workflow_id
@@ -52,6 +54,11 @@ class GraphEngine:
         # knowledge-space retrieval by the config author's view_file when the
         # permission toggle is OFF (see design decision 2/3).
         self.flow_user_id = flow_user_id
+        # F057: sub-flow callers (loop/agent_flow) pre-feed the input node via
+        # handle_input before the run; interrupting at INPUT inside a NESTED
+        # graph stream aborts the inner checkpoint and breaks resume, so the
+        # caller can opt out of input interrupts.
+        self.skip_input_interrupt = skip_input_interrupt
 
         # node_id: NodeInstance
         self.nodes_map = {}
@@ -249,7 +256,8 @@ class GraphEngine:
                 end_nodes.append(node_instance.id)
             elif node_instance.type == NodeType.INPUT.value:
                 # Node that needs to abort receiving user input
-                interrupt_nodes.append(node_instance.id)
+                if not self.skip_input_interrupt:
+                    interrupt_nodes.append(node_instance.id)
             elif node_instance.type == NodeType.OUTPUT.value:
                 # Node that needs to abort receiving user input
                 fake_node = OutputFakeNode(
@@ -304,6 +312,12 @@ class GraphEngine:
             logger.warning(f"graph ignore error: {e}")
             self.status = WorkflowStatus.FAILED.value
             self.reason = str(e)
+        except GraphInterrupt:
+            # Nested graphs (loop/agent_flow sub-flows) raise GraphInterrupt
+            # when hitting an interrupt_before node inside an outer stream —
+            # top-level streams return normally instead. Treat it as a normal
+            # pause and let judge_status derive INPUT/RUNNING from the snapshot.
+            self.judge_status()
         except Exception as e:
             logger.exception("graph run error")
             self.status = WorkflowStatus.FAILED.value
@@ -319,6 +333,8 @@ class GraphEngine:
             logger.warning(f"graph ignore error: {e}")
             self.status = WorkflowStatus.FAILED.value
             self.reason = str(e)
+        except GraphInterrupt:
+            self.judge_status()
         except Exception as e:
             logger.exception("graph arun error")
             self.status = WorkflowStatus.FAILED.value

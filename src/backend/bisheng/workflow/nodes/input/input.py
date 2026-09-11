@@ -49,6 +49,9 @@ class InputNode(BaseNode):
 
         # save user set file key -> file key info
         self._file_key_map = {}
+        # static form item key -> this run's regenerated runtime key (F056 v2:
+        # agent_flow input_mapping addresses file fields by their static keys)
+        self._runtime_key_of_static = {}
 
         if self.is_dialog_input():
             new_node_params["user_input"] = self.node_params["user_input"]
@@ -60,6 +63,7 @@ class InputNode(BaseNode):
                 if value_info["type"] == "file":
                     value_key = f"file_{generate_uuid()[:8]}"
                     self._file_key_map[value_info["key"]] = value_info
+                    self._runtime_key_of_static[value_info["key"]] = value_key
                 new_node_params[value_key] = value_info["value"]
                 self._node_params_map[value_key] = value_info
 
@@ -68,6 +72,13 @@ class InputNode(BaseNode):
 
         self._vector_client = None
         self._es_client = None
+
+    def handle_input(self, user_input: dict) -> Any:
+        """Translate static form item keys (agent_flow input_mapping addresses
+        file fields by their static keys, F056 v2) to this run's regenerated
+        file_<uuid8> runtime keys before merging into node_params."""
+        translated = {self._runtime_key_of_static.get(key, key): value for key, value in user_input.items()}
+        super().handle_input(translated)
 
     def is_dialog_input(self):
         """Whether the input is in the form of a conversation"""

@@ -19,6 +19,7 @@ class Workflow:
         callback: BaseCallback = None,
         tenant_id: int = None,
         flow_user_id: int = None,
+        skip_input_interrupt: bool = False,
     ):
 
         # Unique identifier of the run, unique saved to the databaseID
@@ -49,6 +50,7 @@ class Workflow:
             callback=callback,
             tenant_id=tenant_id,
             flow_user_id=flow_user_id,
+            skip_input_interrupt=skip_input_interrupt,
         )
 
     def save_user_input_history(self, input_data: dict | None):
