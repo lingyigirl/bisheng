@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 from pydantic import BaseModel, field_validator
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, Float, Integer, String
 from sqlmodel import Column, DateTime, Field, case, delete, func, or_, select, text, update
 from sqlmodel.sql.expression import Select, SelectOfScalar, col
 
@@ -92,6 +92,17 @@ class KnowledgeBase(SQLModelSerializable):
         default=None,
         sa_column=Column(Integer, nullable=True, index=True, comment="绑定的自动标签库ID"),
     )
+    # F055: risk-compliance KB — retrieval-time weighting and priority.
+    # weight=0 excludes the KB from multi-KB recall (spec §3); priority=1 is the
+    # high-priority group consulted first (design decision 3).
+    weight: float = Field(
+        default=1.0,
+        sa_column=Column(Float, nullable=False, server_default=text("1"), comment="知识库权重, 检索排序用, F055"),
+    )
+    priority: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default=text("0"), comment="知识库调用优先级 0=普通 1=优先, F055"),
+    )
 
     metadata_fields: list[dict] | None = Field(
         default=None,
@@ -129,6 +140,11 @@ class KnowledgeUpdate(BaseModel):
     knowledge_id: int
     name: str | None = None
     description: str | None = None
+    # F055: None = unchanged; weight=0 excludes the KB from multi-KB recall.
+    # Negative weights would invert the rrf_score x weight ordering — rejected.
+    # priority is two-level (design decision 3).
+    weight: float | None = Field(default=None, ge=0)
+    priority: int | None = Field(default=None, ge=0, le=1)
 
 
 class KnowledgeCreate(BaseModel):

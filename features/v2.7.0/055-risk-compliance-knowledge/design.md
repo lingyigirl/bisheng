@@ -32,21 +32,22 @@
 ### 决策 1：时效字段的落点（KnowledgeFile vs Knowledge）
 
 - **备选**：
-  - A. 文档级（`KnowledgeFile`）加 `effective_date` / `expire_date`——入库时把时间戳写入该文件所有 chunk 的 Milvus/ES metadata；检索默认注入「生效中」过滤
+  - A. 文档级（`KnowledgeFile`）加 `effective_date` / `expire_date`；检索期查 MySQL 得「生效中」文件 id 集合，以 `document_id in [...]` expr 注入（与既有 metadata_filter 的 MySQL 预过滤机制同构）
   - B. 知识库级（`Knowledge`）——整个库一个生效区间
   - C. 走既有 `user_metadata` 自定义字段——无「当前日期」语义、知识空间路径自定义字段不可过滤（见坑 2），只能凑合
+  - D. 入库时把日期写入 chunk 的 Milvus/ES metadata——初版方案，被否：修改日期要等下次重解析才生效，违背 AC-08「修改即时生效」
 - **选定**：A
-- **原因**：制度修订的粒度天然是「文件」（新文件替换旧文件）；库级太粗（一个库混装制度/案例，无法整体生效/失效）；C 是变通不是语义。文件级字段在检索期以 `document_id in [...]` 之外的 range 条件注入，与既有 metadata_filter 的 AND 组合机制（`space_flow_retrieval.py:64-76`）同构。
+- **原因**：制度修订的粒度天然是「文件」（新文件替换旧文件）；库级太粗（一个库混装制度/案例，无法整体生效/失效）；C 是变通不是语义；D 无法即时生效且引入 Milvus schema 演进成本。A 复用 metadata_filter 已验证的 MySQL 预过滤 → expr 注入路径（`space_flow_retrieval.py:64-76`），零新存储改造、零重解析依赖。
 - **何时该重新考虑**：出现「单条款级修订必须精确到段落」的强需求时，升级为 chunk 级（成本：chunk 元数据 + 双引擎按 chunk 过滤 + 重写版本替换逻辑）。
 
 ### 决策 2：时效过滤的注入方式（默认注入 + null 容忍）
 
 - **备选**：
-  - A. 检索默认注入 `(effective_date is null or effective_date <= now) and (expire_date is null or expire_date >= now)`——null 视为无限
+  - A. 检索默认注入「生效中」过滤（MySQL 查 `(effective_date is null or effective_date <= now) and (expire_date is null or expire_date >= now)` → document_id 集合注入）——null 视为无限
   - B. 仅当工作流节点显式打开「时效过滤」开关才注入
   - C. 用 metadata_filter 的手写条件表达（用户在节点里自己拼）
 - **选定**：A（并同时在 metadata_filter 提供 `today` 动态表达式，供自定义时间条件使用）
-- **原因**：A 对历史数据零冲击（旧 chunk 字段为 null → 全部通过，行为与现在一致）；B 要用户记得开开关，合规场景「忘了开」= 失效制度被召回，风险不可接受；C 把合规正确性交给手工配置，且 metadata_filter 目前只支持固定日期/变量引用，无「今天」语义。
+- **原因**：A 对历史数据零冲击（旧行日期为 null → 全部通过，行为与现在一致）；B 要用户记得开开关，合规场景「忘了开」= 失效制度被召回，风险不可接受；C 把合规正确性交给手工配置，且 metadata_filter 目前只支持固定日期/变量引用，无「今天」语义。
 - **何时该重新考虑**：出现「故意检索历史失效版本」的场景时，加节点级开关（默认仍开）。
 
 ### 决策 3：权重与优先级的实现形态
@@ -74,7 +75,7 @@
   - A. 节点参数透传：`top_k` 覆盖既有固定 `{"k": 100, "param": {"ef": 110}}`（`workflow/common/knowledge.py:209`）；`score_threshold` 在 RRF 融合后过滤
   - B. 只在最终结果上截断/过滤（不改变检索阶段的 k）
 - **选定**：A
-- **原因**：截断式 top_k 浪费召回预算（先召 100 再截 N），且 rerank 输入质量不必要地大；阈值过滤放在 RRF 融合后、rerank 前，避免 RRF 分数与向量相似度分数不可比的问题。ef 与 k 联动（ef = max(k+10, 110)），未配置时沿用 k=100 保证零回归（AC-13）。
+- **原因**：截断式 top_k 浪费召回预算（先召 100 再截 N），且 rerank 输入质量不必要地大；阈值过滤基于 RRF 融合分数（rank-based），与向量相似度分数不可比——实现上阈值在工具返回后（rerank 之后）过滤，但过滤键是 `rrf_score`（不随 rerank 变化），故与「rerank 前」结果集等价。ef 与 k 联动（ef = max(k+10, 110)），未配置时沿用 k=100 保证零回归（AC-13）。
 - **何时该重新考虑**：需要 per-库不同的 top_k/阈值时，把参数从节点级下沉为库级默认值。
 
 ### 决策 6：预设分类标签的初始化
@@ -126,8 +127,7 @@
 |---|---|---|---|
 | `Knowledge.weight` | float，默认 1.0，0 表示不参与多库召回 | 库级权重 | 工作流检索后处理 |
 | `Knowledge.priority` | int，默认 0；1=优先组 | 两级优先级 | 工作流检索后处理 |
-| `KnowledgeFile.effective_date` / `expire_date` | date，可空；null=无限制 | 文件级生效区间 | 入库（chunk metadata）+ 检索注入 |
-| chunk metadata 新增字段 `effective_date` / `expire_date` | 时间戳或 null | 由文件字段拷贝而来；Milvus add field + ES mapping 扩展 | 检索期 range 过滤 |
+| `KnowledgeFile.effective_date` / `expire_date` | datetime，可空；null=无限制 | 文件级生效区间；检索期查 MySQL 预过滤（与 metadata_filter 同机制），修改即时生效无需重解析 | 检索注入（document_id 集合） |
 | 检索节点新参数 `tags` / `top_k` / `score_threshold` | tags: tag_id 数组；top_k: int；score_threshold: float | 未配置时沿用既有默认 | 工作流节点配置 |
 | metadata_filter 的 `today` 表达式 | 条件值填 `today`（大小写不敏感） | 动态当前日期 | metadata_filter 条件值解析 |
 | 预设分类标签名 | `行内制度` / `监管法规` / `行业分析` / `历史案例` | business_type=knowledge、business_id=KB id，幂等初始化 | 前端分类组织 + 检索 tags 参数 |
@@ -137,12 +137,14 @@
 | 模块 / 文件 | 职责 | 不做什么 |
 |---|---|---|
 | `knowledge/domain/models/knowledge.py`（扩展） | Knowledge 增 weight/priority 字段 + DAO 写入 | 不拥有既有字段语义 |
-| `knowledge/domain/models/knowledge_file.py`（扩展） | KnowledgeFile 增 effective_date/expire_date + 编辑 API 透出 | 不触发重解析 |
-| `workflow/common/knowledge.py`（扩展） | 检索构建：tags 过滤、时效过滤、top_k/threshold、权重/优先级后处理 | 不重写既有 metadata_filter 逻辑 |
-| `knowledge/domain/services/space_flow_retrieval.py`（扩展） | space 路径同款注入 | — |
-| 命中测试端点（新增，只读） | 复用检索构建 + 诊断输出 | 不写入任何向量数据 |
+| `knowledge/domain/models/knowledge_file.py`（扩展） | KnowledgeFile 增 effective_date/expire_date + 非生效文件 id 查询 DAO + 编辑 API 透出 | 不触发重解析 |
+| `knowledge/domain/services/knowledge_flow_retrieval.py`（新增，T-10 抽取） | 文档库检索构建唯一入口 `retrieve_knowledge_documents`——tags/时效/版本 scope、优先级双轮召回、权重/阈值/top_k 后处理；hit_test 与工作流节点调用同一函数（决策 7） | 不含向量库对象缓存（由 RagUtils 传入 `knowledge_vector_list`） |
+| `knowledge/rag/risk_compliance_filters.py`（新增） | 纯函数：k/ef 联动、scope 子句组合、权重重排、优先级合并、后处理（阈值/top_k）——双链路从同一点导入防漂移（坑 3） | 不触 DB / 向量库 |
+| `workflow/common/knowledge.py`（扩展） | 节点参数解析（tags/top_k/score_threshold，未配置=None 零回归）+ `metadata_filter_fn` 适配 + 跨问句向量库缓存 | 不再内联检索构建（委托共享函数） |
+| `knowledge/domain/services/space_flow_retrieval.py`（扩展） | space 路径同款注入（async 版纯函数复用同一批 filters） | — |
+| 命中测试端点（新增，只读） | 复用 `retrieve_knowledge_documents` + 排除统计输出 | 不写入任何向量数据 |
 | 前端 KnowledgePage（扩展） | 标签中心页、时效/权重编辑、命中测试弹窗 | — |
-| 标签中心复用 `knowledge/tags` CRUD（既有） | 标签建/改/删 | 不动 space 标签库 |
+| 标签中心复用 `knowledge/tags` CRUD（既有） | 标签建/改/删（级联在 `TagDao.delete_business_tag`，文档库与空间两调用方共享） | 不动 space 标签库 |
 
 ---
 
@@ -155,10 +157,15 @@
 | 3 | 文档库与知识空间是**两条检索链路**（`workflow/common/knowledge.py` vs `space_flow_retrieval.py`），能力演进长期不同步 | 只改一条 → 另一侧行为漂移 | 本 Feature 两条都改；e2e 双路径各跑 |
 | 4 | 检索 k 是硬编码 `{"k": 100, "param": {"ef": 110}}`（`knowledge.py:209`），ef 必须大于 k | 只改 k 不改 ef → Milvus 召回异常 | top_k 与 ef 联动（决策 5） |
 | 5 | tenant 自动过滤只拦 SELECT——新增的 bulk 写/删要手写 tenant_id 条件（`core/database/tenant_filter.py`） | 字段批量维护跨租户泄漏 | 维护 API 全部走 ORM 单行更新 |
-| 6 | 存量 chunk 的 metadata 没有新时效字段；Milvus 给已有 collection add field 时旧数据字段为默认值 | 过滤条件按「字段缺失」处理不一致 → 旧文档被误排除 | 过滤一律 `is null or ...`（决策 2），null 容忍 |
+| 6 | 时效过滤走 MySQL 预过滤而非 chunk metadata——存量文档无需任何向量库改造，null 容忍天然满足（旧行日期为 null → 全部通过） | 若误走 chunk metadata 方案：修改日期要等重解析才生效（违背 AC-08）、且要动 Milvus schema | 检索期 MySQL 查询 + `document_id in [...]` 注入（决策 1 选型 A） |
 | 7 | 前端打标弹窗 `handleCreateTag` 曾把完整响应体当 TagItem 用（id=undefined → 保存 400）——2026-09-06 已修（解包 `result.data`） | 新建标签后保存不生效、标签不显示 | 回归测试覆盖新建→保存→列表展示（AC-02） |
-| 8 | RRF 分数是 rank-based（`1/(rank+60)`），与向量相似度不可直接比 | 阈值过滤放错位置（融合前）→ 阈值语义混乱 | 阈值在 RRF 融合后、rerank 前过滤（决策 5） |
+| 8 | RRF 分数是 rank-based（`1/(rank+60)`），与向量相似度不可直接比 | 阈值过滤放错位置（融合前）→ 阈值语义混乱 | 阈值基于 `rrf_score` 过滤（rrf_score 不随 rerank 变化，实现上在工具返回后过滤与「rerank 前」结果集等价） |
 | 9 | 分类标签的 business_id 绑定具体知识库（`business_type=knowledge`），跨库不共享 | 预设标签重复建、检索时各库标签 id 不可互换 | 预设初始化幂等 + 检索 tags 参数按所选知识库解析 |
+| 10 | 既有 `RRFRerank` 融合后**不产出分数**（决策 3/5 的「rrf_score × weight」「融合后阈值」依赖它） | 直接读 metadata 拿不到分数 → 权重排序/阈值静默失效 | F055 在 `RRFRerank.compress_documents` 末尾写 `doc.metadata["rrf_score"]`（增量字段，两个既有消费方不受影响） |
+| 11 | 双引擎各按 k 召回，融合去重后总数**可能超过 k**；未配置 top_k 时必须保持既有行为（AC-13） | 无条件截断 → 既有工作流召回变少 | 仅当节点显式配置 top_k 时才截断（`postprocess_risk_docs`）；检索期 k/ef 联动 |
+| 12 | 时效预过滤依赖 F055 迁移（effective_date/expire_date 列）；未跑迁移的环境查询会报未知列 | 检索链路因迁移时序问题整体崩溃 | 与版本过滤同款 best-effort：SQLAlchemyError 时记 warning 跳过时效过滤，不破坏既有检索 |
+| 13 | tags 选中但该库/空间没有任何文件关联时，`document_id in []` 在 Milvus expr 中**非法** | 空列表 expr → 检索 500 | 逐库解析 tag 范围；空命中 → 跳过该库/空间（与 metadata filter 无命中跳过的既有约定一致） |
+| 14 | 删除标签的两个调用方（文档库 `KnowledgeService.delete_knowledge_tag` / 知识空间）共用 `TagDao.delete_business_tag`；bulk DELETE 不享受租户自动过滤 | 只改一方 → 另一方残留孤儿 TagLink；跨租户 tag_id 误删 | 级联在该 DAO 内实现：先租户自动过滤的 SELECT 校验归属，再按已验证 id 删 Tag + 全部 TagLink（同一事务，幂等返回 True） |
 
 ---
 
@@ -169,8 +176,10 @@
 | 契约 | 形式 | 谁在用 |
 |---|---|---|
 | 知识库/文档编辑响应中的 weight/priority/effective_date/expire_date 字段 | HTTP API | platform 前端 |
+| `PUT /knowledge/file/effective_period`（`{knowledge_id, file_id, effective_date?, expire_date?}`，null=不限；effective>expire → 400） | HTTP API | platform 前端（文档元数据弹窗） |
+| `POST /knowledge/{id}/hit_test`（`{question}` → `{hits: [{document_id, document_name, chunk, chunk_index, score, knowledge_id}], excluded: {expired, not_yet_effective}}`；读权限） | HTTP API | platform 前端（命中测试弹窗） |
 | 工作流检索节点新参数（tags/top_k/score_threshold/weight 排序语义） | 工作流 Flow 数据 | 智能体构建者；未配置时行为与旧版一致 |
-| `POST /knowledge/{id}/hit_test`（只读） | HTTP API | platform 前端（命中测试弹窗） |
+| `retrieve_knowledge_documents` / `postprocess_risk_docs` 等共享函数 | 内部函数契约 | hit_test 端点、工作流节点、文件上传临时路径三方共用（单一构造点，改一处三处同步） |
 | metadata_filter 的 `today` 表达式 | 既有参数扩展 | 使用 metadata_filter 的工作流 |
 
 ### 6.2 我依赖别人的（Incoming）
@@ -179,7 +188,7 @@
 |---|---|---|
 | 双引擎 metadata 过滤与 AND 组合机制（`space_flow_retrieval.py:64-76`） | 内部函数 | 机制变更需同步本 Feature 注入点 |
 | `TagDao`（`aget_resources_by_tags` 等） | 内部 API | 标签表结构变化需同步 |
-| Milvus schema 演进（add field）与 ES mapping 更新 | 存储能力 | Milvus 版本不支持 add field 时需回退重建方案 |
+| `KnowledgeFileDao` 的 MySQL 预过滤查询 | 内部 API | 时效过滤的 document_id 集合来源；表结构变化需同步 |
 | 既有版本管理（`knowledge_document_version`） | 内部机制 | 时效与版本替换的交互：新版本继承原文件生效区间，旧版本随文件一起失效 |
 | MCP 工具注册（cnfic 服务） | 既有能力 | 实时数据分流依赖工具可用性，不在本 Feature 内维护 |
 
@@ -189,7 +198,7 @@
 
 - **单元**：过滤条件构造（null 容忍、today 表达式、tags→file_ids）、权重/优先级排序、top_k/ef 联动、预设标签幂等。
 - **集成**：文档库与知识空间两条检索链路各跑一遍注入验证（真实 Milvus/ES）。
-- **e2e**（`/e2e-test features/v2.7.0/055-risk-compliance-knowledge`）：真实知识库上传 → 打分类标签 → 设生效/失效日期 → 工作流检索验证只召回生效文档 → 多库权重/优先级排序验证 → 命中测试端点与工作流结果一致性 → 未配置参数的既有工作流回归。
+- **e2e**（`test/e2e/test_e2e_f055_risk_compliance_knowledge.py`，13 例）：真实链路（upload→process→解析嵌入→hit_test）验证预设标签、标签级联、时效过滤（未来生效/已失效排除、清除即恢复）、权重写入口径、权限配对、错误路径。多库权重/优先级排序与节点 tags/top_k/阈值的工作流对话验证在 `e2e-checklist.md` 手动清单（单测已覆盖同构建函数语义）。
 - **手动**：`https://172.19.70.141:3001/filelib`（admin / Tansun@2020）——知识库详情页命中测试弹窗；标签中心建/改/删；失效文档列表标识；工作流检索节点配置 tags/top_k/阈值后跑一次对话比对召回。
 - **可观测**：检索注入条件与召回数计入既有日志（检索构建链路 debug 日志）；命中测试端点返回排除统计（失效排除数）。
 
@@ -209,3 +218,4 @@
 | 日期 | 改动 | 触发原因 |
 |---|---|---|
 | 2026-09-06 | 初版（8 项决策 + 现状快照，基于 2026-09-06 三个探查代理的代码级 gap 分析） | spec 评审通过（用户确认） |
+| 2026-09-06 | 实现完成回写：§4.3 补 `knowledge_flow_retrieval.py` / `risk_compliance_filters.py` 两个抽取模块（T-10 共享构建函数）；§6.1 补 `PUT /knowledge/file/effective_period` 与共享函数契约；坑表补 10-14（rrf_score 写入、超 k 截断守卫、时效预过滤降级、空标签跳过、TagDao 级联落点）；决策 5/坑 8 阈值位置措辞修正（rrf_score 为键，与 rerank 顺序无关）；§7 e2e 口径与 `e2e-checklist.md` 对齐 | T-18/T-19（e2e + code review 偏差回写） |

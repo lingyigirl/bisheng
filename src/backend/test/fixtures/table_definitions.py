@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS knowledge (
     auto_tag_enabled INTEGER NOT NULL DEFAULT 0,
     auto_tag_library_id INTEGER,
     metadata_fields JSON,
+    weight FLOAT NOT NULL DEFAULT 1,
+    priority INTEGER NOT NULL DEFAULT 0,
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
 )"""
@@ -309,6 +311,8 @@ CREATE TABLE IF NOT EXISTS knowledgefile (
     level INTEGER DEFAULT 0,
     file_level_path VARCHAR(512),
     abstract TEXT,
+    effective_date DATETIME,
+    expire_date DATETIME,
     file_size INTEGER,
     md5 VARCHAR(255),
     parse_type VARCHAR(32),

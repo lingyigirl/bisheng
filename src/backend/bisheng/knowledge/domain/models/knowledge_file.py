@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -84,6 +84,15 @@ class KnowledgeFileBase(SQLModelSerializable):
     level: int | None = Field(default=0)
     file_level_path: str | None = Field(default=None, index=True)
     abstract: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # F055: file-level effective period. null = unlimited (spec AC-06). Written
+    # into chunk metadata at parse time and enforced at retrieval (design
+    # decisions 1/2); editing does NOT trigger a re-parse (AC-08).
+    effective_date: datetime | None = Field(
+        default=None, sa_column=Column(DateTime, nullable=True, comment="生效日期, F055")
+    )
+    expire_date: datetime | None = Field(
+        default=None, sa_column=Column(DateTime, nullable=True, comment="失效日期, F055")
+    )
     file_size: int | None = Field(default=None, index=False, description="File size inbytes")
     md5: str | None = Field(default=None, index=False)
     parse_type: str | None = Field(default=ParseType.LOCAL.value, index=False, description="Files parsed in what mode")
@@ -200,6 +209,18 @@ class QAKnowledgeUpsert(QAKnowledgeBase):
 
     id: int | None = None
     answers: list[str] | str | None = None
+
+
+def _f055_today_midnight() -> datetime:
+    """F055: date-level "now" for effective-window comparisons.
+
+    Spec section 3 boundaries are date semantics — a file with expire_date =
+    today stays effective THROUGH today ("至失效日止有效") and one with
+    effective_date = today becomes effective FROM today ("自生效日起有效").
+    Comparing against raw datetime.now() would flip both at 00:00 instead.
+    The three DAO predicates below MUST all use this helper to stay in sync.
+    """
+    return datetime.combine(date.today(), datetime.min.time())
 
 
 class KnowledgeFileDao(KnowledgeFileBase):
@@ -485,6 +506,62 @@ class KnowledgeFileDao(KnowledgeFileBase):
             return []
         with get_sync_db_session() as session:
             return session.exec(select(KnowledgeFile).where(KnowledgeFile.id.in_(file_ids))).all()
+
+    @classmethod
+    def get_non_effective_file_ids_by_knowledge_ids(cls, knowledge_ids: list[int]) -> list[int]:
+        """F055 (AC-05): ids of files currently outside their effective window.
+
+        effective_date > today-midnight → not yet effective; expire_date <
+        today-midnight → expired. NULL dates never satisfy either comparison,
+        so legacy rows are always effective (null tolerance, design decision 2).
+        Date-level comparisons (see _f055_today_midnight) keep the spec section
+        3 boundary semantics: effective FROM the effective date, THROUGH the
+        expire date.
+        """
+        if not knowledge_ids:
+            return []
+        now = _f055_today_midnight()
+        statement = select(KnowledgeFile.id).where(
+            KnowledgeFile.knowledge_id.in_(knowledge_ids),
+            or_(KnowledgeFile.effective_date > now, KnowledgeFile.expire_date < now),
+        )
+        with get_sync_db_session() as session:
+            return list(session.exec(statement).all())
+
+    @classmethod
+    async def aget_non_effective_file_ids_by_knowledge_ids(cls, knowledge_ids: list[int]) -> list[int]:
+        """F055: async twin for the knowledge-space retrieval chain (T-08)."""
+        if not knowledge_ids:
+            return []
+        now = _f055_today_midnight()
+        statement = select(KnowledgeFile.id).where(
+            KnowledgeFile.knowledge_id.in_(knowledge_ids),
+            or_(KnowledgeFile.effective_date > now, KnowledgeFile.expire_date < now),
+        )
+        async with get_async_db_session() as session:
+            return list((await session.exec(statement)).all())
+
+    @classmethod
+    def count_non_effective_files_by_knowledge_id(cls, knowledge_id: int) -> tuple[int, int]:
+        """F055 (AC-14): (expired, not_yet_effective) counts for hit-test stats.
+
+        The predicates MUST mirror get_non_effective_file_ids_by_knowledge_ids
+        (expired = expire_date < now; not_yet_effective = effective_date > now) —
+        the stats describe exactly what the retrieval filter excludes.
+        """
+        now = _f055_today_midnight()
+        with get_sync_db_session() as session:
+            expired = session.exec(
+                select(func.count())
+                .select_from(KnowledgeFile)
+                .where(KnowledgeFile.knowledge_id == knowledge_id, KnowledgeFile.expire_date < now)
+            ).one()
+            not_yet_effective = session.exec(
+                select(func.count())
+                .select_from(KnowledgeFile)
+                .where(KnowledgeFile.knowledge_id == knowledge_id, KnowledgeFile.effective_date > now)
+            ).one()
+        return expired, not_yet_effective
 
     @classmethod
     async def aget_file_by_ids(cls, file_ids: list[int]) -> list[KnowledgeFile]:

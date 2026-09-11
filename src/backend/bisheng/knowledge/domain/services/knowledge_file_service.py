@@ -14,7 +14,11 @@ from bisheng.knowledge.domain.knowledge_rag import KnowledgeRag
 from bisheng.knowledge.domain.repositories.interfaces.knowledge_file_repository import KnowledgeFileRepository
 from bisheng.knowledge.domain.repositories.interfaces.knowledge_repository import KnowledgeRepository
 from bisheng.knowledge.domain.schemas.knowledge_file_schema import KnowledgeFileInfoRes
-from bisheng.knowledge.domain.schemas.knowledge_schema import ModifyKnowledgeFileMetaDataReq, MetadataField
+from bisheng.knowledge.domain.schemas.knowledge_schema import (
+    MetadataField,
+    ModifyFileEffectivePeriodReq,
+    ModifyKnowledgeFileMetaDataReq,
+)
 from bisheng.knowledge.domain.services.knowledge_permission_service import KnowledgePermissionService
 from bisheng.open_endpoints.domain.schemas.knowledge import DeleteUserMetadataReq
 from bisheng.user.domain.models.user import UserDao
@@ -115,6 +119,24 @@ class KnowledgeFileService:
         )
 
         logger.info(f"Elasticsearch update_by_query result: {res}")
+
+    async def modify_file_effective_period(self, login_user: 'UserPayload',
+                                           modify_effective_period_req: 'ModifyFileEffectivePeriodReq'):
+        """F055 (AC-05/AC-06/AC-08): set file effective period. Takes effect at
+        retrieval immediately (DB pre-filter), no re-parse needed."""
+        knowledge_file_model = await self.knowledge_file_repository.find_by_id(
+            entity_id=modify_effective_period_req.file_id)
+        if not knowledge_file_model or knowledge_file_model.knowledge_id != modify_effective_period_req.knowledge_id:
+            raise KnowledgeFileNotExistError()
+
+        knowledge_model = await self.knowledge_repository.find_by_id(
+            entity_id=knowledge_file_model.knowledge_id)
+        await self._ensure_knowledge_access(login_user, knowledge_model, AccessType.KNOWLEDGE_WRITE)
+
+        knowledge_file_model.effective_date = modify_effective_period_req.effective_date
+        knowledge_file_model.expire_date = modify_effective_period_req.expire_date
+        knowledge_file_model.updater_id = login_user.user_id
+        return await self.knowledge_file_repository.update(knowledge_file_model)
 
     async def modify_file_user_metadata(self, login_user: 'UserPayload',
                                         modify_file_metadata_req: 'ModifyKnowledgeFileMetaDataReq'):

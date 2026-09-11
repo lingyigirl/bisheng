@@ -763,6 +763,10 @@ class KnowledgeService(KnowledgeUtils):
                 raise KnowledgeExistError.http_exception()
             db_knowledge.name = knowledge.name
         db_knowledge.description = knowledge.description
+        if getattr(knowledge, "weight", None) is not None:
+            db_knowledge.weight = knowledge.weight
+        if getattr(knowledge, "priority", None) is not None:
+            db_knowledge.priority = knowledge.priority
         db_knowledge = KnowledgeDao.update_one(db_knowledge)
         user = UserDao.get_user(db_knowledge.user_id)
         res = KnowledgeRead(
@@ -2363,6 +2367,31 @@ class KnowledgeService(KnowledgeUtils):
         )
         return tags, total
 
+    # F055 (spec AC-01): the four preset classification categories offered when
+    # creating a risk-compliance KB. Idempotent — existing names are reused,
+    # only missing ones are created (design decision 6).
+    PRESET_CLASSIFICATION_TAG_NAMES = ("行内制度", "监管法规", "行业分析", "历史案例")
+
+    @classmethod
+    async def ensure_preset_classification_tags(cls, login_user: UserPayload, knowledge_id: int):
+        await cls._get_writable_knowledge(login_user=login_user, knowledge_id=knowledge_id)
+
+        existing_tags = await TagDao.get_tags_by_business(
+            business_type=TagBusinessTypeEnum.KNOWLEDGE, business_id=str(knowledge_id)
+        )
+        existing_names = {tag.name for tag in existing_tags}
+        for tag_name in cls.PRESET_CLASSIFICATION_TAG_NAMES:
+            if tag_name in existing_names:
+                continue
+            await TagDao.ainsert_tag(
+                Tag(
+                    name=tag_name,
+                    user_id=login_user.user_id,
+                    business_type=TagBusinessTypeEnum.KNOWLEDGE,
+                    business_id=str(knowledge_id),
+                )
+            )
+
     @classmethod
     async def add_knowledge_tag(cls, login_user: UserPayload, knowledge_id: int, tag_name: str) -> Tag:
         await cls._get_writable_knowledge(login_user=login_user, knowledge_id=knowledge_id)
@@ -2388,6 +2417,15 @@ class KnowledgeService(KnowledgeUtils):
         tag = await TagDao.get_tag(tag_id)
         if not tag or tag.business_id != str(knowledge_id) or tag.business_type != TagBusinessTypeEnum.KNOWLEDGE:
             raise KnowledgeTagNotExistError()
+
+        # F055 (AC-04): renaming must not collide with an existing tag name —
+        # the DB has no unique constraint on (business_id, name), and a
+        # duplicate name would silently show up twice in tag pickers.
+        same_name = await TagDao.get_tags_by_business(
+            business_type=TagBusinessTypeEnum.KNOWLEDGE, business_id=str(knowledge_id), name=tag_name
+        )
+        if any(t.id != tag_id and t.name == tag_name for t in same_name):
+            raise KnowledgeTagExistError()
 
         return await TagDao.aupdate_tag(tag_id, name=tag_name)
 

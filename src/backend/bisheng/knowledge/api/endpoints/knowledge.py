@@ -55,10 +55,19 @@ from bisheng.knowledge.domain.upload_file_size import validate_knowledge_upload_
 from bisheng.knowledge.domain.schemas.knowledge_schema import (
     AddKnowledgeMetadataFieldsReq,
     UpdateKnowledgeMetadataFieldsReq,
+    ModifyFileEffectivePeriodReq,
     ModifyKnowledgeFileMetaDataReq,
     UpdateFileTagsReq,
     BatchAddFileTagsReq,
+    HitTestChunk,
+    HitTestExcluded,
+    HitTestReq,
+    HitTestResp,
 )
+
+# F055 (AC-14): the hit-test preview must reuse the exact builder the workflow
+# document-KB path uses (design decision 7).
+from bisheng.knowledge.domain.services.knowledge_flow_retrieval import retrieve_knowledge_documents
 from bisheng.knowledge.domain.services.knowledge_service import KnowledgeService
 from bisheng.llm.domain import LLMService
 from bisheng.llm.domain.const import LLMModelType
@@ -290,6 +299,12 @@ async def create_knowledge(
         login_user,
         knowledge,
     )
+    # F055 (AC-01): preset classification tags are available right after creation.
+    # Best-effort — a failure here must not fail the KB creation itself.
+    try:
+        await KnowledgeService.ensure_preset_classification_tags(login_user, db_knowledge.id)
+    except Exception as e:
+        logger.warning("preset classification tags init failed for kb=%s: %s", db_knowledge.id, e)
     return resp_200(db_knowledge)
 
 
@@ -1268,3 +1283,78 @@ async def modify_file_user_metadata(
     knowledge_file_model = await knowledge_file_service.modify_file_user_metadata(login_user, req_data)
 
     return resp_200(data=knowledge_file_model)
+
+
+# Modify Knowledge Base File Effective Period (F055)
+@router.put(
+    "/file/effective_period",
+    description="Modify Knowledge Base File Effective Period",
+    response_model=UnifiedResponseModel,
+)
+async def modify_file_effective_period(
+    *,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    req_data: ModifyFileEffectivePeriodReq,
+    knowledge_file_service=Depends(get_knowledge_file_service),
+):
+    """F055: set file-level effective period (null = unlimited)."""
+    if req_data.effective_date and req_data.expire_date and req_data.effective_date > req_data.expire_date:
+        raise HTTPException(status_code=400, detail="effective_date must be earlier than expire_date")
+
+    knowledge_file_model = await knowledge_file_service.modify_file_effective_period(login_user, req_data)
+
+    return resp_200(data=knowledge_file_model)
+
+
+# Knowledge Base Retrieval Hit Test (F055)
+@router.post(
+    "/{knowledge_id}/hit_test",
+    description="Test a question against the knowledge base's real retrieval pipeline",
+    response_model=UnifiedResponseModel,
+)
+async def hit_test(
+    *,
+    knowledge_id: int,
+    req_data: HitTestReq,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    knowledge_service=Depends(get_knowledge_service),
+):
+    """F055 (AC-14): preview the KB's actual recall for a test question.
+
+    Reuses the SAME builder the workflow document-KB path uses
+    (``retrieve_knowledge_documents``) — the preview cannot drift from
+    production retrieval. Read-only: requires existing knowledge read access
+    (AC-17). The effective-period exclusion stats describe exactly what the
+    retrieval filter dropped.
+    """
+    await knowledge_service._get_readable_knowledge(login_user, knowledge_id)
+
+    docs = await run_in_threadpool(
+        retrieve_knowledge_documents,
+        knowledge_ids=[knowledge_id],
+        query=req_data.question,
+        invoke_user_id=login_user.user_id,
+        user_name=login_user.user_name,
+        check_auth=False,
+        max_content=15000,
+        rrf_weights=[0.5, 0.5],
+        rerank=None,
+    )
+    expired, not_yet_effective = await run_in_threadpool(
+        KnowledgeFileDao.count_non_effective_files_by_knowledge_id, knowledge_id
+    )
+
+    hits = [
+        HitTestChunk(
+            document_id=int(one.metadata["document_id"]) if one.metadata.get("document_id") is not None else 0,
+            document_name=one.metadata.get("document_name"),
+            chunk=one.page_content,
+            chunk_index=one.metadata.get("chunk_index"),
+            score=float(one.metadata.get("rrf_score") or 0.0),
+            knowledge_id=knowledge_id,
+        )
+        for one in docs
+    ]
+    return resp_200(
+        data=HitTestResp(hits=hits, excluded=HitTestExcluded(expired=expired, not_yet_effective=not_yet_effective))
+    )

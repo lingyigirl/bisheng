@@ -23,12 +23,13 @@ class RRFRerank(BaseRerank):
             of high-ranked items and the consideration given to lower-ranked items.
             Default is 60.
     """
+
     retrievers: List[Any]
     weights: List[float] = None
     c: int = 60
     remove_zero_score: bool = False
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def set_weights(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         if not values.get("weights"):
@@ -37,10 +38,10 @@ class RRFRerank(BaseRerank):
         return values
 
     def compress_documents(
-            self,
-            documents: List[List[Document]],
-            query: str,
-            callbacks: Optional[Callbacks] = None,
+        self,
+        documents: List[List[Document]],
+        query: str,
+        callbacks: Optional[Callbacks] = None,
     ) -> Sequence[Document]:
         """
         Args:
@@ -51,7 +52,7 @@ class RRFRerank(BaseRerank):
         Returns:
             list: The final aggregated list of items sorted by their weighted RRF
                     scores in descending order. and remove duplicates document.
-                """
+        """
         if len(documents) != len(self.weights):
             raise ValueError("Number of rank lists must be equal to the number of weights.")
 
@@ -76,8 +77,15 @@ class RRFRerank(BaseRerank):
         # Map the sorted page_content back to the original document objects
         page_content_to_doc_map = {doc.page_content: doc for doc_list in documents for doc in doc_list}
         if self.remove_zero_score:
-            sorted_docs = [page_content_to_doc_map[page_content] for page_content in sorted_documents if
-                           rrf_score_dic[page_content] > 0]
+            sorted_docs = [
+                page_content_to_doc_map[page_content]
+                for page_content in sorted_documents
+                if rrf_score_dic[page_content] > 0
+            ]
         else:
             sorted_docs = [page_content_to_doc_map[page_content] for page_content in sorted_documents]
+        # F055: expose the fused score to downstream stages (KB weight re-sort,
+        # score threshold). Additive metadata — the order is already decided above.
+        for doc in sorted_docs:
+            doc.metadata["rrf_score"] = rrf_score_dic[doc.page_content]
         return sorted_docs

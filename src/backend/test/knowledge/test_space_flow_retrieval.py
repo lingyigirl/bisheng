@@ -103,6 +103,14 @@ def _mock_retrieval(
     )
 
 
+def _mock_effective_exclusions():
+    """F055 (T-08): stub the async effective-period DAO fetch (no DB in unit tests)."""
+    return patch(
+        "bisheng.knowledge.domain.models.knowledge_file.KnowledgeFileDao.aget_non_effective_file_ids_by_knowledge_ids",
+        AsyncMock(return_value=[]),
+    )
+
+
 async def test_space_filter_open_runtime_drops_unauthorized():
     """AC-12/AC-13: only files the (runtime) user has view_file on survive."""
     runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
@@ -130,6 +138,7 @@ async def test_space_filter_open_runtime_drops_unauthorized():
         ),
         rag_patch,
         tool_patch,
+        _mock_effective_exclusions(),
     ):
         result = await space_flow_retrieval.aretrieve_space_documents(
             space_ids=[5], query="q", identity_user=runtime, max_content=1000
@@ -165,6 +174,7 @@ async def test_space_filter_close_author_identity():
         ),
         rag_patch,
         tool_patch,
+        _mock_effective_exclusions(),
     ):
         result = await space_flow_retrieval.aretrieve_space_documents(
             space_ids=[5], query="q", identity_user=author, max_content=1000
@@ -172,6 +182,294 @@ async def test_space_filter_close_author_identity():
 
     assert len(result) == 1
     assert vis_cls.call_args.args[1] is author  # author drives the filter
+
+
+# --- F055 (T-08): tags / effective period / top_k / weight / priority ---
+
+
+def _mock_retrieval_capturing(vis_instance, docs):
+    """_mock_retrieval variant that captures ``as_retriever(search_kwargs=...)``."""
+    captured = []
+    vector = MagicMock()
+    vector.as_retriever = MagicMock(side_effect=lambda **kwargs: captured.append(kwargs) or MagicMock())
+    rag = MagicMock()
+    rag.init_knowledge_milvus_vectorstore = AsyncMock(return_value=vector)
+    rag.init_knowledge_es_vectorstore = AsyncMock(return_value=vector)
+    tool_instance = MagicMock()
+    tool_instance.ainvoke = AsyncMock(return_value=docs)
+    return (
+        patch("bisheng.knowledge.domain.knowledge_rag.KnowledgeRag", rag),
+        patch(
+            "bisheng.knowledge.domain.services.space_flow_retrieval.KnowledgeRetrieverTool",
+            MagicMock(return_value=tool_instance),
+        ),
+        captured,
+    )
+
+
+def _space(sid, weight=1.0, priority=0):
+    return SimpleNamespace(id=sid, weight=weight, priority=priority)
+
+
+async def test_one_space_injects_tag_and_effective_scopes():
+    """F055 (AC-03/AC-05): tag inclusion + effective exclusion land in both engines."""
+    runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
+    space = _space(5)
+
+    vis = MagicMock()
+    vis.build_index_prefilter = AsyncMock(
+        return_value=IndexFilter(strategy="in", milvus_expr="document_id in [1, 2, 3]", es_filter=[], accessible_size=3)
+    )
+    vis.post_filter_visible_files = AsyncMock(return_value={1})
+    vis._config = MagicMock(
+        return_value=SimpleNamespace(retrieval_initial_multiplier=1, retrieval_expansion_multiplier=2)
+    )
+    vis_cls = MagicMock(return_value=vis)
+
+    rag_patch, tool_patch, captured = _mock_retrieval_capturing(
+        vis, [Document(page_content="c", metadata={"document_id": 1})]
+    )
+    with (
+        patch(
+            "bisheng.knowledge.domain.services.knowledge_file_visibility_service.KnowledgeFileVisibilityService",
+            vis_cls,
+        ),
+        rag_patch,
+        tool_patch,
+    ):
+        docs = await space_flow_retrieval._aretrieve_one_space(
+            space=space,
+            query="q",
+            identity_user=runtime,
+            max_content=1000,
+            metadata_filter_fn=None,
+            rrf_weights=None,
+            rerank=None,
+            sort_by_source_and_index=True,
+            version_repo=None,
+            request=MagicMock(),
+            tag_file_ids=[1, 2],
+            excluded_file_ids={3},
+        )
+
+    assert len(docs) == 1
+    milvus_kwargs = captured[0]["search_kwargs"]
+    assert "document_id in [1, 2]" in milvus_kwargs["expr"]
+    assert "document_id not in [3]" in milvus_kwargs["expr"]
+    es_kwargs = captured[1]["search_kwargs"]
+    assert {"terms": {"metadata.document_id": [1, 2]}} in es_kwargs["filter"]
+    assert {"bool": {"must_not": {"terms": {"metadata.document_id": [3]}}}} in es_kwargs["filter"]
+
+
+async def test_one_space_top_k_overrides_k_and_ef():
+    """F055 (AC-12): node top_k replaces the fixed k=100 with linked ef."""
+    runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
+    space = _space(5)
+
+    vis = MagicMock()
+    vis.build_index_prefilter = AsyncMock(
+        return_value=IndexFilter(strategy="in", milvus_expr="document_id in [1]", es_filter=[], accessible_size=1)
+    )
+    vis.post_filter_visible_files = AsyncMock(return_value={1})
+    vis._config = MagicMock(
+        return_value=SimpleNamespace(retrieval_initial_multiplier=1, retrieval_expansion_multiplier=2)
+    )
+    vis_cls = MagicMock(return_value=vis)
+
+    rag_patch, tool_patch, captured = _mock_retrieval_capturing(
+        vis, [Document(page_content="c", metadata={"document_id": 1})]
+    )
+    with (
+        patch(
+            "bisheng.knowledge.domain.services.knowledge_file_visibility_service.KnowledgeFileVisibilityService",
+            vis_cls,
+        ),
+        rag_patch,
+        tool_patch,
+    ):
+        await space_flow_retrieval._aretrieve_one_space(
+            space=space,
+            query="q",
+            identity_user=runtime,
+            max_content=1000,
+            metadata_filter_fn=None,
+            rrf_weights=None,
+            rerank=None,
+            sort_by_source_and_index=True,
+            version_repo=None,
+            request=MagicMock(),
+            top_k=5,
+        )
+
+    milvus_kwargs = captured[0]["search_kwargs"]
+    assert milvus_kwargs["k"] == 5
+    assert milvus_kwargs["param"] == {"ef": 110}
+    es_kwargs = captured[1]["search_kwargs"]
+    assert es_kwargs["k"] == 5
+
+
+async def test_tag_resolution_per_space():
+    """F055 (AC-03): tags resolve per space via business_id; foreign tags ignored."""
+    spaces = [_space(1), _space(2)]
+    tags = [SimpleNamespace(id=11, business_id="1"), SimpleNamespace(id=12, business_id="999")]
+    links = [SimpleNamespace(resource_id="5"), SimpleNamespace(resource_id="7")]
+    with (
+        patch("bisheng.database.models.tag.TagDao.aget_tags_by_ids", AsyncMock(return_value=tags)),
+        patch("bisheng.database.models.tag.TagDao.aget_resources_by_tags", AsyncMock(return_value=links)),
+    ):
+        resolved = await space_flow_retrieval._aresolve_tag_file_ids_by_space(spaces, [11, 12])
+    assert resolved == {1: [5, 7]}
+
+
+async def test_tag_resolution_empty_tag_ids_no_db():
+    assert await space_flow_retrieval._aresolve_tag_file_ids_by_space([], []) == {}
+
+
+async def test_priority_two_round_high_first_then_fill():
+    """F055 (AC-10): high-priority spaces first; low group fills up to top_k."""
+    runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
+    high_space = _space(1, priority=1)
+    low_space = _space(2)
+
+    async def _fake_one_space(space, **kwargs):
+        if space.id == 1:
+            return [Document(page_content="h", metadata={"knowledge_id": 1})]
+        return [Document(page_content="l", metadata={"knowledge_id": 2})]
+
+    with (
+        patch(
+            "bisheng.knowledge.domain.models.knowledge.KnowledgeDao.aquery_by_id",
+            AsyncMock(side_effect=lambda sid: {1: high_space, 2: low_space}.get(sid)),
+        ),
+        patch(
+            "bisheng.knowledge.domain.services.space_flow_retrieval._aretrieve_one_space",
+            AsyncMock(side_effect=_fake_one_space),
+        ),
+        _mock_effective_exclusions(),
+    ):
+        docs = await space_flow_retrieval.aretrieve_space_documents(
+            space_ids=[1, 2], query="q", identity_user=runtime, max_content=1000, top_k=2
+        )
+
+    assert [d.page_content for d in docs] == ["h", "l"]
+
+
+async def test_priority_high_satisfies_top_k_skips_low():
+    """F055 (AC-10): the low group is not consulted when high already fills top_k."""
+    runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
+    high_space = _space(1, priority=1)
+    low_space = _space(2)
+
+    async def _fake_one_space(space, **kwargs):
+        if space.id == 1:
+            return [Document(page_content="h1", metadata={}), Document(page_content="h2", metadata={})]
+        raise AssertionError("low group must not be retrieved when high satisfies top_k")
+
+    with (
+        patch(
+            "bisheng.knowledge.domain.models.knowledge.KnowledgeDao.aquery_by_id",
+            AsyncMock(side_effect=lambda sid: {1: high_space, 2: low_space}.get(sid)),
+        ),
+        patch(
+            "bisheng.knowledge.domain.services.space_flow_retrieval._aretrieve_one_space",
+            AsyncMock(side_effect=_fake_one_space),
+        ),
+        _mock_effective_exclusions(),
+    ):
+        docs = await space_flow_retrieval.aretrieve_space_documents(
+            space_ids=[1, 2], query="q", identity_user=runtime, max_content=1000, top_k=2
+        )
+
+    assert [d.page_content for d in docs] == ["h1", "h2"]
+
+
+async def test_weight_resort_across_spaces():
+    """F055 (AC-09): final order = rrf_score * space weight (0.01*2 < 0.03*1)."""
+    runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
+    heavy = _space(1, weight=2.0)
+    light = _space(2, weight=1.0)
+
+    async def _fake_one_space(space, **kwargs):
+        if space.id == 1:
+            return [Document(page_content="a", metadata={"knowledge_id": 1, "rrf_score": 0.01})]
+        return [Document(page_content="b", metadata={"knowledge_id": 2, "rrf_score": 0.03})]
+
+    with (
+        patch(
+            "bisheng.knowledge.domain.models.knowledge.KnowledgeDao.aquery_by_id",
+            AsyncMock(side_effect=lambda sid: {1: heavy, 2: light}.get(sid)),
+        ),
+        patch(
+            "bisheng.knowledge.domain.services.space_flow_retrieval._aretrieve_one_space",
+            AsyncMock(side_effect=_fake_one_space),
+        ),
+        _mock_effective_exclusions(),
+    ):
+        docs = await space_flow_retrieval.aretrieve_space_documents(
+            space_ids=[1, 2], query="q", identity_user=runtime, max_content=1000
+        )
+
+    # concatenation order was [a, b]; weighted order is [b, a]
+    assert [d.page_content for d in docs] == ["b", "a"]
+
+
+async def test_weight_zero_space_skipped():
+    """F055 (spec §3): weight-0 spaces do not participate in recall at all."""
+    runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
+    muted = _space(1, weight=0.0)
+    active = _space(2)
+
+    async def _fake_one_space(space, **kwargs):
+        if space.id == 1:
+            raise AssertionError("weight-0 space must not be retrieved")
+        return [Document(page_content="b", metadata={"knowledge_id": 2})]
+
+    with (
+        patch(
+            "bisheng.knowledge.domain.models.knowledge.KnowledgeDao.aquery_by_id",
+            AsyncMock(side_effect=lambda sid: {1: muted, 2: active}.get(sid)),
+        ),
+        patch(
+            "bisheng.knowledge.domain.services.space_flow_retrieval._aretrieve_one_space",
+            AsyncMock(side_effect=_fake_one_space),
+        ),
+        _mock_effective_exclusions(),
+    ):
+        docs = await space_flow_retrieval.aretrieve_space_documents(
+            space_ids=[1, 2], query="q", identity_user=runtime, max_content=1000
+        )
+
+    assert [d.page_content for d in docs] == ["b"]
+
+
+async def test_threshold_and_top_k_single_pass():
+    """F055 (AC-12): threshold filters on rrf_score, then explicit top_k truncates."""
+    runtime = SimpleNamespace(user_id=7, is_admin=lambda: False)
+    space = _space(1)
+
+    async def _fake_one_space(space, **kwargs):
+        return [
+            Document(page_content="keep", metadata={"knowledge_id": 1, "rrf_score": 0.05}),
+            Document(page_content="low", metadata={"knowledge_id": 1, "rrf_score": 0.01}),
+            Document(page_content="extra", metadata={"knowledge_id": 1, "rrf_score": 0.04}),
+        ]
+
+    with (
+        patch(
+            "bisheng.knowledge.domain.models.knowledge.KnowledgeDao.aquery_by_id",
+            AsyncMock(return_value=space),
+        ),
+        patch(
+            "bisheng.knowledge.domain.services.space_flow_retrieval._aretrieve_one_space",
+            AsyncMock(side_effect=_fake_one_space),
+        ),
+        _mock_effective_exclusions(),
+    ):
+        docs = await space_flow_retrieval.aretrieve_space_documents(
+            space_ids=[1], query="q", identity_user=runtime, max_content=1000, top_k=1, score_threshold=0.02
+        )
+
+    assert [d.page_content for d in docs] == ["keep"]
 
 
 def test_build_space_knowledge_tool_defaults_rrf_weights_when_none():

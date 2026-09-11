@@ -22,9 +22,15 @@ from typing import Any
 from langchain_core.documents import Document
 from loguru import logger
 from pydantic import Field
+from sqlalchemy.exc import SQLAlchemyError
 
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.core.context.tenant import DEFAULT_TENANT_ID
+from bisheng.knowledge.rag.risk_compliance_filters import (
+    merge_priority_docs,
+    postprocess_risk_docs,
+    resolve_retriever_top_k,
+)
 from bisheng.tool.domain.langchain.knowledge import KnowledgeRagTool, KnowledgeRetrieverTool
 from bisheng.user.domain.models.user import UserDao
 
@@ -88,6 +94,9 @@ async def _aretrieve_one_space(
     sort_by_source_and_index: bool,
     version_repo: Any,
     request: Any,
+    tag_file_ids: list[int] | None = None,
+    excluded_file_ids: set[int] | None = None,
+    top_k: int | None = None,
 ) -> list[Document]:
     """Retrieve view_file-filtered docs from a single knowledge space.
 
@@ -96,6 +105,11 @@ async def _aretrieve_one_space(
     metadata filter (AC-08) and honors the node's advanced-retrieval knobs. The
     filter identity is ``identity_user`` (runtime user when the toggle is ON, config
     author when OFF).
+
+    F055 additions (all default off → legacy behaviour): ``tag_file_ids`` restricts
+    to tagged files, ``excluded_file_ids`` drops files outside their effective
+    window (union-safe across spaces — each collection only contains its own
+    files), ``top_k`` overrides the base k/ef (design decision 5).
     """
     from bisheng.knowledge.domain.knowledge_rag import KnowledgeRag
     from bisheng.knowledge.domain.services.knowledge_file_visibility_service import (
@@ -121,16 +135,30 @@ async def _aretrieve_one_space(
     if metadata_filter_fn is not None:
         extra_milvus_expr, extra_es_filter = metadata_filter_fn(space)
 
-    base_milvus = _and_milvus_expr(index_filter.milvus_expr, extra_milvus_expr)
-    base_es = _merge_es_clauses(index_filter.es_filter, extra_es_filter)
+    # F055 (AC-03/AC-05): tag inclusion + effective-period exclusion scopes,
+    # same clause shapes as the document-KB chain (combine_document_scope).
+    scope_milvus: list[str] = []
+    scope_es: list = []
+    if tag_file_ids:
+        sorted_tag_ids = sorted(tag_file_ids)
+        scope_milvus.append("document_id in [" + ", ".join(str(i) for i in sorted_tag_ids) + "]")
+        scope_es.append({"terms": {"metadata.document_id": sorted_tag_ids}})
+    if excluded_file_ids:
+        sorted_excluded = sorted(excluded_file_ids)
+        scope_milvus.append("document_id not in [" + ", ".join(str(i) for i in sorted_excluded) + "]")
+        scope_es.append({"bool": {"must_not": {"terms": {"metadata.document_id": sorted_excluded}}}})
+
+    base_milvus = _and_milvus_expr(index_filter.milvus_expr, extra_milvus_expr, *scope_milvus)
+    base_es = _merge_es_clauses(index_filter.es_filter, extra_es_filter, scope_es)
 
     conf = visibility._config()
     multipliers = (conf.retrieval_initial_multiplier, conf.retrieval_expansion_multiplier)
 
     survivors: list[Document] = []
     for attempt_idx, multiplier in enumerate(multipliers, start=1):
-        base_k = 100
-        milvus_kwargs: dict[str, Any] = {"k": base_k * multiplier, "param": {"ef": 110}}
+        k_kwargs = resolve_retriever_top_k(top_k)  # F055: k/ef linked (default k=100, ef=110)
+        base_k = k_kwargs["k"]
+        milvus_kwargs: dict[str, Any] = {"k": base_k * multiplier, "param": k_kwargs["param"]}
         if base_milvus:
             milvus_kwargs["expr"] = base_milvus
         es_kwargs: dict[str, Any] = {"k": base_k * multiplier}
@@ -171,6 +199,42 @@ async def _aretrieve_one_space(
     return survivors
 
 
+async def _aresolve_tag_file_ids_by_space(spaces: list, tag_ids: list[int]) -> dict[int, list[int]]:
+    """F055 (AC-03): node tag selection → per-space file id scopes.
+
+    Async twin of ``RagUtils._resolve_tag_file_ids_by_kb`` (sync document-KB
+    chain, T-07): tags are KB-scoped (business_id = the space id), so each tag
+    only constrains its own space — other selected spaces stay unrestricted
+    (design 坑 9). Space files link with ``ResourceTypeEnum.SPACE_FILE``. Tags
+    not belonging to any selected space are ignored.
+    """
+    if not tag_ids:
+        return {}
+    from bisheng.database.models.group_resource import ResourceTypeEnum
+    from bisheng.database.models.tag import TagDao
+
+    selected_space_ids = {space.id for space in spaces}
+    tag_ids_by_space: dict[int, list[int]] = {}
+    for tag in await TagDao.aget_tags_by_ids(tag_ids):
+        if tag.business_id is None:
+            continue
+        try:
+            space_id = int(tag.business_id)
+        except (TypeError, ValueError):
+            # Tags of other business types (e.g. APPLICATION with a UUID
+            # business_id) can reach here via hand-edited flow JSON — skip
+            # instead of crashing the whole retrieval.
+            continue
+        if space_id in selected_space_ids:
+            tag_ids_by_space.setdefault(space_id, []).append(tag.id)
+
+    file_ids_by_space: dict[int, list[int]] = {}
+    for space_id, space_tag_ids in tag_ids_by_space.items():
+        links = await TagDao.aget_resources_by_tags(space_tag_ids, ResourceTypeEnum.SPACE_FILE)
+        file_ids_by_space[space_id] = sorted({int(one.resource_id) for one in links})
+    return file_ids_by_space
+
+
 async def aretrieve_space_documents(
     *,
     space_ids: list[int | str],
@@ -184,6 +248,9 @@ async def aretrieve_space_documents(
     version_repo: Any = None,
     request: Any = None,
     access_scope: str = "per_user",
+    tag_ids: list[int] | None = None,
+    top_k: int | None = None,
+    score_threshold: float | None = None,
 ) -> list[Document]:
     """Retrieve view_file-filtered chunks across one or more knowledge spaces.
 
@@ -198,13 +265,20 @@ async def aretrieve_space_documents(
 
     ``identity_user is None`` (e.g. author could not be resolved) → empty result,
     treated as "no visible files".
+
+    F055 additions (all default off → legacy behaviour, AC-11/AC-13): ``tag_ids``
+    restricts each space to tagged files (per-space resolution, AC-03),
+    effective-period exclusions are injected by default (AC-05), ``top_k`` /
+    ``score_threshold`` bound recall size and quality (AC-12), and space
+    weight/priority drive the two-round recall + final re-sort (AC-09/AC-10).
     """
     if identity_user is None or not space_ids:
         return []
 
     from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
+    from bisheng.knowledge.domain.models.knowledge_file import KnowledgeFileDao
 
-    docs: list[Document] = []
+    spaces = []
     for raw_id in space_ids:
         try:
             space = await KnowledgeDao.aquery_by_id(int(raw_id))
@@ -212,20 +286,84 @@ async def aretrieve_space_documents(
             continue
         if not space:
             continue
-        docs.extend(
-            await _aretrieve_one_space(
-                space=space,
-                query=query,
-                identity_user=identity_user,
-                max_content=max_content,
-                metadata_filter_fn=metadata_filter_fn,
-                rrf_weights=rrf_weights,
-                rerank=rerank,
-                sort_by_source_and_index=sort_by_source_and_index,
-                version_repo=version_repo,
-                request=request,
-            )
+        spaces.append(space)
+    if not spaces:
+        return []
+
+    # F055 (AC-05): files outside their effective window join the exclusions —
+    # union across spaces is safe (each collection only contains its own files).
+    # Best-effort: an env without the F055 migration (unknown column) must not
+    # break existing space retrieval (same degradation as the document-KB chain).
+    excluded_file_ids: set[int] = set()
+    try:
+        excluded_file_ids.update(
+            await KnowledgeFileDao.aget_non_effective_file_ids_by_knowledge_ids([s.id for s in spaces])
         )
+    except SQLAlchemyError:
+        logger.opt(exception=True).warning("space effective-period filter skipped (DB error)")
+
+    tag_file_ids_by_space = await _aresolve_tag_file_ids_by_space(spaces, tag_ids or [])
+
+    # F055 (AC-09/AC-10): weight-0 spaces do not participate in recall (spec §3);
+    # priority=1 spaces form the high group consulted first (design decision 3).
+    weight_map = {
+        space.id: float(getattr(space, "weight", 1.0)) for space in spaces if getattr(space, "weight", 1.0) != 0
+    }
+    high_spaces = [s for s in spaces if getattr(s, "weight", 1.0) != 0 and getattr(s, "priority", 0) == 1]
+    low_spaces = [s for s in spaces if getattr(s, "weight", 1.0) != 0 and getattr(s, "priority", 0) != 1]
+
+    merge_k = resolve_retriever_top_k(top_k)["k"]
+
+    async def _retrieve_group(group_spaces) -> list[Document]:
+        group_docs: list[Document] = []
+        for space in group_spaces:
+            tag_scope = tag_file_ids_by_space.get(space.id)
+            if tag_scope is not None and not tag_scope:
+                # F055: tags selected for this space but no file carries them —
+                # skip (same convention as a metadata filter matching nothing).
+                continue
+            group_docs.extend(
+                await _aretrieve_one_space(
+                    space=space,
+                    query=query,
+                    identity_user=identity_user,
+                    max_content=max_content,
+                    metadata_filter_fn=metadata_filter_fn,
+                    rrf_weights=rrf_weights,
+                    rerank=rerank,
+                    sort_by_source_and_index=sort_by_source_and_index,
+                    version_repo=version_repo,
+                    request=request,
+                    tag_file_ids=tag_scope,
+                    excluded_file_ids=excluded_file_ids,
+                    top_k=top_k,
+                )
+            )
+        return group_docs
+
+    if high_spaces and low_spaces:
+        # F055 (AC-10): high-priority spaces are recalled first; the low group
+        # only fills the remaining slots up to top_k (design decision 3).
+        high_docs = await _retrieve_group(high_spaces)
+        if len(high_docs) >= merge_k:
+            docs = high_docs[:merge_k]
+        else:
+            docs = merge_priority_docs(high_docs, await _retrieve_group(low_spaces), merge_k)
+    else:
+        docs = await _retrieve_group(high_spaces or low_spaces)
+
+    # F055 (AC-09/AC-12): shared post-processing (weight re-sort only when a
+    # non-default weight is configured; threshold; final cut only when top_k is
+    # explicitly set — legacy space retrieval concatenates per-space results
+    # with no global truncation, AC-13). The priority merge already truncated
+    # to merge_k, so pass top_k=None in the two-round case.
+    docs = postprocess_risk_docs(
+        docs,
+        weight_map=weight_map,
+        score_threshold=score_threshold,
+        top_k=None if (high_spaces and low_spaces) else top_k,
+    )
+
     # Stamp the access gate so the citation registry (T008) persists it per source.
     for d in docs:
         if d.metadata is None:

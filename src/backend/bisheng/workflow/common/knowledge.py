@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from langchain_core.documents import Document
@@ -7,13 +7,26 @@ from pydantic import BaseModel, Field
 
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.common.constants.vectorstore_metadata import KNOWLEDGE_RAG_METADATA_SCHEMA
-from bisheng.core.vectorstore.multi_retriever import MultiRetriever
 from bisheng.knowledge.domain.knowledge_rag import KnowledgeRag
 from bisheng.knowledge.domain.models.knowledge import Knowledge, MetadataFieldType
 from bisheng.knowledge.domain.models.knowledge_file import KnowledgeFileDao
-from bisheng.knowledge.rag.version_filter import build_primary_only_filter
+
+# F055 (T-10): the document-KB retrieval builder lives in the knowledge domain so
+# the hit-test endpoint and workflow nodes share ONE function (design decision 7;
+# C1 — knowledge services must not depend on the workflow module).
+from bisheng.knowledge.domain.services.knowledge_flow_retrieval import (
+    invoke_knowledge_retriever_tool,
+    retrieve_knowledge_documents,
+)
+
+# F055: pure retrieval helpers live in knowledge/rag so the knowledge-space chain
+# (space_flow_retrieval) can import them without a knowledge→workflow dependency
+# (C1, design 坑 3).
+from bisheng.knowledge.rag.risk_compliance_filters import (
+    postprocess_risk_docs,
+    resolve_retriever_top_k,
+)
 from bisheng.llm.domain import LLMService
-from bisheng.tool.domain.langchain.knowledge import KnowledgeRetrieverTool
 from bisheng.workflow.common.condition import ComparisonType
 from bisheng.workflow.common.retrieval_question import normalize_retrieval_question
 from bisheng.workflow.nodes.base import BaseNode
@@ -28,6 +41,16 @@ class ConditionOne(BaseModel):
     right_value: str = Field(..., description="Right value")
 
     def convert_right_value(self, field_type: str, right_value: Any, is_preset: bool) -> Any:
+        # F055: dynamic "today" resolves to a concrete date for TIME fields —
+        # before the preset early-return, because preset values are used raw by
+        # the MySQL filter and a literal "today" would break the comparison.
+        if (
+            field_type == MetadataFieldType.TIME.value
+            and isinstance(right_value, str)
+            and right_value.strip().lower() == "today"
+        ):
+            right_value = datetime.combine(date.today(), datetime.min.time()).strftime("%Y-%m-%d")
+
         # no need to convert right value for is_empty and is_not_empty
         if self.comparison_operation in ["is_empty", "is_not_empty"] or is_preset:
             return right_value
@@ -203,10 +226,32 @@ class RagUtils(BaseNode):
             self._rerank_flag = False
             self._rerank_model_id = ""
 
+        # F055: risk-compliance retrieval knobs — unset = legacy behaviour (AC-11/AC-13).
+        # tags arrive as tag ids (ints) or {id: ...} dicts depending on the node
+        # param template; both are accepted here. Bad values (hand-edited flow
+        # JSON) degrade to "unset" instead of failing node init.
+        tag_params = self.node_params.get("tags") or []
+        self._tag_ids = []
+        for one in tag_params:
+            try:
+                self._tag_ids.append(int(one.get("id") if isinstance(one, dict) else one))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        top_k_raw = self.node_params.get("top_k")
+        try:
+            self._top_k = int(top_k_raw) if top_k_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            self._top_k = None
+        threshold_raw = self.node_params.get("score_threshold")
+        try:
+            self._score_threshold = float(threshold_raw) if threshold_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            self._score_threshold = None
+
         self._multi_milvus_retriever = None
         self._multi_es_retriever = None
         self._knowledge_vector_list = []
-        self._retriever_kwargs = {"k": 100, "param": {"ef": 110}}
+        self._retriever_kwargs = resolve_retriever_top_k(self._top_k)
         self._rerank_model = None
         self._knowledge_retriever_tool = None
 
@@ -225,18 +270,41 @@ class RagUtils(BaseNode):
         # F041: knowledge spaces go through the F029 view_file-filtered path.
         if self._knowledge_type == "space":
             return self._retrieve_space_question(question)
-        # 1: retrieve documents from multi retrievers
-        knowledge_retriever_tool = KnowledgeRetrieverTool(
-            vector_retriever=self._multi_milvus_retriever,
-            elastic_retriever=self._multi_es_retriever,
-            max_content=self._max_chunk_size,
-            rrf_weights=[self._vector_weight, self._keyword_weight],
-            rrf_remove_zero_score=True,
-            rerank=self._rerank_model,
-            sort_by_source_and_index=True,
-        )
-        finally_docs = knowledge_retriever_tool.invoke(input={"query": question})
-        all_file_id = set([one.metadata.get("document_id") for one in finally_docs])
+
+        if self._knowledge_type == "file":
+            # User-uploaded temp files: no KB weight/priority/tags/effective period.
+            finally_docs = invoke_knowledge_retriever_tool(
+                self._multi_milvus_retriever,
+                self._multi_es_retriever,
+                question,
+                max_content=self._max_chunk_size,
+                rrf_weights=[self._vector_weight, self._keyword_weight],
+                rerank=self._rerank_model,
+            )
+            finally_docs = postprocess_risk_docs(
+                finally_docs, weight_map={}, score_threshold=self._score_threshold, top_k=self._top_k
+            )
+        else:
+            # F055 (T-10): document-KB retrieval delegates to the shared builder —
+            # the same function the hit-test endpoint uses (design decision 7).
+            finally_docs = retrieve_knowledge_documents(
+                knowledge_ids=self._knowledge_value,
+                query=question,
+                invoke_user_id=self.user_id,
+                user_name=self.user_info.user_name,
+                check_auth=self._knowledge_auth,
+                max_content=self._max_chunk_size,
+                rrf_weights=[self._vector_weight, self._keyword_weight],
+                rerank=self._rerank_model,
+                metadata_filter_fn=lambda kb: self._metadata_filter.get_knowledge_filter(
+                    knowledge=kb, parent_node=self
+                ),
+                tag_ids=self._tag_ids,
+                top_k=self._top_k,
+                score_threshold=self._score_threshold,
+                knowledge_vector_list=self._knowledge_vector_list or None,
+            )
+        all_file_id = {one.metadata.get("document_id") for one in finally_docs}
         file_map = {}
         if finally_docs:
             if self._knowledge_type == "knowledge":
@@ -257,8 +325,7 @@ class RagUtils(BaseNode):
 
     def init_user_question(self) -> list[str]:
         return [
-            normalize_retrieval_question(self.get_other_node_variable(one))
-            for one in self.node_params["user_question"]
+            normalize_retrieval_question(self.get_other_node_variable(one)) for one in self.node_params["user_question"]
         ]
 
     def init_rerank_model(self):
@@ -320,6 +387,12 @@ class RagUtils(BaseNode):
                 rerank=self._rerank_model,
                 version_repo=version_repo,
                 access_scope="per_user" if self._knowledge_auth else "shared",
+                # F055 (design 坑 3): the space chain gets the same knobs as the
+                # document-KB chain — tags/top_k/threshold are applied inside
+                # aretrieve_space_documents; weight/priority there too.
+                tag_ids=self._tag_ids,
+                top_k=self._top_k,
+                score_threshold=self._score_threshold,
             )
 
     def _retrieve_space_question(self, question: str) -> list[Document]:
@@ -339,40 +412,11 @@ class RagUtils(BaseNode):
                 one.metadata["update_time"] = self.format_timestamp(one.metadata["update_time"])
         return finally_docs
 
-    def _fetch_non_primary_file_ids(self, knowledge_ids: list[int]) -> list[int]:
-        """Best-effort sync fetch of non-primary file ids for the given knowledges.
-
-        Runs on the shared worker bridge loop via ``run_async_safe`` — NOT
-        ``asyncio.run``. ``asyncio.run`` spins up a throwaway loop and closes it,
-        leaving the connection it opened in the process-global async DB pool bound
-        to a dead loop; a later query then hits "Event loop is closed" / "Future
-        attached to a different loop". The bridge keeps every async DB call on one
-        loop. Failures degrade gracefully — version filter excluded, retrieval still works.
-        """
-        if not knowledge_ids:
-            return []
-        from bisheng.core.database import get_async_db_session
-        from bisheng.knowledge.domain.repositories.implementations.knowledge_document_version_repository_impl import (
-            KnowledgeDocumentVersionRepositoryImpl,
-        )
-        from bisheng.utils.async_utils import run_async_safe
-
-        async def _fetch():
-            async with get_async_db_session() as session:
-                repo = KnowledgeDocumentVersionRepositoryImpl(session)
-                return await repo.find_non_primary_file_ids_by_knowledge_ids(knowledge_ids)
-
-        try:
-            return run_async_safe(_fetch())
-        except RuntimeError:
-            logger.opt(exception=True).warning("version filter skipped: running inside an event loop")
-            return []
-        except Exception:
-            logger.opt(exception=True).warning("version filter fetch failed")
-            return []
-
     def init_knowledge_retriever(self):
-        """retriever from knowledge base"""
+        """F055 (T-10): document-KB retrieval is delegated to the shared builder
+        (knowledge_flow_retrieval.retrieve_knowledge_documents); this only caches
+        the vectorstore list across questions so the embedding/model lookups are
+        not repeated per question."""
         if not self._knowledge_vector_list:
             self._knowledge_vector_list = KnowledgeRag.get_multi_knowledge_vectorstore_sync(
                 invoke_user_id=self.user_id,
@@ -381,66 +425,6 @@ class RagUtils(BaseNode):
                 check_auth=self._knowledge_auth,
                 include_es=self._keyword_weight > 0,
                 include_milvus=self._vector_weight > 0,
-            )
-        all_milvus = []
-        all_milvus_filter = []
-        all_es = []
-        all_es_filter = []
-        self._multi_milvus_retriever = None
-        self._multi_es_retriever = None
-
-        # Bulk-fetch non-primary file ids once for all knowledges in the retriever.
-        # Applying the union to every knowledge's filter is correct — each collection
-        # only contains its own files, so cross-knowledge ids are no-ops.
-        knowledge_ids = list(self._knowledge_vector_list.keys())
-        excluded_file_ids = self._fetch_non_primary_file_ids(knowledge_ids)
-
-        for knowledge_id, knowledge_info in self._knowledge_vector_list.items():
-            knowledge = knowledge_info.get("knowledge")
-            milvus_vector = knowledge_info.get("milvus")
-            es_vector = knowledge_info.get("es")
-            milvus_filter_str, es_filter = self._metadata_filter.get_knowledge_filter(
-                knowledge=knowledge, parent_node=self
-            )
-            if milvus_filter_str is None and es_filter is None:
-                continue
-
-            # Combine metadata filter with primary-only version filter.
-            # build_primary_only_filter expects:
-            #   base_milvus_expr: str | None
-            #   base_es_filter: List[dict] | None  (the list under the "filter" key)
-            base_es_list = es_filter.get("filter") if es_filter else None
-            combined_milvus_expr, combined_es_list = build_primary_only_filter(
-                excluded_file_ids,
-                base_milvus_expr=milvus_filter_str or None,
-                base_es_filter=base_es_list,
-            )
-
-            if milvus_vector:
-                all_milvus.append(milvus_vector)
-                milvus_extra = {"expr": combined_milvus_expr} if combined_milvus_expr else {}
-                logger.debug(f"retrieve milvus filter: {milvus_extra}")
-                all_milvus_filter.append(milvus_extra | self._retriever_kwargs)
-            if es_vector:
-                all_es.append(es_vector)
-                # Reconstruct the ES search_kwargs dict: preserve any base keys from
-                # es_filter (e.g. "filter") and override "filter" with combined list.
-                combined_es_filter = dict(es_filter) if es_filter else {}
-                if combined_es_list:
-                    combined_es_filter["filter"] = combined_es_list
-                elif "filter" in combined_es_filter:
-                    # No exclusions, no base filter list — remove empty entry.
-                    del combined_es_filter["filter"]
-                logger.debug(f"retrieve es filter: {combined_es_filter}")
-                all_es_filter.append(combined_es_filter | self._retriever_kwargs)
-
-        if all_milvus:
-            self._multi_milvus_retriever = MultiRetriever(
-                vectors=all_milvus, search_kwargs=all_milvus_filter, finally_k=self._retriever_kwargs["k"]
-            )
-        if all_es:
-            self._multi_es_retriever = MultiRetriever(
-                vectors=all_es, search_kwargs=all_es_filter, finally_k=self._retriever_kwargs["k"]
             )
 
     def init_file_retriever(self):
