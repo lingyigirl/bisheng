@@ -154,7 +154,9 @@ class LLMNode(BaseNode):
                 if not content:
                     # DeepSeek occasionally ignores `thinking: disabled` and returns
                     # only reasoning_content with empty content (the reasoning is CoT,
-                    # not the answer). Retry for a normal completion, then fall back.
+                    # not the answer). Retry for a normal completion, then fail loudly —
+                    # feeding raw CoT as the node output poisons downstream parsing
+                    # (strict-JSON extraction nodes receive non-JSON prose).
                     if attempt < 2:
                         logger.warning(
                             "workflow llm node {} invoke returned empty content (attempt {}/3), retrying in 3s",
@@ -164,12 +166,13 @@ class LLMNode(BaseNode):
                         time.sleep(3)
                         continue
                     if llm_callback.reasoning_content:
-                        logger.warning(
-                            "workflow llm node {} invoke returned empty content, using reasoning_content (len={})",
-                            self.id,
-                            len(llm_callback.reasoning_content),
+                        raise Exception(
+                            "模型多次调用仅返回思考过程、未产出正文（思考 {} 字符），请稍后重试 / "
+                            "model returned reasoning only with no content ({} chars of CoT), please retry".format(
+                                len(llm_callback.reasoning_content),
+                                len(llm_callback.reasoning_content),
+                            )
                         )
-                        content = llm_callback.reasoning_content
                 return content, llm_callback.reasoning_content
             except APITimeoutError:
                 if attempt == 2:
