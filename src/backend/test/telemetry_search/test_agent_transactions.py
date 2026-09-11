@@ -44,7 +44,12 @@ def test_build_list_query_filters():
     assert any(m.get("term") == {"application_process_app_id": "flow-1"} for m in must)
     assert any(m.get("term") == {"application_process_app_type": "workflow"} for m in must)
     # keyword searches the prefixed input_snapshot text field (design 坑 1)
-    assert any(m.get("match", {}).get("event_data.application_process_input_snapshot") == "流水" for m in must)
+    # AND the transaction serial number (trace_id)
+    kw = [m["bool"] for m in must if "bool" in m]
+    assert kw, "keyword should clause missing"
+    should = kw[0]["should"]
+    assert {"match": {"event_data.application_process_input_snapshot": "流水"}} in should
+    assert {"term": {"trace_id": "流水"}} in should
 
 
 def test_map_transaction_hit():

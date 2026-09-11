@@ -47,8 +47,17 @@ def _build_list_query(query: AgentTransactionQuery, tenant_id: int) -> dict:
     if query.app_type:
         must.append({"term": {f"{_AGENT_EVENT}_app_type": query.app_type}})
     if query.keyword:
-        # event_data keys are prefixed (design 坑 1); match the text field
-        must.append({"match": {f"event_data.{_AGENT_EVENT}_input_snapshot": query.keyword}})
+        # event_data keys are prefixed (design 坑 1); match the text field,
+        # and also let users locate a transaction by its serial number (trace_id)
+        must.append({
+            "bool": {
+                "should": [
+                    {"match": {f"event_data.{_AGENT_EVENT}_input_snapshot": query.keyword}},
+                    {"term": {"trace_id": query.keyword}},
+                ],
+                "minimum_should_match": 1,
+            }
+        })
 
     return {"query": {"bool": {"must": must}}}
 

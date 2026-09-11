@@ -181,6 +181,9 @@ export function AgentMonitor() {
                             <TableRow key={record.trace_id} className="cursor-pointer" onClick={() => setCurrent(record)}>
                                 <TableCell>
                                     <div className="max-w-[400px] break-all">{record.input_snapshot || "-"}</div>
+                                    <div className="mt-1 max-w-[400px] break-all text-xs text-muted-foreground">
+                                        {t("log.monitorTraceId")}: {record.trace_id || "-"}
+                                    </div>
                                 </TableCell>
                                 <TableCell>{record.app_name}</TableCell>
                                 <TableCell>{record.app_type}</TableCell>
