@@ -108,6 +108,13 @@ export default defineConfig(({ command, mode }) => {
   fileServiceRoutes.forEach(route => {
     proxyTargets[`${app_env.BASE_URL}${route}`] = fileServiceProxyConfig;
   });
+  // 同源化（2026-09-07）：工作台 client SPA 经平台单一入口反代 —— 外网只需映射
+  // 3001 一个端口；登录跳转跟随浏览器当前 origin（VITE_WORKSPACE_ORIGIN 置空，
+  // getWorkspaceClientUrl 回落同源相对路径），外网 IP/域名变化零改动。client
+  // preview 与平台同为 https（VITE_DEV_HTTPS），故目标用 https（commonProxyOptions
+  // 已含 secure:false）；rewrite=false 路径原样转发（client preview 自带
+  // /workspace/api、/workspace/bisheng 等规则）。
+  proxyTargets['/workspace'] = createProxyConfig('https://127.0.0.1:4001', false);
 
   return {
     base: app_env.BASE_URL || '/',

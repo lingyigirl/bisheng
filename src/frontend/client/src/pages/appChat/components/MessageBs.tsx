@@ -12,7 +12,7 @@ import {
 import { LoadingIcon } from "~/components/ui/icon/Loading";
 import { useMessageSelection } from "~/hooks/useMessageSelection";
 import { cn, copyText, formatStrTime } from "~/utils";
-import ChatFile from "./ChatFile";
+import { ChatFile } from "./ChatFile";
 import MessageButtons from "./MessageButtons";
 import useLocalize from "~/hooks/useLocalize";
 

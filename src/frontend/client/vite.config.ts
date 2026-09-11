@@ -138,6 +138,11 @@ export default defineConfig(({ command, mode }) => {
   // SignatureDoesNotMatch (e.g. set http://localhost:9000 when sharepoint=localhost:9000).
   const minioTarget = env.VITE_DEV_MINIO_TARGET || 'http://192.168.106.105:3001/';
   const apiTarget = env.VITE_DEV_API_TARGET || 'http://192.168.106.105:3001/';
+  // 同源化（2026-09-07）：直连 client preview（:4001）时，管理端链接（/admin、
+  // /login）反代回平台 preview；经平台单一入口（:3001）访问时这些请求由平台
+  // 自身处理，不会到这里。平台 preview 同为 https（VITE_DEV_HTTPS），故用
+  // https 目标 + secure:false。
+  const platformPreviewTarget = env.VITE_PLATFORM_PREVIEW_TARGET || 'https://127.0.0.1:3001';
 
   // Login redirect target: in local dev the workbench (:4001) and admin
   // panel (:3001) are different origins, so the relative BISHENG_HOST path
@@ -196,6 +201,21 @@ export default defineConfig(({ command, mode }) => {
           // rewrite: (path) => {
           //   return path.replace(/^\/workspace/, '');
           // },
+        },
+        // 同源化回链（2026-09-07）：管理端入口反代回平台 preview（见
+        // platformPreviewTarget 注释）；无 rewrite —— 平台 SPA 路由 /admin、
+        // /login 原样受理。
+        '/admin': {
+          target: platformPreviewTarget,
+          changeOrigin: true,
+          secure: false,
+          ws: true,
+        },
+        '/login': {
+          target: platformPreviewTarget,
+          changeOrigin: true,
+          secure: false,
+          ws: true,
         },
       },
     },

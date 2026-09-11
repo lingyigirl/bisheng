@@ -1,7 +1,7 @@
 import { MessageImage } from "~/components/Chat/Messages/Content/MessageImage"
 import { isImageFileName } from "~/components/ui/icon/File/FileIcon"
 import { formatStrTime } from "~/utils"
-import ChatFile from "./ChatFile"
+import { ChatFile } from "./ChatFile"
 
 export default function MessageFile({ data, title, logo }) {
     const files = data.files || []
