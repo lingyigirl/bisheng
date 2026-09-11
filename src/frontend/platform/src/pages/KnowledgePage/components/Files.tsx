@@ -19,7 +19,7 @@ import Tip from "@/components/bs-ui/tooltip/tip";
 import { useToast } from "@/components/bs-ui/toast/use-toast";
 import { downloadFile, truncateString } from "@/util/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@radix-ui/react-dropdown-menu";
-import { CircleAlertIcon, ClipboardPenLine, Filter, RotateCw, Trash2, Download, Tag as TagIcon } from "lucide-react";
+import { CircleAlertIcon, ClipboardPenLine, Filter, RotateCw, Trash2, Download, Tag as TagIcon, SearchCheck } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SearchInput } from "../../../components/bs-ui/input";
@@ -33,6 +33,8 @@ import AddKnowledgeFileMenu from "./AddKnowledgeFileMenu";
 import WebLinkImportDialog from "./WebLinkImportDialog";
 import FileTagList from "./tags/FileTagList";
 import KnowledgeTagSelect from "./tags/KnowledgeTagSelect";
+import { TagCenterDialog } from "./tags/TagCenterDialog";
+import { HitTestDialog } from "./HitTestDialog";
 import { resolveKnowledgeParseFailure } from "../knowledgeParseFailureMessage";
 import { knowledgeUploadCapabilities } from "../knowledgeUploadCapabilities";
 
@@ -55,6 +57,14 @@ function normalizeWebLinkDisplayName(fileName: string): string {
     const trimmed = fileName.trim().replace(/\.md$/i, "").trim();
     if (!trimmed) return fileName;
     return trimmed.toLowerCase().endsWith(".html") ? trimmed : `${trimmed}.html`;
+}
+
+// F055 (AC-07): effective-period status of a file row — expired wins over
+// not-yet-effective; files without dates are always effective (AC-06).
+function getEffectiveStatus(file: Record<string, unknown>): 'expired' | 'not_yet_effective' | null {
+    if (file.expire_date && new Date(String(file.expire_date)).getTime() < Date.now()) return 'expired';
+    if (file.effective_date && new Date(String(file.effective_date)).getTime() > Date.now()) return 'not_yet_effective';
+    return null;
 }
 
 function getKnowledgeFileDisplayName(file: Record<string, any>): string {
@@ -528,6 +538,27 @@ export default function Files({ onPreview, canEditKb = false, canDeleteKb = fals
                         </Button>
                     )}
                     {canEditKb && (
+                        <TagCenterDialog knowledgeId={id} onChanged={reload}>
+                            <Button
+                                variant="outline"
+                                className="px-2 md:px-4 whitespace-nowrap h-9"
+                            >
+                                <TagIcon size={16} strokeWidth={1.5} className="mr-0 md:mr-1" />
+                                <span className="hidden md:inline">{t('tagCenter')}</span>
+                            </Button>
+                        </TagCenterDialog>
+                    )}
+                    {/* F055 (AC-14): hit test — read-only, same retrieval as workflow */}
+                    <HitTestDialog knowledgeId={id}>
+                        <Button
+                            variant="outline"
+                            className="px-2 md:px-4 whitespace-nowrap h-9"
+                        >
+                            <SearchCheck size={16} strokeWidth={1.5} className="mr-0 md:mr-1" />
+                            <span className="hidden md:inline">{t('hitTest')}</span>
+                        </Button>
+                    </HitTestDialog>
+                    {canEditKb && (
                         <AddKnowledgeFileMenu
                             buttonClassName="px-4 md:px-8"
                             supportedFormatsLabel={t(
@@ -723,6 +754,16 @@ export default function Files({ onPreview, canEditKb = false, canDeleteKb = fals
                                                 className="size-[30px] min-w-[30px]"
                                             />
                                             {truncateString(el.display_file_name || el.file_name, 35)}
+                                            {getEffectiveStatus(el) === 'expired' && (
+                                                <span className="shrink-0 rounded-[4px] bg-[#ffece8] px-1.5 py-0.5 text-[11px] leading-4 text-[#f53f3f]">
+                                                    {t('expiredBadge')}
+                                                </span>
+                                            )}
+                                            {getEffectiveStatus(el) === 'not_yet_effective' && (
+                                                <span className="shrink-0 rounded-[4px] bg-[#e8f3ff] px-1.5 py-0.5 text-[11px] leading-4 text-[#004DA4]">
+                                                    {t('notYetEffectiveBadge')}
+                                                </span>
+                                            )}
                                         </div>
                                     </Tip>
                                 </TableCell>

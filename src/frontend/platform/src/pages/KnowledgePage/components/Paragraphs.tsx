@@ -7,7 +7,7 @@ import { SearchInput } from '@/components/bs-ui/input';
 import AutoPagination from '@/components/bs-ui/pagination/autoPagination';
 import { toast } from "@/components/bs-ui/toast/use-toast";
 import ShadTooltip from "@/components/ShadTooltipComponent";
-import { addMetadata, delChunkApi, getFileBboxApi, getFilePathApi, getKnowledgeChunkApi, getKnowledgeDetailApi, getMetaFile, readFileByLibDatabase, saveUserMetadataApi, updateChunkApi } from '@/controllers/API';
+import { addMetadata, delChunkApi, getFileBboxApi, getFilePathApi, getKnowledgeChunkApi, getKnowledgeDetailApi, getMetaFile, readFileByLibDatabase, saveUserMetadataApi, updateChunkApi, updateFileEffectivePeriodApi } from '@/controllers/API';
 import { captureAndAlertRequestErrorHoc } from '@/controllers/request';
 import { useTable } from '@/util/hook';
 import { ArrowLeft, ClipboardPenLine, FileText } from 'lucide-react';
@@ -811,6 +811,25 @@ export default function Paragraphs({ fileId, onBack, canEditKb = false, canDelet
         }
     }, [canEditKb, mainMetadataList, selectedFileId, t]);
 
+    // F055 (AC-05/AC-08): save the file effective period (null = unlimited);
+    // takes effect at retrieval immediately without re-parsing.
+    const handleSaveEffectivePeriod = useCallback(async (effectiveDate: string | null, expireDate: string | null) => {
+        if (!canEditKb || !selectedFileId) return;
+        const result = await captureAndAlertRequestErrorHoc(
+            updateFileEffectivePeriodApi({
+                knowledge_id: Number(id),
+                file_id: Number(selectedFileId),
+                effective_date: effectiveDate,
+                expire_date: expireDate,
+            })
+        );
+        if (result === false || result === 'canceled') return;
+        toast({
+            title: t('common.success'),
+            description: t('effectivePeriodSaved'),
+        });
+    }, [canEditKb, id, selectedFileId, t]);
+
     return (
         <div className="relative flex flex-col h-[calc(100vh-64px-var(--license-banner-h,0px))]">
             {load && <div className="absolute w-full h-full top-0 left-0 flex justify-center items-center z-10 bg-[rgba(255,255,255,1)] dark:bg-blur-shared">
@@ -947,6 +966,7 @@ export default function Paragraphs({ fileId, onBack, canEditKb = false, canDelet
                 handleSearchMetadataClick={handleSearchMetadataClick}
                 handleDeleteMainMetadata={handleDeleteMainMetadata}
                 handleMainMetadataValueChange={handleMainMetadataValueChange}
+                handleSaveEffectivePeriod={handleSaveEffectivePeriod}
                 mainMetadataDialogRef={mainMetadataDialogRef}
             />
 

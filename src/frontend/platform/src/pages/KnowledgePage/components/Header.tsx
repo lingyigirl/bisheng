@@ -1,6 +1,6 @@
 import { Dialog, DialogTrigger } from "@/components/bs-ui/dialog";
 import { useToast } from "@/components/bs-ui/toast/use-toast";
-import { updateKnowledgeApi } from "@/controllers/API";
+import { getKnowledgeDetailApi, updateKnowledgeApi } from "@/controllers/API";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { ArrowLeft, SquarePen } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -20,6 +20,8 @@ interface HeaderProps {
 
 export default function Header({ fileTitle, onBack, showBackButton = true }: HeaderProps) {
     const [libInfo, setLibInfo] = useState({ name: '', desc: '' })
+    // F055 (AC-09/AC-10): KB weight/priority loaded when the edit dialog opens.
+    const [kbSettings, setKbSettings] = useState<{ weight: number; priority: number }>({ weight: 1, priority: 0 })
     const [open, setOpen] = useState(false)
     const { id } = useParams()
     const { t } = useTranslation()
@@ -35,6 +37,22 @@ export default function Header({ fileTitle, onBack, showBackButton = true }: Hea
         }
         setLibInfo({ name: libname || localStorage.getItem('libname'), desc: libdesc || localStorage.getItem('libdesc') })
     }, [])
+
+    useEffect(() => {
+        if (!open || !id) return;
+        const fetchKbSettings = async () => {
+            const knowledgeDetails = await captureAndAlertRequestErrorHoc(getKnowledgeDetailApi([id]));
+            if (!knowledgeDetails || knowledgeDetails === 'canceled') return;
+            const detail = (knowledgeDetails as Record<string, unknown>[])[0];
+            if (detail) {
+                setKbSettings({
+                    weight: typeof detail.weight === 'number' ? detail.weight : 1,
+                    priority: detail.priority === 1 ? 1 : 0,
+                });
+            }
+        };
+        void fetchKbSettings();
+    }, [open, id]);
 
     // 默认的回退逻辑
     const handleBackDefault = () => {
@@ -55,11 +73,15 @@ export default function Header({ fileTitle, onBack, showBackButton = true }: Hea
         captureAndAlertRequestErrorHoc(updateKnowledgeApi({
             knowledge_id: Number(id),
             name: form.name,
-            description: form.desc
+            description: form.desc,
+            // F055: weight 0 = excluded from multi-KB recall; priority 1 = high group
+            weight: Number(form.weight),
+            priority: Number(form.priority),
         })).then((res) => {
             if (!res) return
             // api
             setLibInfo(form)
+            setKbSettings({ weight: Number(form.weight), priority: Number(form.priority) })
             setOpen(false)
             message({ variant: 'success', description: t('saved') })
             localStorage.setItem('libname', form.name)
@@ -90,11 +112,10 @@ export default function Header({ fileTitle, onBack, showBackButton = true }: Hea
                             {libInfo.name}
                         </span>
                     )}
-                    <div className="h-10"></div>
-                    {/* edit dialog */}
-                    {/* {isEditable ? <Dialog open={open} onOpenChange={setOpen}>
+                    {/* KB settings — name/desc + F055 weight/priority */}
+                    {isEditable ? <Dialog open={open} onOpenChange={setOpen}>
                         <DialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="group-hover:visible invisible disabled:pointer-events-auto">
+                            <Button variant="ghost" size="icon" className="ml-2 group-hover:visible invisible disabled:pointer-events-auto">
                                 <SquarePen className="w-4 h-4" />
                             </Button>
                         </DialogTrigger>
@@ -102,10 +123,12 @@ export default function Header({ fileTitle, onBack, showBackButton = true }: Hea
                             open && <KnowledgeBaseSettingsDialog
                                 initialName={libInfo.name}
                                 initialDesc={libInfo.desc}
+                                initialWeight={kbSettings.weight}
+                                initialPriority={kbSettings.priority}
                                 onSave={handleSave}
                             />
                         }
-                    </Dialog> : <div className="h-10"></div>} */}
+                    </Dialog> : null}
                 </div>
             </div>
         </div>

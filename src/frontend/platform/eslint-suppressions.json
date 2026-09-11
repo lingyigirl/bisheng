@@ -2853,7 +2853,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 11
+      "count": 3
     }
   },
   "src/pages/KnowledgePage/components/ImportQa.tsx": {
@@ -2886,7 +2886,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 6
+      "count": 2
     }
   },
   "src/pages/KnowledgePage/components/MetadataManagementDialog.tsx": {
@@ -3038,9 +3038,6 @@
     }
   },
   "src/pages/KnowledgePage/components/tags/KnowledgeTagSelect.tsx": {
-    "no-restricted-syntax": {
-      "count": 6
-    },
     "react-hooks/exhaustive-deps": {
       "count": 1
     }

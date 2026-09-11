@@ -1,4 +1,3 @@
-// @ts-strict-ignore
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/bs-ui/dialog";
 import { useToast } from "@/components/bs-ui/toast/use-toast";
 import {
@@ -48,13 +47,21 @@ export default function KnowledgeTagSelect({
 
     const isBatch = mode === 'batch' || (mode === 'auto' && fileIds.length > 1);
     const numericKnowledgeId = Number(knowledgeId);
+    // Stable key of the tag-id set — the sync effect must not depend on the
+    // array identity: an unstable initialTags reference (e.g. the `[]` default,
+    // or Files.tsx re-creating rows while parsing) made the effect re-fire
+    // every render and setSelectedTagIds a new array → infinite render loop.
+    const initialTagsKey = useMemo(
+        () => initialTags.map(tag => tag.id).join(','),
+        [initialTags]
+    );
 
     const syncSelectedTags = () => {
         if (isBatch) {
             setSelectedTagIds([]);
             return;
         }
-        setSelectedTagIds(initialTags.map(tag => tag.id));
+        setSelectedTagIds(initialTagsKey ? initialTagsKey.split(',').map(Number) : []);
     };
 
     const fetchTags = async () => {
@@ -82,8 +89,8 @@ export default function KnowledgeTagSelect({
 
     useEffect(() => {
         if (!open || isBatch) return;
-        setSelectedTagIds(initialTags.map(tag => tag.id));
-    }, [initialTags, isBatch, open]);
+        setSelectedTagIds(initialTagsKey ? initialTagsKey.split(',').map(Number) : []);
+    }, [initialTagsKey, isBatch, open]);
 
     useEffect(() => {
         document.body.dataset.knowledgeTagDialogOpen = open ? 'true' : 'false';
@@ -139,11 +146,10 @@ export default function KnowledgeTagSelect({
             return;
         }
 
-        // captureAndAlertRequestErrorHoc passes the full response body through;
-        // the created tag lives under `data` (using the body itself leaves id
-        // undefined, so saving then sends an invalid tag_id and the backend
-        // rejects the whole set — tags never show up on the file).
-        const newTag = (result as { data: KnowledgeTagItem }).data;
+        // The request interceptor already unwraps the UnifiedResponseModel
+        // envelope, so `result` IS the created tag (double-unwrapping here
+        // yields undefined and crashes on `newTag.id`).
+        const newTag = result as KnowledgeTagItem;
         setTags(prev => [newTag, ...prev.filter(tag => tag.id !== newTag.id)]);
         setSelectedTagIds((prev) => (prev.includes(newTag.id) ? prev : [...prev, newTag.id]));
         setInputValue("");
@@ -202,7 +208,7 @@ export default function KnowledgeTagSelect({
             >
                 <DialogHeader className="px-6 py-4">
                     <DialogTitle className="text-[16px] font-medium leading-6 text-[#212121]">
-                        编辑标签
+                        {t('editTag')}
                     </DialogTitle>
                 </DialogHeader>
                 <div className="flex flex-col gap-4 px-6 pb-3">
@@ -244,7 +250,7 @@ export default function KnowledgeTagSelect({
                                     void handleCreateTag(inputValue.trim());
                                 }
                             }}
-                            placeholder={selectedTags.length === 0 && !inputValue ? "请输入要添加的标签，回车保存" : ""}
+                            placeholder={selectedTags.length === 0 && !inputValue ? t('createTagPlaceholder') : ""}
                             className="min-h-[22px] min-w-[120px] flex-1 bg-transparent text-sm leading-[22px] text-[#212121] outline-none placeholder-[#86909c]"
                         />
                         <span className="absolute right-3 top-0 flex h-full items-center text-[14px] leading-[22px] text-[#999]">
@@ -253,10 +259,10 @@ export default function KnowledgeTagSelect({
                     </div>
 
                     <div className="flex flex-col gap-2 pt-1">
-                        <div className="text-[14px] font-medium leading-5 text-[#212121]">已有标签</div>
+                        <div className="text-[14px] font-medium leading-5 text-[#212121]">{t('existingTags')}</div>
                         <div className="flex flex-wrap gap-1">
                             {tags.length === 0 && (
-                                <span className="text-[12px] text-[#86909c]">暂无标签</span>
+                                <span className="text-[12px] text-[#86909c]">{t('noTags')}</span>
                             )}
                             {tags.map((tag) => {
                                 const isSelected = selectedTagIds.includes(tag.id);
@@ -295,7 +301,7 @@ export default function KnowledgeTagSelect({
                         className="h-8 rounded-[6px] border border-[#d9d9d9] bg-white px-4 text-[14px] font-normal text-[#1d2129] transition-colors hover:bg-[#f7f8fa]"
                         onClick={() => handleOpenChange(false)}
                     >
-                        取消
+                        {t('cancel')}
                     </button>
                     <button
                         type="button"
@@ -303,7 +309,7 @@ export default function KnowledgeTagSelect({
                         onClick={() => void handleSave()}
                         disabled={loading || !isEditable}
                     >
-                        确认
+                        {t('confirm')}
                     </button>
                 </div>
             </DialogContent>

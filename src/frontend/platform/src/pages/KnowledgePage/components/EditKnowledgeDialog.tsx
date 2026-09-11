@@ -2,17 +2,25 @@
 import { Button } from "@/components/bs-ui/button";
 import { DialogClose, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/bs-ui/dialog";
 import { Input, Textarea } from "@/components/bs-ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/bs-ui/select";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+
+const WEIGHT_MIN = 0;
+const WEIGHT_MAX = 10;
 
 export default function KnowledgeBaseSettingsDialog({
     initialName,
     initialDesc,
+    initialWeight,
+    initialPriority,
     onSave,
 }: {
     initialName: string;
     initialDesc: string;
-    onSave: (data: { name: string; desc: string }) => void;
+    initialWeight?: number;
+    initialPriority?: number;
+    onSave: (data: { name: string; desc: string; weight: number; priority: number }) => void;
 }) {
     const { t } = useTranslation('knowledge');
 
@@ -20,6 +28,8 @@ export default function KnowledgeBaseSettingsDialog({
     const [formData, setFormData] = useState({
         name: '',
         desc: '',
+        weight: 1,
+        priority: 0,
     });
     const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -27,13 +37,25 @@ export default function KnowledgeBaseSettingsDialog({
         setFormData({
             name: initialName,
             desc: initialDesc,
+            // F055 (AC-09/AC-10): KB weight/priority — weight 0 excludes the KB
+            // from multi-KB recall, priority 1 is consulted first.
+            weight: typeof initialWeight === 'number' ? initialWeight : 1,
+            priority: initialPriority === 1 ? 1 : 0,
         });
-    }, [initialName, initialDesc]);
+    }, [initialName, initialDesc, initialWeight, initialPriority]);
 
     // Handle field change
     const handleChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    // Handle weight change (number input with bounds)
+    const handleWeightChange = (e) => {
+        const raw = e.target.value;
+        const value = raw === '' ? 0 : Number(raw);
+        if (Number.isNaN(value)) return;
+        setFormData(prev => ({ ...prev, weight: Math.min(WEIGHT_MAX, Math.max(WEIGHT_MIN, value)) }));
     };
 
     // Validate the form
@@ -92,6 +114,40 @@ export default function KnowledgeBaseSettingsDialog({
                             value={formData.desc}
                             onChange={handleChange}
                         />
+                    </div>
+                </div>
+                <div className="">
+                    <label htmlFor="weight" className="bisheng-label">{t('weight')}</label>
+                    <div className="flex items-center mt-2">
+                        <Input
+                            id="weight"
+                            name="weight"
+                            type="number"
+                            min={WEIGHT_MIN}
+                            max={WEIGHT_MAX}
+                            step={0.1}
+                            className="flex-1"
+                            value={formData.weight}
+                            onChange={handleWeightChange}
+                        />
+                    </div>
+                    <p className="bisheng-tip mt-1">{t('weightHint')}</p>
+                </div>
+                <div className="">
+                    <label htmlFor="priority" className="bisheng-label">{t('priority')}</label>
+                    <div className="flex items-center mt-2">
+                        <Select
+                            value={String(formData.priority)}
+                            onValueChange={(value) => setFormData(prev => ({ ...prev, priority: Number(value) }))}
+                        >
+                            <SelectTrigger className="flex-1">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="0">{t('priorityNormal')}</SelectItem>
+                                <SelectItem value="1">{t('priorityHigh')}</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
                 </div>
             </div>

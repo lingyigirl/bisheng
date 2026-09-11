@@ -34,6 +34,9 @@ interface FileInfo {
     split_rule?: string;
     title?: string;
     user_metadata?: Record<string, any>;
+    // F055 (AC-05): file-level effective period; null = unlimited
+    effective_date?: string | null;
+    expire_date?: string | null;
 }
 
 interface MetadataDialogProps {
@@ -211,6 +214,7 @@ export const MainMetadataDialog = React.memo(({
     handleSearchMetadataClick,
     handleDeleteMainMetadata,
     handleMainMetadataValueChange,
+    handleSaveEffectivePeriod,
     mainMetadataDialogRef
 }: {
     metadataDialog: MetadataDialogProps;
@@ -226,8 +230,36 @@ export const MainMetadataDialog = React.memo(({
     handleSearchMetadataClick: () => void;
     handleDeleteMainMetadata: (id: string) => void;
     handleMainMetadataValueChange: (id: string, value: string) => void;
+    handleSaveEffectivePeriod: (effectiveDate: string | null, expireDate: string | null) => void;
     mainMetadataDialogRef: React.RefObject<HTMLDivElement>;
 }) => {
+    // F055 (AC-05): file effective period — null means unlimited.
+    const [effectiveDate, setEffectiveDate] = useState<Date | null>(null);
+    const [expireDate, setExpireDate] = useState<Date | null>(null);
+
+    useEffect(() => {
+        const parse = (value?: string | null): Date | null => {
+            if (!value) return null;
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? null : date;
+        };
+        setEffectiveDate(parse(fileInfor?.effective_date));
+        setExpireDate(parse(fileInfor?.expire_date));
+        // Also re-seed when the dialog state changes (open) so unsaved picks
+        // from a previous session never leak into a new one.
+    }, [fileInfor?.effective_date, fileInfor?.expire_date, metadataDialog]);
+
+    const handleSaveEffectivePeriodClick = () => {
+        if (effectiveDate && expireDate && effectiveDate.getTime() > expireDate.getTime()) {
+            toast({ variant: 'error', description: t('effectiveDateMustBeEarlier') });
+            return;
+        }
+        handleSaveEffectivePeriod(
+            effectiveDate ? format(effectiveDate, 'yyyy-MM-dd') : null,
+            expireDate ? format(expireDate, 'yyyy-MM-dd') : null,
+        );
+    };
+
     return (
         <Dialog open={metadataDialog.open} onOpenChange={(open) => setMetadataDialog({ ...metadataDialog, open })}>
             <DialogContent
@@ -267,6 +299,64 @@ export const MainMetadataDialog = React.memo(({
                             ))}
                         </div>
                     )}
+
+                    {/* F055 (AC-05): file effective period — blank = unlimited */}
+                    <div className="grid gap-3 py-4">
+                        <div className="text-sm text-muted-foreground">{t('effectivePeriodHint')}</div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <span className="text-sm text-muted-foreground">{t('effectiveDate')}</span>
+                                <div className="mt-1 flex items-center gap-2">
+                                    <div className="flex-1">
+                                        <DatePicker
+                                            value={effectiveDate || undefined}
+                                            placeholder={t('effectiveDate')}
+                                            onChange={setEffectiveDate}
+                                            disabled={!isKnowledgeAdmin}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                        title={t('clearDate')}
+                                        disabled={!isKnowledgeAdmin || !effectiveDate}
+                                        onClick={() => setEffectiveDate(null)}
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
+                                <span className="text-sm text-muted-foreground">{t('expireDate')}</span>
+                                <div className="mt-1 flex items-center gap-2">
+                                    <div className="flex-1">
+                                        <DatePicker
+                                            value={expireDate || undefined}
+                                            placeholder={t('expireDate')}
+                                            onChange={setExpireDate}
+                                            disabled={!isKnowledgeAdmin}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                        title={t('clearDate')}
+                                        disabled={!isKnowledgeAdmin || !expireDate}
+                                        onClick={() => setExpireDate(null)}
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <Button
+                            variant="outline"
+                            onClick={handleSaveEffectivePeriodClick}
+                            disabled={!isKnowledgeAdmin}
+                        >
+                            {t('saveEffectivePeriod')}
+                        </Button>
+                    </div>
 
                     <div className="grid gap-4 py-4">
                         <div className="font-medium">{t('fileinfor.documentInfo')}</div>

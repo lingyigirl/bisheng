@@ -723,6 +723,44 @@ export async function updateKnowledgeApi(data) {
 };
 
 /**
+ * F055: 设置文件生效日期（null = 不限）
+ */
+export async function updateFileEffectivePeriodApi(data: {
+    knowledge_id: number;
+    file_id: number;
+    effective_date?: string | null;
+    expire_date?: string | null;
+}) {
+    return await axios.put(`/api/v1/knowledge/file/effective_period`, data);
+};
+
+/**
+ * F055 (AC-14): 命中测试 — 与工作流检索共用同一构建函数，返回命中片段与时效排除统计
+ */
+export interface HitTestChunkItem {
+    document_id: number;
+    document_name?: string | null;
+    chunk: string;
+    chunk_index?: number | null;
+    score: number;
+    knowledge_id: number;
+}
+
+export interface HitTestExcludedStats {
+    expired: number;
+    not_yet_effective: number;
+}
+
+export interface HitTestResp {
+    hits: HitTestChunkItem[];
+    excluded: HitTestExcludedStats;
+}
+
+export async function hitTestKnowledgeApi(knowledge_id: number, question: string) {
+    return await axios.post(`/api/v1/knowledge/${knowledge_id}/hit_test`, { question });
+};
+
+/**
  * 删除支持库
  */
 export async function deleteFileLib(id) {
