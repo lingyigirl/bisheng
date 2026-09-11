@@ -7,8 +7,19 @@ services:
     environment:
       TZ: Asia/Shanghai
       JWT_ENABLED: "false"
+      # Platform preview (:3001) serves the frontend's self-signed dev cert; docservice's
+      # nodeJS rejects it ("self signed certificate") when posting the report save callback.
+      # Internal-only container, so skip TLS verification entirely.
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/office/bisheng:/var/www/onlyoffice/documentserver/sdkjs-plugins/bisheng
+      # Patched supervisor template (adds NODE_TLS_REJECT_UNAUTHORIZED / NODE_EXTRA_CA_CERTS
+      # to the [supervisord] section). The entrypoint re-copies this template over
+      # /etc/supervisor/supervisord.conf on every start.
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/office/supervisor/supervisord.conf:/app/ds/setup/config/supervisor/supervisord.conf:ro
+      # Platform's self-signed dev cert, trusted by docservice/converter as extra CA
+      # (see NODE_EXTRA_CA_CERTS in the supervisor template above).
+      - ../src/frontend/certs/dev.crt:/etc/ssl/certs/bisheng-dev.crt:ro
     command: bash -c "supervisorctl restart all"
     restart: on-failure
 
