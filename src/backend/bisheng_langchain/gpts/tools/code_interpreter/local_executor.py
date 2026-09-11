@@ -14,6 +14,7 @@ from typing import Any
 
 import matplotlib
 from loguru import logger
+from matplotlib import font_manager
 
 from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
     OUTPUT_DIR_NAME,
@@ -103,10 +104,25 @@ class LocalExecutor(BaseExecutor):
             os.remove(cache)
 
         # todo: 如果生成的代码中已经有了设置字体的代码，可能会导致该段代码失效
-        if "matplotlib" in code:
+        # pandas / seaborn render through matplotlib without importing it directly
+        if "matplotlib" in code or "pandas" in code or "seaborn" in code:
             pattern = re.compile(r"(import matplotlib|from matplotlib)")
-            index = max(i for i, line in enumerate(split_code) if pattern.search(line))
-            split_code.insert(index + 1, 'import matplotlib\nmatplotlib.rc("font", family="WenQuanYi Zen Hei")')
+            matched_indexes = [i for i, line in enumerate(split_code) if pattern.search(line)]
+            # pick the first CJK font installed on this host; WenQuanYi Zen Hei is the
+            # legacy default, Noto Sans CJK SC ships with modern Debian/Ubuntu
+            candidates = ["WenQuanYi Zen Hei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "SimHei"]
+            installed_fonts = {font.name for font in font_manager.fontManager.ttflist}
+            cjk_font = next((name for name in candidates if name in installed_fonts), "WenQuanYi Zen Hei")
+            font_setup = (
+                'import matplotlib\n'
+                f'matplotlib.rc("font", family="{cjk_font}")\n'
+                'matplotlib.rcParams["axes.unicode_minus"] = False'
+            )
+            if not matched_indexes:
+                # plotting via pandas/seaborn only — matplotlib is never imported
+                split_code.insert(0, font_setup)
+            else:
+                split_code.insert(max(matched_indexes) + 1, font_setup)
 
         return "\n".join(split_code)
 
