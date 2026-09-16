@@ -319,12 +319,22 @@ export async function readFileLibDatabase(
         name = '',
         type = 0,
         permissionId = 'use_kb',
+        departmentId,
+        includeSubDepartments = true,
     }: {
         cursor?: string | null;
         pageSize?: number;
         name?: string;
         type?: number;
         permissionId?: string;
+        /**
+         * F057: narrow to libraries owned by this department. Omit (undefined)
+         * for the unfiltered list — axios drops undefined params, so "absent"
+         * and "explicitly undefined" both mean no filter.
+         */
+        departmentId?: number;
+        /** F057: include the department's subtree. Only meaningful with departmentId. */
+        includeSubDepartments?: boolean;
     },
 ): Promise<{ data: any[]; page_size: number; has_more: boolean; next_cursor: string | null }> {
     const response = await axios.get('/api/v1/knowledge', {
@@ -334,6 +344,9 @@ export async function readFileLibDatabase(
             name,
             type,
             ...(cursor ? { cursor } : {}),
+            ...(departmentId != null
+                ? { department_id: departmentId, include_sub_departments: includeSubDepartments }
+                : {}),
         },
     });
     return response as any;
@@ -765,6 +778,37 @@ export async function hitTestKnowledgeApi(knowledge_id: number, question: string
  */
 export async function deleteFileLib(id) {
     return await axios.delete(`/api/v1/knowledge/`, { data: { knowledge_id: id } });
+}
+
+/**
+ * F057: 设置知识库的归属部门（`null` = 取消归属、回到未分类）。
+ *
+ * 这是授权变更而非元数据编辑，后端要求对该库具备 `manage_kb_*` 权限；
+ * 非管理员还只能指派到自己所在子树的部门内。
+ *
+ * `silent: true` 是刻意的：被拒时后端返回**信封** status_code=403，而 403 在
+ * `request.ts` 的拦截器里是全局"无权访问"信号——它会写入 localStorage 的
+ * `noAccessUrl`。但这里的语义是业务性的（"你不该把库建在这个部门下"），
+ * 由调用方自行处置（见 assignDepartment.ts），不该污染全局状态。
+ * 同一模式见 `license.ts` 对 404 的处理。
+ */
+export async function assignKnowledgeDepartmentApi(
+    knowledgeId: number,
+    departmentId: number | null,
+) {
+    return await axios.put(
+        `/api/v1/knowledge/department`,
+        {
+            knowledge_id: knowledgeId,
+            department_id: departmentId,
+        },
+        // `silent` is read by our request interceptor but is not part of the
+        // axios config type, so it needs a cast. Narrow it to that one extra
+        // key rather than `any` — this file sits at its ESLint suppression
+        // quota, and an extra `any` blows the whole file's budget and reports
+        // every pre-existing violation as new.
+        { silent: true } as { silent: boolean },
+    );
 }
 
 // 获取灵思工具

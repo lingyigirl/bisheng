@@ -20,6 +20,7 @@ const systemNoticeTodayKey = () => {
   return `system_notice_shown_${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 };
 import { cn } from '~/utils';
+import { redirectToLogin } from '~/utils/loginRedirect';
 import { getPlatformAdminPanelUrl } from '~/utils/platformAdminUrl';
 import { canOpenWorkbench, canShowPlatformAdminEntry } from '~/utils/platformAccess';
 import { UserPopMenu } from './UserPopMenu';
@@ -301,7 +302,7 @@ function Sidebar({
 export default function MainLayout() {
   const { pathname } = useLocation();
   const outlet = useOutlet();
-  const { user, logout, isUserLoading } = useAuthContext();
+  const { user, isUserLoading } = useAuthContext();
   const localize = useLocalize();
   const menuNames = useWorkbenchMenuNames();
   const isMobile = usePrefersMobileLayout();
@@ -365,14 +366,31 @@ export default function MainLayout() {
     }
   }, [isMobile, isAppSection, mobileSidebarOpen]);
 
-  // Auth guard: redirect to login when user query finishes without a valid user.
-  // The 401 interceptor in request.ts already handles production redirect,
-  // but this serves as a definitive guard for all environments.
+  // Auth guard: send anonymous visitors to the login page once the user query
+  // has settled without a user.
+  //
+  // This used to call logout(), which was wrong for an anonymous visitor in two
+  // ways. First, logout() POSTs /user/logout — a request that must 401 when
+  // there is no session, so the guard's own outcome hinged on a request that
+  // could never succeed. Second, its onError branch redirects to `bsConfig.host`,
+  // a field /api/v1/env does not return; the redirect came back undefined,
+  // AuthContext hit `if (redirect == null) return`, and the user was left on a
+  // blank page (Root.tsx renders null when unauthenticated).
+  //
+  // redirectToLogin() is the existing single implementation of "send the browser
+  // to the login page and bring it back afterwards" — it resolves the platform
+  // origin for the dev :4001/:3001 split and remembers the return path. Note the
+  // 401 interceptor in request.ts only redirects when MODE === 'production', so
+  // in dev this guard is the only thing that fires.
+  //
+  // A user object only exists after /user/info succeeded, so it is a safe
+  // signal; isUserLoading must clear first or we would bounce on every reload
+  // while the query is still in flight.
   useEffect(() => {
     if (!isUserLoading && !user) {
-      logout();
+      redirectToLogin();
     }
-  }, [isUserLoading, user, logout]);
+  }, [isUserLoading, user]);
 
   // Load env config once on mount — makes bishengConfState available to all pages
   const [config, setConfig] = useRecoilState(bishengConfState);

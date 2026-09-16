@@ -1161,7 +1161,11 @@ class PermissionService:
         object_type: str,
         object_id: str,
     ) -> str | None:
-        if object_type != "knowledge_space" or not str(object_id).isdigit():
+        if not str(object_id).isdigit():
+            return None
+        if object_type == "knowledge_library":
+            return await cls._implicit_department_library_level(user_id, int(object_id))
+        if object_type != "knowledge_space":
             return None
 
         from bisheng.core.context.tenant import bypass_tenant_filter
@@ -1175,6 +1179,75 @@ class PermissionService:
             user_departments = await UserDepartmentDao.aget_user_departments(user_id)
         if any(int(row.department_id) == int(binding.department_id) for row in user_departments):
             return PermissionLevel.can_read.value
+        return None
+
+    @classmethod
+    async def _implicit_department_library_level(cls, user_id: int, knowledge_id: int) -> str | None:
+        """F057: department ownership of an organization library (type=0/1).
+
+        A library owned by department D is visible to members of D AND of every
+        DESCENDANT of D — an ancestor's library flows downward. This is resolved
+        here, at read time, rather than by writing FGA tuples, for two reasons:
+
+          - `department.member` is a flat relation (`authorization_model.py:237`);
+            the only inheriting relation, `admin`, walks UPWARD via
+            `tupleToUserset(parent, admin)`. So the required down-flow cannot be
+            expressed by the FGA model at all.
+          - Expanding the subtree into tuples would leak on reparent and miss
+            newly created children — no department-change hook recomputes
+            resource grants anywhere in this codebase. `path` is rewritten on
+            move (`DepartmentDao.update_paths_batch`), so a prefix test is immune.
+
+        `path` is a materialized `/1/2/3/` whose LAST segment is the node's OWN id
+        (`_parse_path_ids`; note the stale comment at `department_service.py:1512`
+        claims otherwise). "Resource dept is an ancestor-or-self of one of the
+        user's departments" is therefore a plain prefix test on the user's path.
+
+        Deleting a department unclassifies its libraries: the platform clears
+        `knowledge.department_id`, and a dangling id degrades to no-grant here
+        (the department lookup simply finds nothing).
+        """
+        from bisheng.core.context.tenant import bypass_tenant_filter
+        from bisheng.database.models.department import DepartmentDao, UserDepartmentDao
+        from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
+
+        try:
+            # The resource lookup runs under the tenant bypass for the same reason
+            # the knowledge_space branch does: permission evaluation must not be
+            # scoped by whichever tenant context happens to be current.
+            with bypass_tenant_filter():
+                knowledge = await KnowledgeDao.aquery_by_id(knowledge_id)
+                if knowledge is None or knowledge.department_id is None:
+                    return None
+                owning_department = await DepartmentDao.aget_by_id(int(knowledge.department_id))
+                if owning_department is None or not owning_department.path:
+                    return None
+
+                memberships = await UserDepartmentDao.aget_user_departments(user_id)
+                if not memberships:
+                    return None
+
+                # `UserDepartment` rows carry only `department_id` — the path lives
+                # on the department row, so resolve those before comparing.
+                user_department_ids = [int(row.department_id) for row in memberships]
+                user_departments = await DepartmentDao.aget_by_ids(user_department_ids)
+
+                # Ancestor-or-self test: the owning department's path is a prefix
+                # of the user's department path. `path` always carries a trailing
+                # slash, so `/1/2/` cannot spuriously prefix-match `/1/20/`.
+                owning_path = str(owning_department.path)
+                if any(str(row.path or "").startswith(owning_path) for row in user_departments):
+                    return PermissionLevel.can_read.value
+        except Exception as e:
+            # Fail closed: an ownership lookup that cannot be evaluated must not
+            # grant access. Mirrors the surrounding implicit-level helpers.
+            logger.debug(
+                "Could not resolve department ownership for knowledge_library:%s (user=%s): %s",
+                knowledge_id,
+                user_id,
+                e,
+            )
+            return None
         return None
 
     @classmethod

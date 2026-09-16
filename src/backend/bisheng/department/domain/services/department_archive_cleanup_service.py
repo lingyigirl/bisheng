@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlmodel import select
 
 from bisheng.core.database import get_async_db_session
@@ -121,6 +121,18 @@ class DepartmentArchiveCleanupService:
                 delete(UserDepartment).where(
                     UserDepartment.department_id == department_id,
                 )
+            )
+            # F057: unclassify the department's libraries. They are keyed on
+            # `knowledge.department_id`, a plain nullable int with no foreign key
+            # (see the f057 migration docstring for why), so nothing at the
+            # database level unclassifies them when the owning department goes
+            # away — this is the application-side half of that trade-off.
+            from bisheng.knowledge.domain.models.knowledge import Knowledge
+
+            await session.execute(
+                update(Knowledge)
+                .where(Knowledge.department_id == department_id)
+                .values(department_id=None)
             )
             await session.commit()
 

@@ -76,7 +76,13 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                     type={type}
                     className={cname(
                         "flex h-8 w-full rounded-md border border-input bg-search-input px-3 py-1 text-sm text-[#111] dark:text-gray-50 shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 disabled:text-muted-foreground read-only:cursor-default read-only:text-muted-foreground read-only:dark:text-muted-foreground",
-                        type === 'number' ? 'number-input-arrows' : '',
+                        // Keep the number spinner always visible (browsers fade it out
+                        // until hover by default). Expressed as Tailwind arbitrary
+                        // variants rather than a `<style jsx>` block: platform has no
+                        // styled-jsx plugin, so that syntax reached the DOM as a
+                        // `jsx="true"` attribute and warned on every render.
+                        // Same approach as ComponentConfigDrawer.tsx:1143.
+                        type === 'number' && '[&::-webkit-inner-spin-button]:opacity-100 [&::-webkit-outer-spin-button]:opacity-100',
                         className
                     )}
                     defaultValue={defaultValue}
@@ -92,13 +98,6 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
                         {currentValue.length}/{maxLength}
                     </div>
                 )}
-
-                <style jsx>{`
-                    .number-input-arrows::-webkit-inner-spin-button,
-                    .number-input-arrows::-webkit-outer-spin-button {
-                        opacity: 1;
-                    }
-                `}</style>
             </div>
         );
     }

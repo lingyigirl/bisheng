@@ -184,6 +184,51 @@ Options:
 
 - `--apply`: perform the revokes; default is dry-run. Irreversible (revokes group members' access) — review dry-run output first.
 
+### `audit_knowledge_library_department_tuples.py`
+
+**Read-only** F057 pre-flight audit. F057 gives organization libraries (type=0/1)
+department *ownership* (`knowledge.department_id`, evaluated at read time), and
+the permission dialog stops offering "department" as a grantee for
+`knowledge_library` so department access has one source. That change is only safe
+once we know what department-subject tuples already exist.
+
+Why they matter: they were written with the department subtree **expanded into
+individual tuples**, and nothing recomputes them on department changes — no hook
+anywhere in the codebase touches resource grants when a department is created,
+moved, or archived. A grant that outlives its department is a leak, and an owner
+who changes `department_id` expecting the old department to lose access will
+find it still has it (the read-time ownership rule ADDS to the tuple path).
+
+Each tuple is classified as:
+
+| bucket | meaning |
+| --- | --- |
+| `shadowed_by_ownership` | the same department is already the library's F057 owner — removing the tuple loses nothing |
+| `redundant_with_ownership` | a different department that is an ancestor of the owner — ownership already covers those users |
+| `orphan_department` | the department row is gone; the tuple grants nothing |
+| `independent` | grants access ownership would NOT provide — **review individually**; removing it *would* cut access |
+
+It never writes. Revoking is a human decision: some of these grants may be
+load-bearing today.
+
+Usage:
+
+```bash
+export config=config.yaml
+PYTHONPATH=./ .venv/bin/python scripts/audit_knowledge_library_department_tuples.py
+PYTHONPATH=./ .venv/bin/python scripts/audit_knowledge_library_department_tuples.py --json report.json
+bash scripts/audit_knowledge_library_department_tuples.sh
+```
+
+Options:
+
+- `--json PATH`: also write the full per-tuple report (with names, current
+  `department_id`, and an estimated reach) for offline analysis.
+
+Note: OpenFGA's read API requires an object type and has no reverse index, so the
+scan is anchored per library (the smaller side), reading `knowledge_library:<id>`
+tuples and filtering to `department:` subjects.
+
 ### `permission_migration.sh`
 
 Manual runner for the F006 historical permission migration from RBAC to ReBAC.

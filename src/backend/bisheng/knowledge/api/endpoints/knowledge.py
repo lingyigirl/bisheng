@@ -412,6 +412,21 @@ async def get_knowledge(
         description="F027 cursor-based pagination token from the previous response's "
         "`next_cursor`. Omit (or pass empty) to fetch the first page.",
     ),
+    department_id: int | None = Query(
+        default=None,
+        description=(
+            "F057 platform tree filter. Narrows the list to libraries owned by "
+            "this department AND its sub-departments (the subtree is resolved "
+            "server-side from `department.path`). Omit for the unfiltered list. "
+            "This only filters; it never grants access, so the caller still "
+            "needs `view_kb` on each row."
+        ),
+    ),
+    include_sub_departments: bool = Query(
+        default=True,
+        description="F057: with `department_id`, include the whole subtree. False = only "
+        "libraries owned directly by that department.",
+    ),
 ):
     """List knowledge bases with cursor-based pagination (F027).
 
@@ -442,8 +457,123 @@ async def get_knowledge(
         page_size=page_size,
         permission_id=permission_id,
         preferred_ids=pinned,
+        filter_department_ids=await _resolve_department_filter(department_id, include_sub_departments),
     )
     return resp_200(data=result)
+
+
+async def _resolve_department_filter(
+    department_id: int | None,
+    include_sub_departments: bool,
+) -> list[int] | None:
+    """F057: expand the platform tree's selected node into a filter id list.
+
+    Sub-departments are folded in HERE rather than in SQL so the filter stays a
+    plain `department_id IN (...)`: `department.path` is a materialized
+    `/1/2/3/` chain, so the subtree is one prefix scan (`aget_subtree_ids`).
+    Returns None when no filter was requested, which the service reads as
+    "don't narrow".
+    """
+    if department_id is None:
+        return None
+    if not include_sub_departments:
+        return [int(department_id)]
+
+    from bisheng.database.models.department import DepartmentDao
+
+    department = await DepartmentDao.aget_by_id(int(department_id))
+    if department is None or not department.path:
+        # Unknown department → an EMPTY filter, so the list comes back empty.
+        # Returning None here would silently widen a stale tree selection to the
+        # entire tenant.
+        return []
+    return await DepartmentDao.aget_subtree_ids(str(department.path))
+
+
+@router.get("/department_stats", status_code=200)
+async def get_department_stats(
+    *,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    permission_id: Literal["view_kb", "use_kb"] = Query(default="view_kb"),
+    knowledge_type: int = Query(default=KnowledgeTypeEnum.NORMAL.value, alias="type"),
+):
+    """F057: library counts per owning department, for the platform tree badges.
+
+    SUBTREE-INCLUSIVE per node: a department's count includes libraries owned by
+    its descendants, so the badge matches what clicking that node will show
+    (`include_sub_departments` defaults to true). Rows with no department are
+    omitted — they are not reachable through the tree.
+
+    Counts are scoped to what the caller may see, so an operator without
+    `view_kb` on a library does not learn it exists from a badge.
+    """
+    from bisheng.knowledge.domain.services.knowledge_department_service import KnowledgeDepartmentService
+
+    stats = await KnowledgeDepartmentService.department_stats(
+        login_user=login_user,
+        knowledge_type=KnowledgeTypeEnum(knowledge_type),
+        permission_id=permission_id,
+    )
+    return resp_200(data=stats)
+
+
+@router.get("/my_departments", status_code=200)
+async def get_my_departments(
+    *,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    parent_id: int | None = Query(default=None),
+    include_archived: bool = Query(default=False),
+):
+    """F057: one layer of the tenant's department tree, for the knowledge filter.
+
+    Deliberately NOT `/api/v1/departments/*`. That family is department
+    MANAGEMENT and is scoped by F038 to system admins / department admins /
+    tenant admins, answering 21009 for everyone else — so the knowledge page,
+    whose audience is everyone, cannot use it.
+
+    Returns the WHOLE tenant tree, not the caller's own branch: the tree lets
+    people choose which department to browse, and the permission check that
+    matters is per row when the list loads. Filtering narrows a view; it never
+    grants. Only `login_user` (authentication) is required — there is no
+    management-permission gate, which is the point.
+
+    Node shape matches `GET /departments/children` so the lazy tree component
+    consumes it unchanged.
+    """
+    from bisheng.knowledge.domain.services.knowledge_department_service import KnowledgeDepartmentService
+
+    data = await KnowledgeDepartmentService.browse_departments(
+        parent_id=parent_id,
+        include_archived=include_archived,
+    )
+    return resp_200(data=data)
+
+
+@router.get("/my_departments/search", status_code=200)
+async def search_my_departments(
+    *,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    keyword: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+    include_archived: bool = Query(default=False),
+):
+    """F057: name search over the same tenant-wide tree as `/my_departments`.
+
+    Server-side because the tree is the whole tenant tree: a client searching
+    only its expanded layers misses every match under a collapsed node, so a
+    department plainly present in the organisation reports "no results".
+
+    Same scope as `/my_departments` — authenticated, tenant-wide, no management
+    gate.
+    """
+    from bisheng.knowledge.domain.services.knowledge_department_service import KnowledgeDepartmentService
+
+    data = await KnowledgeDepartmentService.search_departments(
+        keyword=keyword,
+        limit=limit,
+        include_archived=include_archived,
+    )
+    return resp_200(data=data)
 
 
 @router.get("/info", status_code=200)
@@ -464,6 +594,39 @@ def update_knowledge(
 ):
     res = KnowledgeService.update_knowledge(request, login_user, knowledge)
     return resp_200(data=res)
+
+
+@router.put("/department", status_code=200)
+async def assign_knowledge_department(
+    *,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    knowledge_id: int = Body(..., embed=True),
+    department_id: int | None = Body(
+        default=None,
+        embed=True,
+        description="F057 owning department. Omit or null to unclassify. Assigning grants "
+        "read access to that department and its sub-departments, so it requires a "
+        "manage_kb_* permission and (for non-admins) a department in the caller's scope.",
+    ),
+):
+    """F057: set or clear an organization library's owning department.
+
+    This is an AUTHORIZATION change, not metadata editing — see
+    `KnowledgeDepartmentService` for the guards.
+    """
+    from bisheng.knowledge.domain.services.knowledge_department_service import KnowledgeDepartmentService
+
+    allowed, error = await KnowledgeDepartmentService.assign_department(
+        login_user=login_user,
+        knowledge_id=knowledge_id,
+        department_id=department_id,
+    )
+    if not allowed:
+        # `return_resp` is a classmethod and drops the instance message; the
+        # instance variant carries the specific reason ("unknown department",
+        # "outside your scope") through to the toast.
+        return UnAuthorizedError(msg=error).return_resp_instance()
+    return resp_200()
 
 
 @router.delete("/", status_code=200)

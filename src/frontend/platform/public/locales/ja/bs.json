@@ -770,7 +770,9 @@
     "copying": "コピー中",
     "searchPlaceholder": "ナレッジベースまたはファイル名",
     "desc": "ナレッジベース説明",
-    "embeddingModelSelection": "ナレッジベース埋め込みモデル選択"
+    "embeddingModelSelection": "ナレッジベース埋め込みモデル選択",
+    "allDepartments": "すべて",
+    "assignDenied": "このナレッジベースを選択した部門に所属させる権限がありません。作成を中止しました。"
   },
   "evaluation": {
     "id": "タスクID",

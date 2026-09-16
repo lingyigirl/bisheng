@@ -241,6 +241,8 @@ class KnowledgeService(KnowledgeUtils):
         page_size: int,
         permission_id: str,
         preferred_ids: list[int] | None,
+        department_ids: list[int] | None = None,
+        filter_department_ids: list[int] | None = None,
     ) -> tuple[list[Knowledge], dict[int, set[str]], int, int]:
         """Scan bounded DB batches and refill rows removed by exact permission checks."""
         visible: list[Knowledge] = []
@@ -270,6 +272,8 @@ class KnowledgeService(KnowledgeUtils):
                 limit=_KNOWLEDGE_PERMISSION_SCAN_BATCH_SIZE,
                 preferred_ids=preferred_ids,
                 cursor=None if offset_scan else batch_cursor,
+                department_ids=department_ids,
+                filter_department_ids=filter_department_ids,
             )
             batch_count += 1
             scanned_rows += len(batch)
@@ -312,6 +316,34 @@ class KnowledgeService(KnowledgeUtils):
         )
 
     @classmethod
+    async def _resolve_visible_department_chain(cls, user_id: int) -> list[int]:
+        """F057: the departments whose OWN libraries the user may see.
+
+        A library owned by department D is visible to members of D and of every
+        DESCENDANT of D, so the set is D plus D's ancestors for each of the user's
+        departments — i.e. every id appearing in the user's department `path`
+        prefixes. `path` is `/1/2/3/` with the node's own id last, so parsing it
+        yields exactly that chain.
+
+        Returns [] on any failure: an unresolvable chain must degrade to "no
+        department-derived visibility", never to an error that breaks the list.
+        """
+        from bisheng.core.context.tenant import bypass_tenant_filter
+        from bisheng.database.models.department import DepartmentDao, UserDepartmentDao
+        from bisheng.knowledge.domain.services.knowledge_department_service import KnowledgeDepartmentService
+
+        try:
+            with bypass_tenant_filter():
+                memberships = await UserDepartmentDao.aget_user_departments(user_id)
+                if not memberships:
+                    return []
+                departments = await DepartmentDao.aget_by_ids([int(row.department_id) for row in memberships])
+            return KnowledgeDepartmentService.department_chain_for_paths(departments)
+        except Exception as e:
+            logger.warning("Failed to resolve department chain for user %s: %s", user_id, e)
+            return []
+
+    @classmethod
     async def get_knowledge(
         cls,
         request: Request,
@@ -323,6 +355,7 @@ class KnowledgeService(KnowledgeUtils):
         page_size: int = 10,
         permission_id: str = "use_kb",
         preferred_ids: list[int] | None = None,
+        filter_department_ids: list[int] | None = None,
     ) -> PageInfiniteCursorData[KnowledgeRead]:
         """List knowledge bases with cursor-based pagination (F027).
 
@@ -333,6 +366,11 @@ class KnowledgeService(KnowledgeUtils):
         - ``has_more`` is detected by fetching ``page_size + 1`` rows; the
           ``total`` field is no longer computed (the ReBAC scan it triggered
           previously is gone).
+
+        F057: ``filter_department_ids`` is the platform tree's NARROWING filter
+        (the clicked department plus its subtree, resolved by the caller). It is
+        independent of the ADDITIVE ownership grant applied to the candidate set
+        below — do not merge the two.
         """
         total_start = perf_counter()
 
@@ -375,6 +413,15 @@ class KnowledgeService(KnowledgeUtils):
                 knowledge_type,
             )
             merged = {int(k) for k in accessible_ids} | set(creator_ids)
+            # F057: the current user's department chain is an ADDITIONAL visibility
+            # source. Ownership grants no FGA tuple (see
+            # PermissionService._implicit_department_library_level), so these rows
+            # would otherwise be absent from the ReBAC candidate set and never
+            # reach the per-row permission check that would approve them.
+            #
+            # Resolved per-request rather than cached: `department.path` is
+            # rewritten on reparent, so a cached chain would go stale silently.
+            department_chain = await cls._resolve_visible_department_chain(login_user.user_id)
             res, permission_map, scanned_rows, batch_count = await cls._scan_visible_knowledge(
                 login_user=login_user,
                 candidate_ids=list(merged),
@@ -386,6 +433,8 @@ class KnowledgeService(KnowledgeUtils):
                 page_size=page_size,
                 permission_id=permission_id,
                 preferred_ids=preferred_ids,
+                department_ids=department_chain,
+                filter_department_ids=filter_department_ids,
             )
             logger.info(
                 "[perf][knowledge.list.filter] user_id={} permission_id={} type={} accessible_ids={} creator_ids={} "
@@ -413,6 +462,11 @@ class KnowledgeService(KnowledgeUtils):
                 limit=fetch_limit,
                 preferred_ids=preferred_ids,
                 cursor=keyset_cursor,
+                # F057: the admin branch must honour the platform tree filter
+                # too. Admins skip *visibility* checks, but "show me department
+                # X" is a browsing concern — without this the tree silently did
+                # nothing for them (the frontend renders it with no role branch).
+                filter_department_ids=filter_department_ids,
             )
             # Admin / scoped-super-admin path bypasses ReBAC filtering, so seed the
             # permission map with full perms for every returned row — otherwise

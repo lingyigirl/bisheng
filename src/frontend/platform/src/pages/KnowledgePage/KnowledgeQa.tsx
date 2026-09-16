@@ -13,6 +13,8 @@ import { useToast } from "@/components/bs-ui/toast/use-toast";
 import { QuestionTooltip } from "@/components/bs-ui/tooltip";
 import { userContext } from "@/contexts/userContext";
 import { copyQaDatabase, createFileLib, deleteFileLib, readFileLibDatabase, updateKnowledge } from "@/controllers/API";
+import type { KnowledgeDepartmentFilter } from "./useKnowledgeDepartmentFilter";
+import { tryAssignDepartment } from "./assignDepartment";
 import { getKnowledgeModelConfig } from "@/controllers/API/finetune";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { ModelSelect } from "@/pages/ModelPage/manage/tabs/WorkbenchModel";
@@ -38,7 +40,7 @@ const KB_MANAGE_PERMISSION_IDS = [
     'manage_kb_viewer',
 ]
 
-function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create', currentLib = null }) {
+function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create', currentLib = null, departmentId = null }) {
     const { t } = useTranslation('knowledge')
     const navigate = useNavigate()
     const nameRef = useRef(null)
@@ -130,7 +132,17 @@ function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create',
                     description: desc,
                     model: modelId,
                     type: 1
-                }).then((res) => {
+                }).then(async (res) => {
+                    // F057: same bind-then-rollback contract as the document
+                    // library create flow — see assignDepartment.ts for why the
+                    // permission cannot be checked before the library exists.
+                    if (departmentId != null) {
+                        const assigned = await tryAssignDepartment(res.id, departmentId, t('lib.assignDenied', { ns: 'bs' }));
+                        if (!assigned) {
+                            await captureAndAlertRequestErrorHoc(deleteFileLib(res.id));
+                            return;
+                        }
+                    }
                     window.libname = [name, desc];
                     navigate(isImport ? `/filelib/qalib/upload/${res.id}` : `/filelib/qalib/${res.id}`);
                     onOpenChange(false);
@@ -275,7 +287,11 @@ function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create',
 }
 
 const doing = {};
-export default function KnowledgeQa(params) {
+export default function KnowledgeQa({
+    departmentFilter,
+}: {
+    departmentFilter?: KnowledgeDepartmentFilter;
+} = {}) {
     const [open, setOpen] = useState(false);
     const { user } = useContext(userContext);
     const { toast } = useToast();
@@ -289,11 +305,26 @@ export default function KnowledgeQa(params) {
     const [permTarget, setPermTarget] = useState<{ id: string; name: string } | null>(null);
 
     // F027: cursor-based infinite scroll; no `total` / `page` anymore.
-    const { data: datalist, loading, hasMore, search, reload, loadMore } = useInfiniteCursorTable(
+    // F057: department scope is applied server-side (see KnowledgeFile for why).
+    const { data: datalist, loading, hasMore, search, reload, loadMore, filterData } = useInfiniteCursorTable(
         { cancelLoadingWhenReload: true },
         (param) =>
-            readFileLibDatabase({ cursor: param.cursor, pageSize: param.pageSize, name: param.keyword, type: 1, permissionId: 'view_kb' }),
+            readFileLibDatabase({
+                cursor: param.cursor,
+                pageSize: param.pageSize,
+                name: param.keyword,
+                type: 1,
+                permissionId: 'view_kb',
+                ...(departmentFilter?.apiParams ?? {}),
+            }),
     );
+
+    const departmentKey = JSON.stringify(departmentFilter?.apiParams ?? {});
+    useEffect(() => {
+        if (!departmentFilter) return;
+        filterData(departmentFilter.apiParams);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [departmentKey]);
     const visibleLibs = datalist;
     const hasListPermission = (el: any, permissionId: string) =>
         Array.isArray(el.permission_ids) && el.permission_ids.includes(permissionId);
@@ -575,6 +606,7 @@ export default function KnowledgeQa(params) {
                 onOpenChange={setOpen}
                 onLoadEnd={() => { }}
                 mode="create"
+                departmentId={departmentFilter?.selectedDepartmentId ?? null}
             />
 
             {/* Settings modal */}

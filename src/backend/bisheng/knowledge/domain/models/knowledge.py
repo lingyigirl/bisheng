@@ -101,9 +101,28 @@ class KnowledgeBase(SQLModelSerializable):
     )
     priority: int = Field(
         default=0,
-        sa_column=Column(Integer, nullable=False, server_default=text("0"), comment="知识库调用优先级 0=普通 1=优先, F055"),
+        sa_column=Column(
+            Integer, nullable=False, server_default=text("0"), comment="知识库调用优先级 0=普通 1=优先, F055"
+        ),
     )
 
+    # F057: department ownership for organization libraries (type=0/1).
+    # NULL = unclassified — NOT "global". The read-time rule ADDS an ownership
+    # grant on top of FGA visibility, so unclassified keeps today's access.
+    # Intentionally a plain nullable int, NOT a ForeignKey: the "deleting a
+    # department unclassifies its libraries" behaviour is applied by the
+    # platform, and a dangling id degrades safely (no department found → no
+    # ownership grant). See v2_7_0_f057_knowledge_department.py for the full
+    # rationale, incl. the DM8/ALTER-TABLE constraint risk.
+    department_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            nullable=True,
+            index=True,
+            comment="F057 所属部门ID 归属:所属部门及其下级部门可见;NULL=未分类不参与部门可见性",
+        ),
+    )
     metadata_fields: list[dict] | None = Field(
         default=None,
         sa_column=Column(JsonType, nullable=True),
@@ -303,13 +322,43 @@ class KnowledgeDao(KnowledgeBase):
         page: int = 0,
         limit: int = 0,
         filter_knowledge: list[int] = None,
+        department_ids: list[int] = None,
+        filter_department_ids: list[int] = None,
     ) -> Union[Select, SelectOfScalar]:
-        if knowledge_id_extra:
-            statement = statement.where(or_(Knowledge.id.in_(knowledge_id_extra), Knowledge.user_id == user_id))
+        # F057: department ownership is an ADDITIONAL visibility source
+        # (visible = FGA grant OR own OR department-owned), so it joins the same
+        # OR and must never become an AND.
+        #
+        # It is applied OUTSIDE the `knowledge_id_extra` check on purpose. That
+        # check is a truthiness test, and the most common department member has
+        # NO FGA grants and NO self-created libraries — so `knowledge_id_extra`
+        # arrives empty and the `else` branch would select `user_id = me` alone,
+        # silently dropping ownership. That is exactly the population this
+        # feature exists for, so nesting it under the truthy branch made the
+        # whole rule a no-op for its primary audience.
+        if knowledge_id_extra or department_ids:
+            candidate_clauses = [Knowledge.user_id == user_id]
+            if knowledge_id_extra:
+                candidate_clauses.append(Knowledge.id.in_(knowledge_id_extra))
+            if department_ids:
+                candidate_clauses.append(Knowledge.department_id.in_(department_ids))
+            statement = statement.where(or_(*candidate_clauses))
         else:
             statement = statement.where(Knowledge.user_id == user_id)
         if filter_knowledge:
             statement = statement.where(Knowledge.id.in_(filter_knowledge))
+        # F057 platform tree: NARROW to the departments the operator clicked.
+        # Deliberately an AND, the opposite of `department_ids` above — that one
+        # grants visibility (/workspace, additive), this one filters a browsing
+        # view. The caller passes the whole selected subtree (resolved from
+        # `department.path`), so "include sub-departments" is a caller concern.
+        #
+        # `is not None`, NOT truthiness: an EMPTY list means "the filter matched
+        # no department" and must yield zero rows. Treating it as "no filter"
+        # would silently widen a stale tree selection to the whole tenant.
+        # `in_([])` compiles to a false predicate, which is exactly right here.
+        if filter_department_ids is not None:
+            statement = statement.where(Knowledge.department_id.in_(filter_department_ids))
         # 使用 is not None：避免 NORMAL=0 被当作「未传类型」而漏掉 type 条件
         if knowledge_type is not None:
             statement = statement.where(Knowledge.type == knowledge_type.value)
@@ -361,6 +410,8 @@ class KnowledgeDao(KnowledgeBase):
         filter_knowledge: list[int] = None,
         preferred_ids: list[int] | None = None,
         cursor: Sequence | None = None,
+        department_ids: list[int] = None,
+        filter_department_ids: list[int] = None,
     ) -> list[Knowledge]:
         """List user-visible knowledge bases.
 
@@ -368,13 +419,26 @@ class KnowledgeDao(KnowledgeBase):
         keyset WHERE predicate is injected for ``sort_by`` ∈
         ``{create_time, update_time}``. ``preferred_ids`` pinning is ignored
         when ``cursor`` is set (pinning is a first-page-only feature).
+
+        F057: ``department_ids`` widens the candidate OR with libraries owned by
+        those departments (the caller passes the ids on the current user's
+        ancestor chain). It is additive — omit it to keep pre-F057 behaviour.
         """
         statement = select(Knowledge)
 
         # When using cursor-based keyset, suppress OFFSET inside _user_knowledge_filters.
         page_for_filter = 0 if cursor is not None else page
         statement = cls._user_knowledge_filters(
-            statement, user_id, knowledge_id_extra, knowledge_type, name, page_for_filter, limit, filter_knowledge
+            statement,
+            user_id,
+            knowledge_id_extra,
+            knowledge_type,
+            name,
+            page_for_filter,
+            limit,
+            filter_knowledge,
+            department_ids,
+            filter_department_ids,
         )
         if cursor is not None:
             # Cursor mode: append keyset WHERE and LIMIT only.
@@ -549,9 +613,24 @@ class KnowledgeDao(KnowledgeBase):
             return session.exec(statement).all(), session.scalar(count_statement)
 
     @classmethod
-    def generate_all_knowledge_filter(cls, statement, name: str = None, knowledge_type: KnowledgeTypeEnum = None):
+    def generate_all_knowledge_filter(
+        cls,
+        statement,
+        name: str = None,
+        knowledge_type: KnowledgeTypeEnum = None,
+        filter_department_ids: list[int] = None,
+    ):
         if knowledge_type is not None:
             statement = statement.where(Knowledge.type == knowledge_type.value)
+
+        # F057 platform tree: the admin path needs the same NARROWING filter as
+        # the ReBAC path. Without it an administrator clicking a department node
+        # saw the list not move at all — the parameter was accepted by the
+        # endpoint and then silently dropped here. Same `is not None` rule as
+        # `_user_knowledge_filters`: an EMPTY list must yield zero rows, never
+        # "no filter", or a stale tree selection widens to the whole tenant.
+        if filter_department_ids is not None:
+            statement = statement.where(Knowledge.department_id.in_(filter_department_ids))
 
         if name:
             conditions = [col(Knowledge.name).like(f"%{name}%"), col(Knowledge.description).like(f"%{name}%")]
@@ -588,11 +667,23 @@ class KnowledgeDao(KnowledgeBase):
         limit: int = 0,
         preferred_ids: list[int] | None = None,
         cursor: Sequence | None = None,
+        filter_department_ids: list[int] = None,
     ) -> list[Knowledge]:
         """Admin/scoped-super-admin path; same cursor semantics as
-        ``aget_user_knowledge`` (F027 AD-15)."""
+        ``aget_user_knowledge`` (F027 AD-15).
+
+        F057: ``filter_department_ids`` narrows the browsing view, exactly as it
+        does on the ReBAC path. Admins bypass *visibility* checks, but the
+        platform tree filter is a view concern and must still apply — the
+        frontend renders the department tree for admins with no role branch.
+        """
         statement = select(Knowledge)
-        statement = cls.generate_all_knowledge_filter(statement, name=name, knowledge_type=knowledge_type)
+        statement = cls.generate_all_knowledge_filter(
+            statement,
+            name=name,
+            knowledge_type=knowledge_type,
+            filter_department_ids=filter_department_ids,
+        )
 
         if cursor is not None:
             statement = cls._apply_keyset_where(statement, sort_by, cursor)

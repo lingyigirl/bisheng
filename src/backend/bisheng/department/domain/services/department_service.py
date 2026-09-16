@@ -415,6 +415,43 @@ async def _ensure_department_can_purge(session, dept: Department) -> None:
 
 class DepartmentService:
     @classmethod
+    async def _clear_knowledge_ownership(cls, department_id: int) -> None:
+        """F057: unclassify the libraries a departing department owned.
+
+        Best-effort by design: a failure here must not abort the department
+        change the caller already committed. A missed clear is recoverable —
+        `knowledge.department_id` is a plain nullable int with no foreign key,
+        and the read-time rule simply finds no department and grants nothing
+        (see `KnowledgeDepartmentService.clear_department_ownership`).
+
+        Callers must invoke this AFTER their own transaction has committed.
+        The clear commits independently, so running it inside an open
+        transaction lets it land while that transaction can still roll back —
+        producing a live department whose libraries were already unclassified.
+        Both call sites (`adelete_department`, `apurge_department`) do so.
+        """
+        from bisheng.knowledge.domain.services.knowledge_department_service import (
+            KnowledgeDepartmentService,
+        )
+
+        try:
+            cleared = await KnowledgeDepartmentService.clear_department_ownership(department_id)
+        except Exception as e:
+            # Swallowed on purpose — see the docstring above.
+            logger.warning(
+                "F057: failed to clear knowledge ownership for department %s: %s",
+                department_id,
+                e,
+            )
+            return
+        if cleared:
+            logger.info(
+                "F057: unclassified %s knowledge base(s) owned by department %s",
+                cleared,
+                department_id,
+            )
+
+    @classmethod
     async def acreate_department(
         cls,
         data: DepartmentCreate,
@@ -788,6 +825,13 @@ class DepartmentService:
             session.add(dept)
             await session.commit()
 
+        # F057: unclassify the department's libraries. An archived department
+        # must not keep granting access to them, and leaving the id behind would
+        # point at a node that is no longer an active grant path. NOTE: this is
+        # deliberately NOT undone by arestore_department — see the docstring on
+        # KnowledgeDepartmentService.clear_department_ownership.
+        await cls._clear_knowledge_ownership(dept.id)
+
         # Fire change handler
         if parent_id is not None:
             ops = DepartmentChangeHandler.on_archived(dept.id, parent_id)
@@ -835,6 +879,18 @@ class DepartmentService:
             # Physical delete
             await session.delete(dept)
             await session.commit()
+
+        # F057: unclassify the department's libraries now that the row is gone.
+        # Archive already cleared them on the user-facing path; this also covers
+        # rows assigned while the department was archived.
+        #
+        # AFTER the commit, deliberately. `clear_department_ownership` opens its
+        # own session and commits independently, so calling it inside the block
+        # above would let the clear land while the department delete was still
+        # able to roll back — leaving a live department with no libraries. After
+        # the commit the only failure left is the clear itself, which degrades to
+        # a dangling id (harmless: no department found, no grant — design 决策 3).
+        await cls._clear_knowledge_ownership(dept_internal_id)
 
         # Collect admin user_ids from OpenFGA
         admin_user_ids: list[int] = []
