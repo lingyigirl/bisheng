@@ -12,9 +12,24 @@
 | spec.md | ✅ 已评审 | 2026-09-17 编写，经 7 轮 /sdd-review spec（46 条 AC）；第 5 轮做过结构重构（§2 调用模式 + §3.1 前置校验表） |
 | design.md | ✅ 已评审 | 2026-09-17 编写，经 3 轮 /sdd-review design（Constitution Check C1–C7 通过）；14 决策 + 15 坑 |
 | tasks.md | ✅ 已拆解 | 2026-09-17 拆解完成：37 个任务 / 9 个 Wave，46 条 AC 全覆盖 |
-| 实现 | 🔲 未开始 | 0 / 37 完成。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3–§4 |
-| e2e-test | 🔲 待执行 | — |
+| 实现 | ⚠️ 部分完成 | **34 / 37**。Wave 0 ~ F（后端全部）+ Wave G（前端全部）已完成并有测试。未完成 3 项见下方「未完成项」。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3–§4 |
+| e2e-test | ⚠️ 部分执行 | `test/e2e/test_e2e_f058_doc_extract.py`：**5 passed / 3 skipped / 0 failed**。3 条跳过需要租户配置 `doc_extract_llm` 槽位（见「已知缺口」） |
 | code-review | 🔲 待执行 | — |
+
+---
+
+## 未完成项（3）
+
+| 任务 | 状态 | 原因 |
+|---|---|---|
+| **T-33** tab 入口收口（AC-36 前端侧） | **代码已写，未提交** | 改动在 `DialogueWork.tsx`，该文件同时含并行 F059 工作流的改动（`import PlatformSensitiveWords`），而 `PlatformSensitiveWords.tsx` **尚未被提交**。此刻提交本任务会连带吸收他人的在途工作、或让构建挂掉。**待 F059 落地后，只需提交该文件中的 F058 部分**（`showDocExtractTab` 判断 + 两处条件渲染）。 |
+| **T-35** OCR 分支 | **无需实现** | 实测本部署已配 MinerU 且可达，`_build_pdf_loader` 已把图片/扫描件交给它 —— 存量 loader 栈本就覆盖，`parse_adapter` 只是复用。实测一张 900×300 证照图走通并返回 `route=ocr`。详见 design §2 / §9。 |
+| **T-37** 契约回填 | 本条即该项 | 已完成。 |
+
+### 已知缺口
+
+- **`doc_extract_llm` 槽位在本环境未配置** —— 因此 e2e 的 3 条抽取用例跳过，且任何真实抽取请求会按 spec §3.1 序号 3 返回 **11608**。这是设计内的行为（不是缺陷）；配置该槽位后 3 条用例自动生效，无需改测试。**槽位无写入端点**，需由租户模型配置流程或按 `{"model_id": N}` 的 JSON 写入 `tenant_system_model_config`。
+- **T-33 未提交**意味着「非管理员看不到文档抽取 tab」这条 AC 目前**只有后端侧被验证**（e2e 的匿名拒绝用例），前端入口尚未生效。
 
 ---
 
