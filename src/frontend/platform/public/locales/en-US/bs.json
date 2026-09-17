@@ -1407,7 +1407,12 @@
       "approvalFlowUpdate": "Update Approval Flow",
       "approvalScenarioToggle": "Toggle Approval Scenario",
       "approvalScenarioCreate": "Create Approval Scenario",
-      "approvalMenuAccessRevokeGrant": "Revoke Menu Access Grant"
+      "approvalMenuAccessRevokeGrant": "Revoke Menu Access Grant",
+      "docExtractTemplateCreate": "Create Document Extraction Template",
+      "docExtractTemplateUpdate": "Update Document Extraction Template",
+      "docExtractTemplateDelete": "Delete Document Extraction Template",
+      "docExtractTemplateEnable": "Enable Document Extraction Template",
+      "docExtractTemplateDisable": "Disable Document Extraction Template"
     },
     "objectTypeEnum": {
       "none": "None",

@@ -1390,7 +1390,12 @@
       "approvalFlowUpdate": "更新审批流程",
       "approvalScenarioToggle": "审批场景启停",
       "approvalScenarioCreate": "创建审批场景",
-      "approvalMenuAccessRevokeGrant": "撤回菜单授权"
+      "approvalMenuAccessRevokeGrant": "撤回菜单授权",
+      "docExtractTemplateCreate": "新建文档抽取模板",
+      "docExtractTemplateUpdate": "修改文档抽取模板",
+      "docExtractTemplateDelete": "删除文档抽取模板",
+      "docExtractTemplateEnable": "启用文档抽取模板",
+      "docExtractTemplateDisable": "停用文档抽取模板"
     },
     "objectTypeEnum": {
       "none": "无",

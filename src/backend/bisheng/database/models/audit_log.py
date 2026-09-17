@@ -199,6 +199,15 @@ _UI_VISIBLE_V2_ACTIONS: Tuple[str, ...] = (
     'approval.scenario.create',
     'approval.exception.skip_node',
     'approval.menu_access.revoke_grant',
+    # F058: document extraction template lifecycle. Surfaced because the spec
+    # requires template changes to be reviewable after the fact (INV-15) -- a
+    # template edit silently changes how every later document of that type is
+    # extracted, so an operator must be able to see who changed what.
+    'doc_extract.template.create',
+    'doc_extract.template.update',
+    'doc_extract.template.delete',
+    'doc_extract.template.enable',
+    'doc_extract.template.disable',
 )
 
 # Synthetic system_id namespace → action prefix. The frontend `getModulesApi`
@@ -207,6 +216,7 @@ _UI_VISIBLE_V2_ACTIONS: Tuple[str, ...] = (
 _V2_NAMESPACE_TO_ACTION_PREFIX: Dict[str, str] = {
     'tenant': 'tenant.',
     'llm': 'llm.server.',
+    'doc_extract': 'doc_extract.',
     'approval': 'approval.',
 }
 

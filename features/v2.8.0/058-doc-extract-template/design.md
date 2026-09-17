@@ -158,25 +158,26 @@
 - **原因**：语义不同 —— 知识库的槽位服务于「标题/摘要/自动打标」，本 feature 服务于「证照字段抽取」，对模型的能力要求不一样（后者需要更强的指令遵循与格式稳定性）。蹭用会导致「为了改善证照抽取而升级模型，顺带改变了知识库入库的模型」这种隐式耦合。B 的唯一优势是省一次配置，但配置成本远小于耦合成本。
 - **实现**：沿用 `LLMService.get_bisheng_llm_sync(model_id=..., app_id=..., app_type=..., user_id=...)`，与 `knowledge_space_auto_tag_service.py:70` 同模式。
 
-### 决策 11：模板变更留痕复用既有 `AuditLogService`，不自建审计表
+### 决策 11：模板变更留痕复用既有审计链路（v2 路径），不自建审计表
+
+> **2026-09-17 实现期修正**：本节初版写的是走 `AuditLogService` 的 `EventType` / `ObjectType` / `SystemId` 枚举（legacy 路径）。**实现时发现平台已迁移到 v2 审计路径**（`AuditLogDao.ainsert_v2` + 各模块自有的 `AuditAction` 枚举），`llm` / `tenant` / `admin` / `approval` 均已改用。下面按实际实现重写。
 
 - **备选**：
-  - A. **复用 `AuditLogService`**（`api/services/audit_log.py`），新增本模块的 `EventType` 与 `ObjectType` 取值。
+  - A. **复用 v2 审计路径**（`AuditLogDao.ainsert_v2` + 本模块 `DocExtractAuditAction`），并把 action 加进审计页白名单。
   - B. 只加 `create_user` / `create_time` / `update_time` 三列。
   - C. 自建一张 `doc_extract_template_audit` 表。
+  - D. 走 v2 写库但不加白名单（仅留存，UI 不可见）。
 - **选定**：A
-- **原因**：**spec AC-38 要的是「谁在什么时候改了哪个模板」这类**事件流水**，不是「当前行最后被谁改过」。B 只能回答最后一个修改者，改了三次就只剩最后一次 —— 不满足 AC-38，只能算便捷展示位（表结构里保留了这三列，但**不得**用它们替代留痕）。
-  
-  平台已有现成的事件流水机制：`audit_log` 表带 `operator_id` / `operator_name` / `event_type` / `object_type` / `object_id` / `object_name` / `note` + 时间，`AuditLogService` 已为 workflow / assistant / role / dashboard / channel / knowledge_space 等服务（`api/services/flow.py:364` 等）。C 会造出一张与 `audit_log` 职责重叠的表，且绕过既有的审计查阅入口。
-- **实现落点（三处枚举都要动，缺一会静默失效）**：
-  - `database/models/audit_log.py` 的 `EventType` 增加本模块取值（参照既有 `CREATE_CHANNEL` / `DELETE_CHANNEL` 的写法）。
-  - 同文件 `ObjectType` 增加 `DOC_EXTRACT_TEMPLATE = "doc_extract_template"`。
-  - 同文件 **`SystemId` 增加本模块取值** —— **这一处最容易漏**：审计页的可见性白名单 `AuditLogDao._ui_visible_predicate()`（`audit_log.py:217`）是 `system_id IS NOT NULL OR action IN (_UI_VISIBLE_V2_ACTIONS)`（该常量现有 21 项）。**`system_id` 为空且 `action` 不在白名单 → 留痕写了但审计页查不到**（不报错，静默）。`SystemId` 同时是审计页的模块筛选键。
-  - `AuditLogService` 增加对应的 `create_/update_/delete_/enable_/disable_doc_extract_template` 方法（参照 `create_build_workflow` 的形状，`api/services/audit_log.py:253`）。
-  - `TemplateService` 的写路径在**成功之后**调用（失败不留痕），与既有模块一致。
-- **已知代价**：`audit_log` 是平台级表，本模块的留痕会与其他模块混在一起。注意既有查询入口 `AuditLogDao.get_audit_logs`（`audit_log.py:239`）**没有 `object_type` 过滤参数**（只有 group / operator / 时间 / `system_id` / `event_type`），因此查阅得靠 **`system_id` + `event_type`** 组合过滤，不要照搬 `object_type`。
+- **原因**：**spec AC-38 / INV-15 要的是「谁在什么时候改了哪个模板」这类**事件流水**，不是「当前行最后被谁改过」。B 只能回答最后一个修改者，改了三次就只剩最后一次 —— 不满足 AC-38，只能算便捷展示位（表结构里保留了这三列，但**不得**用它们替代留痕）。C 会造出一张与 `audit_log` 职责重叠的表，且绕过既有审计查阅入口。D 满足「留存」但不满足 AC-38 里「**可事后查阅**」的字面要求 —— 运维得调接口才能看，不算「可被看到」。
+- **v2 路径的关键事实**：`ainsert_v2` **不写 `system_id`**。审计页的可见性由 `AuditLogDao._ui_visible_predicate()`（`audit_log.py:222`）决定，判据是 `system_id IS NOT NULL OR action IN (_UI_VISIBLE_V2_ACTIONS)`。**v2 行必然 `system_id` 为空，所以能不能被看到，只取决于 action 是否在白名单里。** 这就是 A 与 D 的分界。
+- **实现落点（三处必须同步，缺一处则该行写了但查不到，且不报错）**：
+  1. `database/models/audit_log.py` 的 **`_UI_VISIBLE_V2_ACTIONS`** 追加 5 个 action（本模块已加）；
+  2. 同文件 **`_V2_NAMESPACE_TO_ACTION_PREFIX`** 增加 `'doc_extract': 'doc_extract.'`（审计页模块筛选用，本模块已加）；
+  3. 前端 `platform/src/controllers/API/log.ts` 的镜像清单 + 三语 `log.eventTypeEnum.*` 词条（该文件头注释明确要求「Keep in sync with backend `_UI_VISIBLE_V2_ACTIONS`」）。
+- **action 命名用枚举而非裸字符串**：`bisheng/doc_extract/domain/constants.py::DocExtractAuditAction`。理由与 `tenant/domain/constants.py` 相同 —— **写错一个字母的行照样写进库，只是永远匹配不上白名单、在页面上静默消失**。枚举 + `DOC_EXTRACT_AUDIT_ACTIONS` 元组让「白名单是否覆盖全部 action」可被测试断言。
+- **写入时机**：`TemplateService` 在每个写操作**成功之后**调用（失败不留痕）。写入是 **best-effort**：审计写失败只记日志，不因此让管理员的编辑失败 —— 丢一行日志好过丢一次编辑。
 - **与本 feature 记录检索的区别**（勿混淆）：AC-32 的「抽取记录检索」查的是 `doc_extract_run`（决策 12），与本节查 `audit_log` 是两回事 —— 前者是抽取结果，后者是模板变更事件。
-- **何时该重新考虑**：若审计模块未来被整体替换或要求各模块自带审计表，再迁移。
+- **何时该重新考虑**：若审计模块未来被整体替换或要求各模块自带审计表，再迁移；若 v2 路径改变可见性判据（例如改为按 `target_type` 过滤），白名单机制需同步复核。
 
 ### 决策 12：抽取记录的检索复用「列表 + 筛选」形态，不建独立页面
 

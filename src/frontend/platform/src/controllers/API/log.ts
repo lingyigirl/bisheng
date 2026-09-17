@@ -105,6 +105,16 @@ const actions = [
     { name: 'log.eventTypeEnum.approvalScenarioToggle', value: 'approval.scenario.toggle' },
     { name: 'log.eventTypeEnum.approvalScenarioCreate', value: 'approval.scenario.create' },
     { name: 'log.eventTypeEnum.approvalMenuAccessRevokeGrant', value: 'approval.menu_access.revoke_grant' },
+    // F058: document extraction template lifecycle. A template edit silently
+    // changes how every later document of that type is extracted, so operators
+    // need these in the audit page. Backend mirror:
+    // `_UI_VISIBLE_V2_ACTIONS` in `database/models/audit_log.py`; a backend test
+    // asserts the two lists agree.
+    { name: 'log.eventTypeEnum.docExtractTemplateCreate', value: 'doc_extract.template.create' },
+    { name: 'log.eventTypeEnum.docExtractTemplateUpdate', value: 'doc_extract.template.update' },
+    { name: 'log.eventTypeEnum.docExtractTemplateDelete', value: 'doc_extract.template.delete' },
+    { name: 'log.eventTypeEnum.docExtractTemplateEnable', value: 'doc_extract.template.enable' },
+    { name: 'log.eventTypeEnum.docExtractTemplateDisable', value: 'doc_extract.template.disable' },
 ];
 
 // 全部操作行为
