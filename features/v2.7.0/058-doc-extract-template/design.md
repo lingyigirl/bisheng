@@ -11,8 +11,8 @@
 > - **偏差分级**：推翻已 ★ 确认的决策 → 停下与用户重新确认；纯实现细节 → 直接改 design，不必停
 
 **关联**: [spec.md](./spec.md) · [tasks.md](./tasks.md)
-**版本**: v2.8.0
-**最后更新**: 2026-09-17（设计阶段；实现尚未开始）
+**版本**: v2.7.0（2026-09-17 由 v2.8.0 调整而来——见 [spec.md「版本归属调整」](./spec.md#版本归属调整)）
+**最后更新**: 2026-09-17（**实现已完成**：Wave 0~F 后端全部 + Wave G 前端全部；158 单测 + e2e 5 passed / 3 skipped）
 
 ---
 
@@ -358,8 +358,8 @@
 | —（端点鉴权口径） | `templates.py` 与 `records.py`：**恒为** `get_tenant_admin_user`。`extraction.py`：Depends 层为登录用户，`dry_run=true` 的管理员校验在**服务层内**补做（决策 13） | 见决策 13 |
 | `doc_extract/api/endpoints/extraction.py` | 判定 / 抽取端点 | 同上 |
 | `doc_extract/api/endpoints/records.py` | 抽取记录检索端点（AC-32，决策 12）：按模板 / 时间范围 / 状态筛选 + 游标分页；`Depends(get_tenant_admin_user)` | 不返回跨租户数据（C3 自动过滤） |
-| `doc_extract/domain/services/template_service.py` | 模板 CRUD 编排；保存前全部校验（名称、适用范围、字段定义、呈现形式悬空引用、类型标识唯一）；写成功后调 `AuditLogService` 留痕（决策 11） | **不做**权限判定（由端点依赖提供）；不直接写 ORM |
-| `doc_extract/domain/services/record_query_service.py` | 抽取记录检索编排 | 不做写入（写入在 extraction_service） |
+| `doc_extract/domain/services/template_service.py` | 模板 CRUD 编排；保存前全部校验（名称、适用范围、字段定义、呈现形式悬空引用、类型标识唯一）；写成功后调 `audit.write_template_audit` 留痕（决策 11，v2 路径） | **不做**权限判定（由端点依赖提供）；不直接写 ORM |
+| —（**无独立 service 层**） | 抽取记录检索：`records.py` 端点**直接调** `DocExtractRunDao.alist_runs`。**这是对决策 12 的偏离**（原计划有 `record_query_service.py`，实际未创建）——记录检索只是「按几个条件查一页」，中间加一层没有编排内容可放，纯转发。若后续出现跨表聚合或权限收窄，再补该层 | — |
 | `doc_extract/domain/services/classifier_service.py` | 拼装判定提示词、调模型、解析结果、置信度比较 | 不选模板（只报类型与置信度） |
 | `doc_extract/domain/services/extraction_service.py` | 抽取主流程编排：调前置校验 → parse_adapter → 判定 → 抽取 → 渲染 → 落记录 | 不实现校验器与渲染器的内部逻辑 |
 | `doc_extract/domain/services/parse_adapter.py` | **本模块唯一接触 knowledge loader 栈的文件**：文件落临时目录 → `TempFilePipeline` → 拿文本；按需降级到识别服务；探测文字层定 route | 不做抽取、不碰模板 |
@@ -412,6 +412,7 @@
 | `POST /api/v1/doc_extract/extract` | HTTP API | 后续：工作流节点、对话附件、知识库元数据抽取 |
 | `POST /api/v1/doc_extract/classify` | HTTP API | 同上（只要类型不要字段的场景） |
 | `GET/POST/PUT/DELETE /api/v1/doc_extract/templates[/{id}]` | HTTP API | platform 管理页 |
+| `PUT /api/v1/doc_extract/templates/{id}/enabled` | HTTP API | 启停的**独立子资源**（body `{enabled: bool}`）。做成子资源而非全量 PUT 的一个字段，是为了让启停不必回传整个字段定义 |
 | `GET /api/v1/doc_extract/records` | HTTP API | platform 管理页的记录 tab（决策 12） |
 | `tenant_system_model_config` 表的 `doc_extract_llm` 槽位 | DB 行（**不是 `config` 表** —— F022 已把系统级模型槽位从 `config` 迁到租户表，读路径见 `llm/domain/services/llm.py:287` 的 `TenantSystemModelConfigDao.aresolve`） | 本 feature；租户模型配置页 |
 | `ExtractionService.extract()`（`doc_extract/domain/services/extraction_service.py`） | 内部 Python API | 后续场景接入直接调用（不经 HTTP）。**注意是 domain service 而非另立一个 `DocExtractService` 门面** —— 场景接入时直接依赖它即可 |
@@ -422,7 +423,7 @@
 | 依赖 | 形式 | 风险点 |
 |---|---|---|
 | `TempFilePipeline` + `settings.get_knowledge()` provider 配置 | 内部 API + 配置 | 知识库侧若改其构造参数或产出形态，本 feature 静默变化（坑 5） |
-| `AuditLogService` 与 `EventType` / `ObjectType` 枚举 | 内部 API + DB | 决策 11 的留痕挂在其上；若审计模块重构或枚举被清理，留痕静默失效（不报错，只是查不到） |
+| `AuditLogDao.ainsert_v2` + `_UI_VISIBLE_V2_ACTIONS` 白名单（v2 审计路径，非 legacy `AuditLogService`） | 内部 API + DB | 决策 11 的留痕挂在这两处：**action 不在白名单 → 行写了但审计页查不到，且不报错**。前端 `log.ts` 与三语 `log.eventTypeEnum.*` / `log.systemIdEnum.docExtract` 是它的镜像，改一处必须同步（`test_audit_lockstep.py` 守 action 与模块名，但**不守 i18n 标签**） |
 | `LLMService.get_bisheng_llm_sync` | 内部 API | 签名或返回类型变更 |
 | `TenantSystemModelConfig` 槽位机制 | 内部 API + DB | 新增 `DOC_EXTRACT_LLM` 需确认无键名冲突 |
 | `UserPayload.get_tenant_admin_user` | 内部 API | 其 super_admin 涵盖行为是 AC-36 的实现依据（坑 10），若变更需同步 |
@@ -438,7 +439,8 @@
   - **表 DDL 常量**：`test/fixtures/table_definitions.py` 须新增两张表的 SQLite DDL（现有约定是手写 DDL 而非 `create_all`），这是单测能跑的前提。
   - **端到端**（`test/e2e/test_e2e_f058_doc_extract.py`）：SDD 强制项。覆盖模板 CRUD → 试抽取 → 业务抽取 → 记录检索的完整链路。
 - **重点边界**（spec §4）：LLM 返回非 JSON、返回 JSON 但缺必填、返回额外字段、模板引用不存在的字段 key、置信度低于阈值、无可用解析器、渲染模板含 `{{}}` 但字段值为 null、显式指定 vs 自动判定两条路径。
-- **可观测**：抽取记录表本身就是主要观测面（`preprocess_route` 回答「解析没出文字」、`confidence` 回答「判得准不准」、`fields` 回答「抽出了什么」）。日志需在**每条 spec §3.1 前置校验被拒时**打点（因为被拒不落库，见 spec 已知缺口）。模板变更的留痕在 `audit_log`（决策 11），按 `system_id` + `event_type` 过滤查阅（该 DAO 不支持 `object_type` 过滤）。
+- **可观测**：抽取记录表本身就是主要观测面（`preprocess_route` 回答「解析没出文字」、`confidence` 回答「判得准不准」、`fields` 回答「抽出了什么」）。模板变更的留痕在 `audit_log`（决策 11），按 `system_id` + `event_type` 过滤查阅（该 DAO 不支持 `object_type` 过滤）。
+- **前置校验被拒时的日志（原设计承诺未兑现）**：初版本节写「每条 §3.1 前置校验被拒时打点」，实现里**没有逐条打点** —— 被拒路径（序号 1–8）不落库，只有模型调用失败、JSON 非法等少数分支有 `logger.warning`。因此「有多少请求因为文档不可读被拒」**目前无法统计**。这是刻意的（避免为每行加噪），但**原承诺与实现不符**，已记于此。要补统计应加指标而非日志，见 §8。
 - **交付物清单**（易漏项）：后端模块、两张表的 Alembic 迁移、`test/fixtures/table_definitions.py` 的两张 DDL、**`packages/locales` 的三语错误码文案**（决策见 §6.1）、前端管理页 + i18n namespace。
 - **手动验证路径**（具体到可执行）：
   1. platform 起在 `:3001`，进 `对话工作台 → 文档抽取` tab，建模板 `doc_type=business_license`，字段含 `company_name`（必填）与 `valid_to`（非必填）。

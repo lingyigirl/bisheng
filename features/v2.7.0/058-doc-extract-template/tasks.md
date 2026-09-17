@@ -1,7 +1,7 @@
 # Tasks: 文档抽取模板（058-doc-extract-template）
 
 **关联规格**: [spec.md](./spec.md)
-**版本**: v2.8.0
+**版本**: v2.7.0（2026-09-17 由 v2.8.0 调整而来——见 [spec.md「版本归属调整」](./spec.md#版本归属调整)）
 
 ---
 
@@ -11,25 +11,29 @@
 |------|------|------|
 | spec.md | ✅ 已评审 | 2026-09-17 编写，经 7 轮 /sdd-review spec（46 条 AC）；第 5 轮做过结构重构（§2 调用模式 + §3.1 前置校验表） |
 | design.md | ✅ 已评审 | 2026-09-17 编写，经 3 轮 /sdd-review design（Constitution Check C1–C7 通过）；14 决策 + 15 坑 |
-| tasks.md | ✅ 已拆解 | 2026-09-17 拆解完成：37 个任务 / 9 个 Wave，46 条 AC 全覆盖 |
-| 实现 | ⚠️ 部分完成 | **34 / 37**。Wave 0 ~ F（后端全部）+ Wave G（前端全部）已完成并有测试。未完成 3 项见下方「未完成项」。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3–§4 |
-| e2e-test | ⚠️ 部分执行 | `test/e2e/test_e2e_f058_doc_extract.py`：**5 passed / 3 skipped / 0 failed**。3 条跳过需要租户配置 `doc_extract_llm` 槽位（见「已知缺口」） |
+| tasks.md | ✅ 已拆解 | 2026-09-17 拆解完成：37 个任务 / 9 个 Wave。**拆解期声称的「46 条 AC 全覆盖」经 code review 核实不属实** —— 至少 AC-08、AC-13、AC-18、AC-20、AC-24、AC-30、AC-35 当时无测试（其中 AC-24 是**实现本身不可达**，已修）。缺口见下「已知缺口」 |
+| 实现 | ✅ 完成 | **37 / 37**。Wave 0~F（后端全部）+ Wave G（前端全部）。T-35 经实测确认**无需写代码**（见下）。**158 单测**。code review 发现的两条 HIGH + 4 条 MEDIUM 已修并各有回归测试 |
+| e2e-test | ⚠️ 部分执行 | `test/e2e/test_e2e_f058_doc_extract.py`：**5 passed / 3 skipped / 0 failed**。3 条跳过需要租户配置 `doc_extract_llm` 槽位（见「已知缺口」）—— 这是设计内行为，配置后自动生效，无需改测试 |
 | code-review | 🔲 待执行 | — |
 
 ---
 
-## 未完成项（3）
+## 未完成项
 
-| 任务 | 状态 | 原因 |
-|---|---|---|
-| **T-33** tab 入口收口（AC-36 前端侧） | **代码已写，未提交** | 改动在 `DialogueWork.tsx`，该文件同时含并行 F059 工作流的改动（`import PlatformSensitiveWords`），而 `PlatformSensitiveWords.tsx` **尚未被提交**。此刻提交本任务会连带吸收他人的在途工作、或让构建挂掉。**待 F059 落地后，只需提交该文件中的 F058 部分**（`showDocExtractTab` 判断 + 两处条件渲染）。 |
-| **T-35** OCR 分支 | **无需实现** | 实测本部署已配 MinerU 且可达，`_build_pdf_loader` 已把图片/扫描件交给它 —— 存量 loader 栈本就覆盖，`parse_adapter` 只是复用。实测一张 900×300 证照图走通并返回 `route=ocr`。详见 design §2 / §9。 |
-| **T-37** 契约回填 | 本条即该项 | 已完成。 |
+**无。37 个任务全部落地。** 其中两项的实现方式与原计划不同，已记入「实际偏差记录」：
+
+| 任务 | 实际结果 |
+|---|---|
+| **T-33** tab 入口收口（AC-36 前端侧） | ✅ 已生效。改动落在 `DialogueWork.tsx`；该文件同时含并行 F059 的改动，F059 落地时一并提交，故 F058 这边无独立提交。**代码已在 HEAD**（`showDocExtractTab` 判断 + 两处条件渲染）。 |
+| **T-35** OCR 分支 | ✅ **无需写代码**。实测本部署已配 MinerU 且可达，`_build_pdf_loader` 已把图片/扫描件交给它 —— 存量 loader 栈本就覆盖。实测一张 900×300 证照图走通并返回 `route=ocr`。详见 design §2 / §9。 |
 
 ### 已知缺口
 
-- **`doc_extract_llm` 槽位在本环境未配置** —— 因此 e2e 的 3 条抽取用例跳过，且任何真实抽取请求会按 spec §3.1 序号 3 返回 **11608**。这是设计内的行为（不是缺陷）；配置该槽位后 3 条用例自动生效，无需改测试。**槽位无写入端点**，需由租户模型配置流程或按 `{"model_id": N}` 的 JSON 写入 `tenant_system_model_config`。
-- **T-33 未提交**意味着「非管理员看不到文档抽取 tab」这条 AC 目前**只有后端侧被验证**（e2e 的匿名拒绝用例），前端入口尚未生效。
+- **`doc_extract_llm` 槽位在本环境未配置** —— e2e 的 3 条抽取用例因此跳过，且任何真实抽取请求会按 spec §3.1 序号 3 返回 **11608**。这是设计内行为（非缺陷）；配置后 3 条用例自动生效，无需改测试。**槽位无写入端点**，需由租户模型配置流程或按 `{"model_id": N}` 的 JSON 写入 `tenant_system_model_config`。
+- **M-2b 自动判定编排路径（AC-18/AC-20）无测试** —— 分类服务本身有测试，但「分类后如何接着抽取」这一编排无覆盖。
+- **记录列表的过滤与翻页无测试**（template_id / status / 时间范围 / cursor）—— DAO、API、e2e 三层皆缺。
+- **并发建同标识模板可产生双活** —— 库层无唯一约束（设计使然，见决策 9），service 层校验存在 TOCTOU 窗口。修它需要在「软删后标识可复用」与「库层唯一」之间做取舍，属独立决策项。
+- **design 仍有少量失真未清**（`docs/architecture/` 引用、部分 §6 条目），不影响实现。
 
 ---
 
@@ -71,7 +75,7 @@
 | `packages/locales/src/api_errors/*.json` | 尚未改 | T-34 追加 11601–11611 三语 |
 | Alembic versions 目录 | 已加 `v2_7_0_f059_hit_log_source.py`（未提交） | T-03 的 `down_revision` 需指向它 —— 见该任务的说明 |
 
-**编号已让号**：错误码模块 **114**（113 归 F059）、**INV-12 ~ INV-15**（INV-10/11 归 F059）。勿改回。
+**编号**：错误码模块 **116**（113 归 F059、115 归 F060 术语库；114 因与前端遗留的 403 哨兵 `api_errors/11403` 同号而弃用）、**INV-12 ~ INV-15**（INV-10/11 归 F059）。勿改回。
 
 ---
 
@@ -152,7 +156,7 @@ ExtractRunDao:
 
 `revision = "f058_doc_extract"`；`upgrade()` 在 `table_exists` 守卫下建两张表 + 索引；`downgrade()` 对称 drop（**回滚方案**：drop 两张表与索引；因是新表、无存量数据依赖，回滚安全）。
 
-**`down_revision` 怎么填**：截至 2026-09-17，v2.7.0 的最新迁移是 **`f059_hit_log_source`**（F059，**尚未提交**）。v2.8.0 在 v2.7.0 之后，故：
+**`down_revision` 怎么填**：截至 2026-09-17，v2.7.0 的最新迁移是 **`f059_hit_log_source`**（F059，**尚未提交**）。本迁移接在其后，故：
 
 ```python
 down_revision = "f059_hit_log_source"
@@ -409,7 +413,7 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 **覆盖要点**：
 - 有文字层的文档 → 返回 `(text, route="text")`，文本非空（AC-22）
 - 无文字层（或因故抽不出内容）→ 标记需转识别服务，**本阶段返回 11605**（AC-21 的图片侧在 T-35）
-- 文本长度低于 **100 字符**（design §2 定值）→ 判定为「没抽出实质内容」
+- 文本长度低于 **10 字符**（design §2 定值；初版写 100，实测后下调 —— 一张真实证照图经识别只出 91 字符，被 100 的门槛误判为「无内容」）→ 判定为「没抽出实质内容」
 - 源文件不被修改（与 T-20 的 AC-30 用例呼应）
 
 **测试降级**：**无** —— 本阶段只覆盖 text 路径，可用 fixture 文件离线跑通，全部用例可自动化。需要真实识别服务的用例属 T-35（那里才是降级点，理由见该任务）。
@@ -426,7 +430,7 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 
 **逻辑**：
 - 文件落临时目录 → 走 `TempFilePipeline`（`knowledge/rag/temp_file_pipeline.py`）拿文本
-- **探测文字层定 route**：本地抽取产出的文本长度 ≥ **100 字符**（design §2）→ `route="text"` 且直接用；否则标记需转识别服务
+- **探测文字层定 route**：解析产出的文本长度 ≥ **10 字符**（design §2）→ `route="text"` 且直接用；否则标记需转识别服务。**route 由实际所选 loader 反推**（`MineruLoader`/`PaddleOcrLoader`/`Etl4lmLoader` → `ocr`），不由扩展名猜
 - 返回 `(text: str, route: str)`
 
 **关键约束**：
@@ -857,7 +861,7 @@ listRecords({template_id?, status?, start_time?, end_time?, cursor?})
 
 **依赖**: T-36
 
-**改动**：`features/v2.8.0/058-doc-extract-template/{design.md,tasks.md}`、`features/v2.8.0/release-contract.md`（3 个文件）
+**改动**：`features/v2.7.0/058-doc-extract-template/{design.md,tasks.md}`、`features/v2.7.0/release-contract.md`（3 个文件）
 
 - 若实现中产生偏差 → 更新 `design.md`（**只留今天的状态**）并在本文件「实际偏差记录」写一行指针
 - 核对 `release-contract.md` 的模块编码表与 INV 表与实际实现一致
@@ -872,4 +876,12 @@ listRecords({template_id?, status?, start_time?, end_time?, cursor?})
 > **只留一行指针**，论证在 design.md（决策 / 坑），这里不重复（见 `docs/SDD-Guide.md` §4）。
 > 推翻已 ★ 确认的决策时，先停下与用户重新确认（§3 第四个 ★），再记录。
 
-- （待填）
+- **错误码模块 113 → 114 → 116**（两次改号）→ 见 design 修订历史。第一次因 F059（未提交的 v2.7.0 工作流）先占了 113；第二次因 11403 与前端遗留的 client 403 哨兵同号 —— 平台用 `i18next.t('api_errors:<code>')` 取文案，**已存在的 key 会压过 defaultValue**，会把「暂无查看权限」替换成模板报错。116 是三个来源（后端 errcode / 前端 api_errors / 全部 release-contract）都空闲的第一个号。
+- **T-35 OCR 分支：无需实现**（原计划写 `parse_adapter` 第二分支）→ 见 design §2/§9。实测本部署已配 MinerU 且可达，`_build_pdf_loader` 早已把图片交给它 —— 存量 loader 栈本就覆盖，本 feature 只是复用。
+- **解析文本可用下限 100 → 10 字符** → 见 design §2。真实证照图识别出 91 字符被误判为「无内容」。
+- **`route` 由实际 loader 反推**（初版硬编码 `text`）→ 走 MinerU 的图片被标成 `route=text`，会把排障引向错误环节。见 design 坑 16 附近。
+- **决策 11 重写**：原计划走 legacy `AuditLogService` 的 `EventType`/`ObjectType`/`SystemId`，实现时发现平台已迁移到 v2 审计路径（`ainsert_v2` + action 白名单）。见 design 决策 11。
+- **决策 12 偏离**：原计划有 `record_query_service.py`，实际未创建（端点直接调 DAO，中间层无编排内容）。见 design §4.3。
+- **M5 超时：设计写了但实现漏了**，code review 时补上（`asyncio.wait_for`，120s）。见 design 决策 14 与坑表。
+- **T-33 由 F059 的提交带入**：本任务的改动落在 `DialogueWork.tsx`，该文件同时含 F059 的改动；F059 落地时一并提交，故 F058 这边没有独立提交。
+- **审查发现并修复的实现缺陷**（连同上条，均记入 design §5 坑 16–19）：H1 槽位 JSON 未解析（功能完全不可用）、H2 跨租户越权写、M3 唯一性查重绕过、AC-24 不可达且报错方向错、前端 reason 映射不一致、审计模块筛选只接一半、以及修复 H2 时自己引入的 commit-outside-session 静默失败。
