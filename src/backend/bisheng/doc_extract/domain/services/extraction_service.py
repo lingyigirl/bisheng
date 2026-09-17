@@ -102,7 +102,7 @@ class ExtractionService:
 
         try:
             value, _inherited, _blocked = TenantSystemModelConfigDao.resolve(
-                ConfigKeyEnum.DOC_EXTRACT_LLM.value, tenant_id
+                tenant_id, ConfigKeyEnum.DOC_EXTRACT_LLM.value
             )
         except Exception:
             logger.warning('doc_extract model slot resolve failed', exc_info=True)
