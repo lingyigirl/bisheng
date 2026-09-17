@@ -2,7 +2,7 @@
 
 Covers AC-16 (returns candidates + confidence), AC-17 (only this tenant's
 enabled templates are candidates), AC-18 (above threshold -> a type is chosen)
-and AC-19 (below threshold -> 11406).
+and AC-19 (below threshold -> 11606).
 
 The model is mocked everywhere -- these tests are about the surrounding rules,
 not about what a model would answer.
@@ -74,13 +74,13 @@ async def test_only_enabled_templates_are_candidates():
     assert lister.await_args.kwargs.get('enabled_only') is True
 
 
-async def test_no_enabled_templates_raises_11406():
+async def test_no_enabled_templates_raises_11606():
     with patch(f'{SERVICE}.DocExtractTemplateDao.alist_templates', new_callable=AsyncMock, return_value=[]):
         with pytest.raises(DocExtractTypeUnknownError):
             await ClassifierService.aclassify('text', tenant_id=1, user_id=7)
 
 
-async def test_confidence_below_threshold_raises_11406(enabled_template):
+async def test_confidence_below_threshold_raises_11606(enabled_template):
     """AC-19: a low-confidence guess must not silently become a wrong extraction."""
     low = CONFIDENCE_THRESHOLD - 0.1
     p1, p2 = _mock_llm(f'{{"doc_type": "business_license", "confidence": {low}}}')
@@ -114,7 +114,7 @@ async def test_unknown_doc_type_from_model_is_rejected(enabled_template):
             await ClassifierService.aclassify('text', tenant_id=1, user_id=7)
 
 
-async def test_malformed_json_raises_11408(enabled_template):
+async def test_malformed_json_raises_11608(enabled_template):
     p1, p2 = _mock_llm('not json at all')
     with (
         patch(f'{SERVICE}.DocExtractTemplateDao.alist_templates', new_callable=AsyncMock, return_value=enabled_template),
@@ -124,7 +124,7 @@ async def test_malformed_json_raises_11408(enabled_template):
             await ClassifierService.aclassify('text', tenant_id=1, user_id=7)
 
 
-async def test_json_without_confidence_raises_11408(enabled_template):
+async def test_json_without_confidence_raises_11608(enabled_template):
     p1, p2 = _mock_llm('{"doc_type": "business_license"}')
     with (
         patch(f'{SERVICE}.DocExtractTemplateDao.alist_templates', new_callable=AsyncMock, return_value=enabled_template),
@@ -145,7 +145,7 @@ async def test_json_wrapped_in_markdown_fence_is_parsed(enabled_template):
     assert result.doc_type == 'business_license'
 
 
-async def test_model_exception_raises_11408(enabled_template):
+async def test_model_exception_raises_11608(enabled_template):
     with (
         patch(f'{SERVICE}.DocExtractTemplateDao.alist_templates', new_callable=AsyncMock, return_value=enabled_template),
         patch(f'{SERVICE}.LLMService.get_bisheng_llm_sync', side_effect=RuntimeError('boom')),
@@ -154,7 +154,7 @@ async def test_model_exception_raises_11408(enabled_template):
             await ClassifierService.aclassify('text', tenant_id=1, user_id=7)
 
 
-async def test_confidence_out_of_range_raises_11408(enabled_template):
+async def test_confidence_out_of_range_raises_11608(enabled_template):
     p1, p2 = _mock_llm('{"doc_type": "business_license", "confidence": 1.5}')
     with (
         patch(f'{SERVICE}.DocExtractTemplateDao.alist_templates', new_callable=AsyncMock, return_value=enabled_template),

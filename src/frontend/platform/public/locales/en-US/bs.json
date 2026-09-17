@@ -2381,5 +2381,20 @@
     "previewDropped": "Dropped (too long)",
     "previewAddedSample": "Sample additions",
     "imported": "Import complete — {{count}} words written"
+  },
+  "feedbackLogs": {
+    "title": "Answer rating details",
+    "desc": "Every like, dislike and cancel is recorded separately, so the full sequence of actions can be reconstructed. Answer text is not stored.",
+    "type": "Rating type",
+    "typeAll": "All",
+    "valueNone": "Unrated",
+    "valueLiked": "Liked",
+    "valueDisliked": "Disliked",
+    "time": "Time",
+    "operator": "User",
+    "message": "Message ID",
+    "change": "Change",
+    "comment": "Dislike reason",
+    "empty": "No ratings yet"
   }
 }

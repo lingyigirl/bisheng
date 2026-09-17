@@ -398,5 +398,16 @@
   "fallback": "The operation failed. Please try again later.",
   "15026": "Failed to connect to the MCP service: {{exception}}. Hint: on 401/403, check the auth setup — the API key can be passed as a header, e.g. \"headers\": {\"Authorization\": \"Bearer <key>\"}, instead of a URL query parameter",
   "11201": "Message blocked: input contains sensitive words",
-  "11202": "Output truncated: generated content contains sensitive words"
+  "11202": "Output truncated: generated content contains sensitive words",
+  "11601": "The requested document type is not available (missing or disabled)",
+  "11602": "This document type ID is already used by another template",
+  "11603": "Invalid template definition (check the name, applicability or field definitions)",
+  "11604": "The render form references a field that is not defined",
+  "11605": "The document has no usable text layer, and no recognition service is configured in this environment",
+  "11606": "Could not determine the document type (no usable template, or confidence too low)",
+  "11607": "The extracted result does not match the template field definitions",
+  "11608": "Could not obtain document content or model output (model not configured, call failed, or timed out)",
+  "11609": "The document is unreadable or empty",
+  "11610": "The document exceeds the size limit",
+  "11611": "Template not found or not accessible"
 }

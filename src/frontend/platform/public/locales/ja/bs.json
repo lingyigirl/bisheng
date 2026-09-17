@@ -2326,5 +2326,20 @@
     "previewDropped": "長すぎて除外",
     "previewAddedSample": "追加例",
     "imported": "インポート完了。{{count}} 件を書き込みました"
+  },
+  "feedbackLogs": {
+    "title": "回答評価の明細",
+    "desc": "いいね・低評価・取り消しの各操作を個別に記録し、操作の流れを再現できます（回答本文は保存しません）。",
+    "type": "評価種別",
+    "typeAll": "すべて",
+    "valueNone": "未評価",
+    "valueLiked": "いいね",
+    "valueDisliked": "低評価",
+    "time": "時刻",
+    "operator": "操作者",
+    "message": "メッセージID",
+    "change": "変化",
+    "comment": "低評価の理由",
+    "empty": "評価記録はありません"
   }
 }

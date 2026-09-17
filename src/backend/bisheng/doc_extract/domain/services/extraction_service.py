@@ -91,7 +91,7 @@ class ExtractionService:
     def _resolve_model_id(tenant_id: int | None) -> int | None:
         """Read the tenant's configured extraction model.
 
-        Returns None when unconfigured, which the caller turns into 11408 before
+        Returns None when unconfigured, which the caller turns into 11608 before
         any parsing work happens -- no point parsing a document we cannot
         extract from.
         """

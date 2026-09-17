@@ -39,10 +39,10 @@
 - **信创部署目标**：客户环境可能跑本地小模型，JSON mode 不可依赖；前端须避开 `backdrop-filter`（根 AGENTS.md §4 明令，信创浏览器性能）。
 - **模型槽位是租户级**，不做模板级覆盖（spec 范围边界）。新增 `ConfigKeyEnum.DOC_EXTRACT_LLM`，落在 **`tenant_system_model_config`** 表（F022 之后系统级模型槽位在此，不在 `config` 表），读写走 `TenantSystemModelConfigDao`。
 - **性能与容量口径**（spec 把这些列为设计参数，在此定值）：
-  - **文档体量上限 20 MB**（超出 → 11410）。依据：证照类图片/PDF 典型在 1–5 MB，20 MB 足以覆盖高分辨率扫描件，同时避免单请求占用过多解析资源。
-  - **分类置信度阈值 0.6**（低于 → 11406）。依据：留出调参空间的同时不至于把明显命中的文档判为未识别；先取保守值，上线后按实际误判率调整（spec 已知缺口已记录「阈值不可按模板配置」）。
+  - **文档体量上限 20 MB**（超出 → 11610）。依据：证照类图片/PDF 典型在 1–5 MB，20 MB 足以覆盖高分辨率扫描件，同时避免单请求占用过多解析资源。
+  - **分类置信度阈值 0.6**（低于 → 11606）。依据：留出调参空间的同时不至于把明显命中的文档判为未识别；先取保守值，上线后按实际误判率调整（spec 已知缺口已记录「阈值不可按模板配置」）。
   - **字段校验重试次数 2**（含首次共 3 次尝试）。依据：模型偶发格式错误是常态，1 次重试不够、3 次以上边际收益低且放大延迟。
-  - **抽取接口超时：同步等待上限 120 秒**，超出即按 11408 返回。
+  - **抽取接口超时：同步等待上限 120 秒**，超出即按 11608 返回。
   - **本地抽取文本可用阈值：100 字符**（决策 6 的判据）。依据：证照类文档的字段信息量远超此数；低于该值基本可判定「没抽出实质内容」→ 转识别服务。取保守低值是为了避免把「短但有效」的文书误送去 OCR。
 
 ---
@@ -195,7 +195,7 @@
 
 - **背景**：spec 里两种模式的主体不同 —— AC-37 规定 **M-1a 对任意登录用户开放**，而 AC-36 / AC-41 规定 **M-1b 由租户管理员经管理界面发起**。二者却由同一个抽取端点承载（靠 `dry_run` 区分）。
 - **备选**：
-  - A. **单端点 + 服务层补校验**：端点的 Depends 用 `get_login_user`（放行所有登录用户），进服务层后若 `dry_run=True` 再校验管理员身份，否则 11411。
+  - A. **单端点 + 服务层补校验**：端点的 Depends 用 `get_login_user`（放行所有登录用户），进服务层后若 `dry_run=True` 再校验管理员身份，否则 11611。
   - B. 拆成两个端点：`/extract`（登录用户）与 `/trial_extract`（管理员依赖）。
   - C. 端点的 Depends 直接用 `get_tenant_admin_user`，两种模式都要求管理员。
 - **选定**：A
@@ -215,7 +215,7 @@
 - **选定**：A
 - **原因**：单份证照 + 可用模型通常秒级返回；B 会让调用方（后续的工作流节点、对话附件）都要处理轮询与超时，复杂度前置。spec 明确把异步列为**本次排除**。
 - **风险与兜底**：一旦上扫描件 + 本地推理模型，分钟级是常态，届时同步会撞超时。因此：
-  - 同步等待上限设为 **120 秒**（§2），超时按 11408 返回，**不让请求无限挂起**。
+  - 同步等待上限设为 **120 秒**（§2），超时按 11608 返回，**不让请求无限挂起**。
   - 接口**返回体形态**（见 §4.2：`ok` / `fields` / `markdown` / `template` / `confidence` / `route` / `missing_fields`）设计为「异步化后可作为任务结果原样返回」，使后续引入 `status` + `task_id` 时不破坏既有字段。
 - **何时该重新考虑**：出现「单次抽取耗时中位数 > 30 秒」或「批量抽取」需求时，改异步。
 
@@ -321,7 +321,7 @@
 ```json
 {
   "ok": false,
-  "error_code": 11405,
+  "error_code": 11605,
   "error_message": "文档无可用文字层，且当前环境未配置识别服务",
   "reason": "no_parser"
 }
@@ -331,16 +331,16 @@
 
 | `reason` | 错误码 | 来源 AC | 触发条件 |
 |---|---|---|---|
-| `doc_unreadable` | 11409 | AC-44 | 文档不可读或为空 |
-| `over_size` | 11410 | AC-44 | 超出 20 MB |
-| `model_unconfigured` | 11408 | AC-44 | 租户未配 `doc_extract_llm` |
-| `no_parser` | 11405 | AC-44 | 无文字层且未配识别服务 |
-| `ocr_failed` | 11408 | AC-44 | 识别服务调用失败或超时 |
-| `model_failed` | 11408 | AC-44 | 抽取阶段模型调用失败或超时 |
-| `field_invalid` | 11407 | AC-44 | 字段校验重试耗尽 |
-| `definition_invalid` | 11403 / 11404 | **AC-42** | 编辑器中的定义未通过合法性校验（字段定义非法 → 11403；呈现形式悬空引用 → 11404） |
-| `template_missing` | 11411 | **AC-43** | 试抽取时该模板已被其他管理员删除 |
-| `forbidden` | 11411 | **AC-37 / AC-36** | 非管理员发起 `dry_run=true`（决策 13） |
+| `doc_unreadable` | 11609 | AC-44 | 文档不可读或为空 |
+| `over_size` | 11610 | AC-44 | 超出 20 MB |
+| `model_unconfigured` | 11608 | AC-44 | 租户未配 `doc_extract_llm` |
+| `no_parser` | 11605 | AC-44 | 无文字层且未配识别服务 |
+| `ocr_failed` | 11608 | AC-44 | 识别服务调用失败或超时 |
+| `model_failed` | 11608 | AC-44 | 抽取阶段模型调用失败或超时 |
+| `field_invalid` | 11607 | AC-44 | 字段校验重试耗尽 |
+| `definition_invalid` | 11603 / 11604 | **AC-42** | 编辑器中的定义未通过合法性校验（字段定义非法 → 11603；呈现形式悬空引用 → 11604） |
+| `template_missing` | 11611 | **AC-43** | 试抽取时该模板已被其他管理员删除 |
+| `forbidden` | 11611 | **AC-37 / AC-36** | 非管理员发起 `dry_run=true`（决策 13） |
 
 > **后三项为什么也走 `ok: false` 而非 HTTP 错误码**：它们同样是「管理员在调参过程中预期会撞上」的情形，弹 toast 反而打断节奏。**但 `forbidden` 是唯一的例外见下方说明。**
 
@@ -381,7 +381,7 @@
 |---|---|---|---|
 | 1 | **对话 LLM 层没有结构化输出支持**：`core/ai/llm/`（chat_openai_compatible / chat_qwen / chat_minimax …）下**无** `response_format` / `json_schema` / `with_structured_output`。注意 `response_format` 在仓库里**有**出现（6 个文件），但都不在对话 LLM 调用路径上：`core/ai/tts/` 两个客户端（指音频格式）、`core/ai/rerank/xinference/client/restful/`（该目录下 vendored 的**文生图/ASR 句柄**，指返回图片 URL 还是 base64）。**最危险的一处是 `core/ai/rerank/xinference/_compat.py`：它直接定义了 `ResponseFormatJSONObject` / `ResponseFormatJSONSchema` 两个类** —— grep 到它们极易误判「平台已支持 JSON Schema 结构化输出」，实际那是 vendored SDK 的类型定义，与对话链路无关。`LLMModelType` 只有 `llm/embedding/rerank/asr/tts`，无 vision 类型 | 以为「调个 JSON mode 就行」→ 在信创本地模型上做不到，抽取结果全靠字符串解析。反向误判同样有害：grep 到 `response_format` 就以为链路已具备 | 决策 4 的自建链路；`extraction_service` + `field_validator` |
 | 2 | **多模态消息构造是有的，共两处**：`workstation/domain/services/chat_service.py:1559-1562`（图片拼成 `{"type": "image_url", ...}` 后送 `HumanMessage`，:1581）与 `core/ai/llm/chat_openai_reasoning.py:37-46`（`_convert_standard_image_block()` 把 data-url / 远程 URL 转成同一形态） | 与我最初「无多模态构造代码」的判断相反 —— **VLM 直连路径比预想的更可行**：若要新增 vision 分支，这是可参照的现成写法，不必从零构造消息体 | §9 第二阶段的备选路径；`parse_adapter` 的 vision 分支若要做，参照 `chat_openai_reasoning.py:37` 的转换函数 |
-| 3 | **本地 loader 模式下图片直接抛错**：`_init_image_loader()`（`base_file_pipeline.py:257`）在 loader 是 `LocalPdfLoader` 时于 `:260` 抛 `KnowledgeFileNotSupportedError` | 以为「统一输入」开箱即用 → 实际图片链路**完全取决于环境是否配了 paddle_ocr / mineru / etl4lm**；未配置时图片请求全部失败 | `parse_adapter` 的前置检查 → 11405；实施顺序见 §9 |
+| 3 | **本地 loader 模式下图片直接抛错**：`_init_image_loader()`（`base_file_pipeline.py:257`）在 loader 是 `LocalPdfLoader` 时于 `:260` 抛 `KnowledgeFileNotSupportedError` | 以为「统一输入」开箱即用 → 实际图片链路**完全取决于环境是否配了 paddle_ocr / mineru / etl4lm**；未配置时图片请求全部失败 | `parse_adapter` 的前置检查 → 11605；实施顺序见 §9 |
 | 4 | **`CLASSIFY_PROMPT` 是硬编码枚举的现成先例**（`file_encoding.py:78`），含「LLM + 固定枚举 + 正则校验 + 失败兜底」完整模式 | 重新发明分类链路，或反过来直接复用它的硬编码枚举（那是首钢部署特有的，换个客户就错） | 决策 2 将其一般化；`classifier_service` 参照其结构但枚举来自数据 |
 | 5 | **`TempFilePipeline` 有 4 处既有调用点**：`workbench_impl.py:456` 与 `:1281`（同文件两处，易只搜到一处）、`workflow/nodes/input/input.py:309`、`workstation/domain/services/chat_service.py:72`。本 feature 接入后为第 5 处 | 误以为它是「给知识库用的」或只服务于 1–2 个场景 → 改动时低估影响面；尤其 `workbench_impl.py:1281` 那处容易被漏（同文件搜到 456 就以为找全了） | `parse_adapter` 只**调用**不修改；若确需改动须回归全部 4 处既有调用点 |
 | 6 | **`_build_pdf_loader` 是 loader 选择的单一来源**（`base_file_pipeline.py:207`），etl4lm → mineru → paddle_ocr → local 四级降级写在一处 | 在别处另写一套「选哪个 loader」的逻辑 → 与 provider 配置漂移 | `parse_adapter` 通过 `TempFilePipeline` 间接使用，不复制该逻辑 |
@@ -409,7 +409,7 @@
 | `GET /api/v1/doc_extract/records` | HTTP API | platform 管理页的记录 tab（决策 12） |
 | `tenant_system_model_config` 表的 `doc_extract_llm` 槽位 | DB 行（**不是 `config` 表** —— F022 已把系统级模型槽位从 `config` 迁到租户表，读路径见 `llm/domain/services/llm.py:287` 的 `TenantSystemModelConfigDao.aresolve`） | 本 feature；租户模型配置页 |
 | `ExtractionService.extract()`（`doc_extract/domain/services/extraction_service.py`） | 内部 Python API | 后续场景接入直接调用（不经 HTTP）。**注意是 domain service 而非另立一个 `DocExtractService` 门面** —— 场景接入时直接依赖它即可 |
-| **错误码 11401–11411 的三语文案** | `packages/locales/src/api_errors/{zh-Hans,en,ja}.json` | 前端错误提示；**CI `pnpm check-i18n` 会校验后端错误码覆盖率，漏加会导致 CI 失败** |
+| **错误码 11601–11611 的三语文案** | `packages/locales/src/api_errors/{zh-Hans,en,ja}.json` | 前端错误提示；**CI `pnpm check-i18n` 会校验后端错误码覆盖率，漏加会导致 CI 失败** |
 
 ### 6.2 我依赖别人的（Incoming）
 
@@ -438,7 +438,7 @@
   1. platform 起在 `:3001`，进 `对话工作台 → 文档抽取` tab，建模板 `doc_type=business_license`，字段含 `company_name`（必填）与 `valid_to`（非必填）。
   2. 点「试抽取」传样件 → 看 JSON 与呈现结果、`route`、`missing_fields`。
   3. 业务抽取：`curl -X POST http://localhost:7860/api/v1/doc_extract/extract -H "Authorization: Bearer <token>" -F "file=@license.pdf" -F "doc_type=business_license"` → 期望返回 `ok:true` 与 `route:"text"`。
-  4. 同一份拍照件重跑 → 期望 `route:"ocr"`；若环境未配识别服务则得 11405（这本身就是 AC-18 的正确行为，不是故障）。
+  4. 同一份拍照件重跑 → 期望 `route:"ocr"`；若环境未配识别服务则得 11605（这本身就是 AC-18 的正确行为，不是故障）。
   5. 查记录：`GET /api/v1/doc_extract/records?template_id=<id>`；查留痕：审计页按 `doc_extract_template` 模块筛选。
 - **信创环境必测**：前端管理页在 信保安全浏览器（Chromium 108）下的滚动与交互流畅度（根 AGENTS.md §4 的性能教训）。
 
@@ -469,7 +469,7 @@
 
 这样安排的理由：图片链路能否跑通**完全取决于环境是否配了远程解析服务**，而这一点在需求澄清时是「待确认」状态（spec 关联 PRD 段落）。若把图片链路排在最前，一旦环境不具备，整个 feature 阻塞；按此顺序，**即使识别服务最终不可用，第一 + 第三阶段交付的底座仍然可用**。
 
-**第二阶段的备选路径**（若环境既不配 OCR 也无可用的多模态模型）：此时图片链路确实不可交付，按 11405 明确报错即可，**不要**为了「让图片能跑」临时引入新的外部服务 —— 那会违反「不新增服务配置项」的非目标（§1）。
+**第二阶段的备选路径**（若环境既不配 OCR 也无可用的多模态模型）：此时图片链路确实不可交付，按 11605 明确报错即可，**不要**为了「让图片能跑」临时引入新的外部服务 —— 那会违反「不新增服务配置项」的非目标（§1）。
 
 ---
 

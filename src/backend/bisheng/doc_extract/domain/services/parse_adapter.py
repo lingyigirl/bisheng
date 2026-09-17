@@ -59,7 +59,7 @@ class ParseAdapter:
 
         Returns ``(text, route)`` with route in ``{'text', 'ocr'}``.
 
-        Raises ``DocExtractNoParserError`` (11405) when there is no usable text
+        Raises ``DocExtractNoParserError`` (11605) when there is no usable text
         and the deployment has no recognition service to fall back to. That is
         a configuration problem, not a document problem, and the message says
         which -- the operator needs to know what to set up.

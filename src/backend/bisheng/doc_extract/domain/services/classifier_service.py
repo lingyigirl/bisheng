@@ -59,7 +59,7 @@ class ClassifierService:
     def _parse_reply(reply: str) -> tuple[str, float]:
         """Extract ``(doc_type, confidence)`` from the model's reply.
 
-        Raises ``DocExtractContentFetchError`` (11408) when the reply cannot be
+        Raises ``DocExtractContentFetchError`` (11608) when the reply cannot be
         read -- from the caller's point of view an unusable reply and a failed
         call are the same outcome: this run produced nothing.
         """

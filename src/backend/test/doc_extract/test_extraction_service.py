@@ -117,12 +117,12 @@ def _patch_run_dao():
 # --- precheck row 1: unreadable / empty ------------------------------------
 
 
-async def test_missing_file_raises_11409():
+async def test_missing_file_raises_11609():
     with pytest.raises(DocExtractDocUnreadableError):
         await _run(file_path='/definitely/not/here.pdf')
 
 
-async def test_empty_file_raises_11409(tmp_path):
+async def test_empty_file_raises_11609(tmp_path):
     empty = tmp_path / 'empty.pdf'
     empty.write_bytes(b'')
     with pytest.raises(DocExtractDocUnreadableError):
@@ -132,7 +132,7 @@ async def test_empty_file_raises_11409(tmp_path):
 # --- precheck row 2: oversize ----------------------------------------------
 
 
-async def test_oversize_document_raises_11410(tmp_path):
+async def test_oversize_document_raises_11610(tmp_path):
     big = tmp_path / 'big.pdf'
     big.write_bytes(b'x' * (MAX_DOCUMENT_BYTES + 1))
     with pytest.raises(DocExtractDocTooLargeError):
@@ -157,7 +157,7 @@ async def test_document_at_limit_is_accepted(tmp_path):
 # --- precheck row 3: model unconfigured ------------------------------------
 
 
-async def test_unconfigured_model_raises_11408(tmp_path):
+async def test_unconfigured_model_raises_11608(tmp_path):
     doc = tmp_path / 'x.pdf'
     doc.write_bytes(b'x' * 10)
     with patch(f'{SERVICE}.ExtractionService._resolve_model_id', return_value=None):
@@ -168,7 +168,7 @@ async def test_unconfigured_model_raises_11408(tmp_path):
 # --- precheck row 5: explicit type unavailable ------------------------------
 
 
-async def test_explicit_unknown_doc_type_raises_11401(tmp_path):
+async def test_explicit_unknown_doc_type_raises_11601(tmp_path):
     doc = tmp_path / 'x.pdf'
     doc.write_bytes(b'x' * 10)
     model = _patch_model()
@@ -180,7 +180,7 @@ async def test_explicit_unknown_doc_type_raises_11401(tmp_path):
             await _run(file_path=str(doc), doc_type='nope')
 
 
-async def test_explicit_disabled_type_raises_11401(tmp_path):
+async def test_explicit_disabled_type_raises_11601(tmp_path):
     """A disabled template must not be usable via the explicit path either."""
     doc = tmp_path / 'x.pdf'
     doc.write_bytes(b'x' * 10)
@@ -198,7 +198,7 @@ async def test_explicit_disabled_type_raises_11401(tmp_path):
 # --- precheck row 6/8: parser -------------------------------------------------
 
 
-async def test_no_usable_parser_raises_11405(tmp_path):
+async def test_no_usable_parser_raises_11605(tmp_path):
     doc = tmp_path / 'x.pdf'
     doc.write_bytes(b'x' * 10)
     model = _patch_model()
@@ -267,7 +267,7 @@ async def test_successful_extraction_returns_fields_and_markdown(tmp_path):
     assert result.determined_by == 'explicit'
 
 
-async def test_missing_required_field_retries_then_fails_11407(tmp_path):
+async def test_missing_required_field_retries_then_fails_11607(tmp_path):
     doc = tmp_path / 'x.pdf'
     doc.write_bytes(b'x' * 10)
     model = _patch_model('{}')  # never supplies the required field
@@ -411,7 +411,7 @@ async def test_business_run_failure_writes_failed_record(tmp_path):
     create.assert_awaited_once()
     payload = create.await_args.args[0]
     assert payload['status'] == 0
-    assert payload['error_code'] == 11407
+    assert payload['error_code'] == 11607
 
 
 async def test_trial_definition_is_used_instead_of_saved_one(tmp_path):
@@ -438,7 +438,7 @@ async def test_trial_definition_is_used_instead_of_saved_one(tmp_path):
     assert result.markdown == '法人：张三'
 
 
-async def test_trial_without_template_id_raises_11411(tmp_path):
+async def test_trial_without_template_id_raises_11611(tmp_path):
     """AC-43: a trial run needs a template to attribute the result to.
 
     The model slot is stubbed because the precheck table checks it first (row 3
@@ -452,7 +452,7 @@ async def test_trial_without_template_id_raises_11411(tmp_path):
             await _run(file_path=str(doc), dry_run=True, template_id=None)
 
 
-async def test_trial_with_deleted_template_raises_11411(tmp_path):
+async def test_trial_with_deleted_template_raises_11611(tmp_path):
     doc = tmp_path / 'x.pdf'
     doc.write_bytes(b'x' * 10)
     with (

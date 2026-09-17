@@ -53,7 +53,7 @@
 | `test/fixtures/table_definitions.py` | 尚未改（但 F059 的三张新表 `platform_sensitive_word` / `platform_sensitive_word_policy` / `message_feedback_event` 也**都需要**加 DDL，**双方极可能在此文件再撞一次**） | T-04 追加两张表 —— 同样**只追加** |
 | `api/router.py` | 尚未改 | T-26 追加 `doc_extract` router |
 | `database/models/audit_log.py` | 尚未改 | T-13 追加三处枚举 |
-| `packages/locales/src/api_errors/*.json` | 尚未改 | T-34 追加 11401–11411 三语 |
+| `packages/locales/src/api_errors/*.json` | 尚未改 | T-34 追加 11601–11611 三语 |
 | Alembic versions 目录 | 已加 `v2_7_0_f059_hit_log_source.py`（未提交） | T-03 的 `down_revision` 需指向它 —— 见该任务的说明 |
 
 **编号已让号**：错误码模块 **114**（113 归 F059）、**INV-12 ~ INV-15**（INV-10/11 归 F059）。勿改回。
@@ -70,23 +70,23 @@
 
 **改动**：新增 `src/backend/bisheng/common/errcode/doc_extract.py`（1 个文件）
 
-11 个错误码类，继承 `BaseErrorCode`，模块号 **114**：
+11 个错误码类，继承 `BaseErrorCode`，模块号 **116**：
 
 | 码 | 类名建议 | Msg 口径 |
 |---|---|---|
-| 11401 | `DocExtractTypeUnavailableError` | 指定的文档类型不可用（不存在或已停用） |
-| 11402 | `DocExtractTypeDuplicateError` | 文档类型标识已存在 |
-| 11403 | `DocExtractTemplateInvalidError` | 模板定义非法 |
-| 11404 | `DocExtractRenderRefInvalidError` | 呈现形式引用了不存在的字段 |
-| 11405 | `DocExtractNoParserError` | 无可用识别服务 |
-| 11406 | `DocExtractTypeUnknownError` | 类型未识别（含无可判定候选、置信度低于阈值） |
-| 11407 | `DocExtractFieldInvalidError` | 字段校验失败 |
-| 11408 | `DocExtractContentFetchError` | 内容获取失败（模型未配置 / 调用失败 / 识别服务失败） |
-| 11409 | `DocExtractDocUnreadableError` | 文档不可读或为空 |
-| 11410 | `DocExtractDocTooLargeError` | 文档超出体量上限 |
-| 11411 | `DocExtractTemplateMissingError` | 模板不存在或无权限访问 |
+| 11601 | `DocExtractTypeUnavailableError` | 指定的文档类型不可用（不存在或已停用） |
+| 11602 | `DocExtractTypeDuplicateError` | 文档类型标识已存在 |
+| 11603 | `DocExtractTemplateInvalidError` | 模板定义非法 |
+| 11604 | `DocExtractRenderRefInvalidError` | 呈现形式引用了不存在的字段 |
+| 11605 | `DocExtractNoParserError` | 无可用识别服务 |
+| 11606 | `DocExtractTypeUnknownError` | 类型未识别（含无可判定候选、置信度低于阈值） |
+| 11607 | `DocExtractFieldInvalidError` | 字段校验失败 |
+| 11608 | `DocExtractContentFetchError` | 内容获取失败（模型未配置 / 调用失败 / 识别服务失败） |
+| 11609 | `DocExtractDocUnreadableError` | 文档不可读或为空 |
+| 11610 | `DocExtractDocTooLargeError` | 文档超出体量上限 |
+| 11611 | `DocExtractTemplateMissingError` | 模板不存在或无权限访问 |
 
-**为什么**：见 design §2 的 C5 落点 —— 113 已被 v2.7.0 的 F059 占用，故用 114。
+**为什么**：见 design §2 的 C5 落点 —— 113 已被 v2.7.0 的 F059 占用，故用 116。
 
 **验证**：`python -c "from bisheng.common.errcode.doc_extract import DocExtractTypeUnavailableError"` 无导入错误。
 
@@ -206,7 +206,7 @@ down_revision = "f059_hit_log_source"
 DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configuration
 ```
 
-**为什么必须有这个任务**：design 决策 10 要求模型槽位独立、不蹭 `knowledge_llm`；slot 落在 **`tenant_system_model_config`** 表（F022 之后系统级模型槽位在此，**不在 `config` 表**），读写走 `TenantSystemModelConfigDao`。spec §3.1 序号 3（租户未配置模型 → 11408）与 T-20 的用例 1 都依赖它存在。
+**为什么必须有这个任务**：design 决策 10 要求模型槽位独立、不蹭 `knowledge_llm`；slot 落在 **`tenant_system_model_config`** 表（F022 之后系统级模型槽位在此，**不在 `config` 表**），读写走 `TenantSystemModelConfigDao`。spec §3.1 序号 3（租户未配置模型 → 11608）与 T-20 的用例 1 都依赖它存在。
 
 **验证**：`ConfigKeyEnum.DOC_EXTRACT_LLM.value == "doc_extract_llm"`；确认 `tenant_system_model_config` 中无同名键冲突。
 
@@ -353,11 +353,11 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 **覆盖要点**：
 - 创建成功 + 列表可见（AC-04）
 - **新建默认启用**（AC-06）
-- **名称 / 适用范围 / 零字段 / 缺标识 / 标识重复 / 类型越界 → 11403**（AC-10）
+- **名称 / 适用范围 / 零字段 / 缺标识 / 标识重复 / 类型越界 → 11603**（AC-10）
 - **呈现形式为空可保存**（AC-11）
-- **呈现形式悬空引用 → 11404**（AC-09）
-- **标识重复 → 11402，且仅对未删除行判定**：删除后可用同标识重建（AC-07 + AC-08）
-- **不存在 / 非本租户的模板 → 11411**，且不区分二者（AC-05）
+- **呈现形式悬空引用 → 11604**（AC-09）
+- **标识重复 → 11602，且仅对未删除行判定**：删除后可用同标识重建（AC-07 + AC-08）
+- **不存在 / 非本租户的模板 → 11611**，且不区分二者（AC-05）
 - 停用的语义：从业务抽取排除（AC-12）
 - 修改后即时生效（AC-13）
 - 写成功后调 `AuditLogService` 留痕（AC-38）
@@ -393,7 +393,7 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 
 **覆盖要点**：
 - 有文字层的文档 → 返回 `(text, route="text")`，文本非空（AC-22）
-- 无文字层（或因故抽不出内容）→ 标记需转识别服务，**本阶段返回 11405**（AC-21 的图片侧在 T-35）
+- 无文字层（或因故抽不出内容）→ 标记需转识别服务，**本阶段返回 11605**（AC-21 的图片侧在 T-35）
 - 文本长度低于 **100 字符**（design §2 定值）→ 判定为「没抽出实质内容」
 - 源文件不被修改（与 T-20 的 AC-30 用例呼应）
 
@@ -438,10 +438,10 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 **覆盖要点**：
 - 候选集**只含本租户已启用模板**（AC-17）：停用、已删、其他租户的模板不得入选
 - 置信度 ≥ 阈值 → 返回命中类型与置信度（AC-16）
-- **置信度 < 阈值 → 11406**（AC-19）
-- **租户无已启用模板 → 11406**（spec §3.1 序号 6）
-- 模型返回非 JSON / 非法格式 → 按失败处理并落到 11408
-- 模型调用超时 → 11408
+- **置信度 < 阈值 → 11606**（AC-19）
+- **租户无已启用模板 → 11606**（spec §3.1 序号 6）
+- 模型返回非 JSON / 非法格式 → 按失败处理并落到 11608
+- 模型调用超时 → 11608
 - **LLM 全部 mock**
 
 **覆盖 AC**: AC-16, AC-17, AC-18, AC-19
@@ -476,17 +476,17 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 
 | 序 | 条件 | 适用模式 | 码 |
 |---|---|---|---|
-| 1 | 文档不可读或为空 | 全部 | 11409 |
-| 2 | 文档超出体量上限（20 MB） | 全部 | 11410 |
-| 3 | 当前租户未配置本特性所用模型 | 全部 | 11408 |
-| 4 | 文档无文字层且环境未配置可用识别服务 | 全部 | 11405 |
-| 5 | 指定的文档类型不存在或已停用 | 仅 M-1a + M-2a | 11401 |
-| 6 | 当前租户无已启用模板 | 仅 M-1a + M-2b | 11406 |
-| 7 | 判定阶段模型调用失败或超时 | 仅 M-1a + M-2b | 11408 |
-| 8 | 判定置信度低于阈值 | 仅 M-1a + M-2b | 11406 |
-| 9 | 识别服务调用失败或超时 | 全部 | 11408 |
-| 10 | 抽取阶段模型调用失败或超时 | 全部 | 11408 |
-| 11 | 模型结果不符字段定义，且重试耗尽 | 全部 | 11407 |
+| 1 | 文档不可读或为空 | 全部 | 11609 |
+| 2 | 文档超出体量上限（20 MB） | 全部 | 11610 |
+| 3 | 当前租户未配置本特性所用模型 | 全部 | 11608 |
+| 4 | 文档无文字层且环境未配置可用识别服务 | 全部 | 11605 |
+| 5 | 指定的文档类型不存在或已停用 | 仅 M-1a + M-2a | 11601 |
+| 6 | 当前租户无已启用模板 | 仅 M-1a + M-2b | 11606 |
+| 7 | 判定阶段模型调用失败或超时 | 仅 M-1a + M-2b | 11608 |
+| 8 | 判定置信度低于阈值 | 仅 M-1a + M-2b | 11606 |
+| 9 | 识别服务调用失败或超时 | 全部 | 11608 |
+| 10 | 抽取阶段模型调用失败或超时 | 全部 | 11608 |
+| 11 | 模型结果不符字段定义，且重试耗尽 | 全部 | 11607 |
 
 **覆盖要点**：
 1. **上表逐条**，且**构造同时命中多条的请求，断言返回序号最靠前者**（AC-01）
@@ -494,7 +494,7 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 3. **序号 9–11 失败 → M-1a 落失败记录、M-1b 不落**（AC-03）
 4. **M-2a 不经过判定**（AC-20）：断言无判定调用、`determined_by='explicit'`
 5. **抽取成功 → 产出符合字段定义的结构化结果**（AC-25）
-6. **模型结果不符定义 → 重试 ≤2 次，耗尽 → 11407 且指明字段**（AC-26）
+6. **模型结果不符定义 → 重试 ≤2 次，耗尽 → 11607 且指明字段**（AC-26）
 7. **额外字段 → 忽略并判通过，不重试**（AC-27）
 7b. **M-2b 且置信度达阈值 → 采用命中类型对应的模板执行抽取**（AC-18）：断言编排层用的是判定返回的那个模板
 8. **M-1a 成功 → 落记录，`determined_by='auto'`**（AC-31）
@@ -517,10 +517,10 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 **逻辑**（design §4.1）：前置校验（按上表 §3.1）→ `parse_adapter`（T-17）→ 判定（T-19，**M-2b 时**；命中后采用其模板，即 AC-18 后半）→ 抽取（LLM + T-08 校验 + 重试 ≤2）→ 渲染（T-10）→ 落记录（M-1a：成功与序号 9–11 的失败均落）。
 
 **关键约束**：
-- **模型槽位解析**：`model_id` 由 `ConfigKeyEnum.DOC_EXTRACT_LLM`（T-06）经 `TenantSystemModelConfigDao` 解析取得；解析不到即 spec §3.1 序号 3 的 11408（租户未配置模型），**在解析文档前就拒绝**
+- **模型槽位解析**：`model_id` 由 `ConfigKeyEnum.DOC_EXTRACT_LLM`（T-06）经 `TenantSystemModelConfigDao` 解析取得；解析不到即 spec §3.1 序号 3 的 11608（租户未配置模型），**在解析文档前就拒绝**
 - **同步执行，超时上限 120 秒**（design §2 / 决策 14）—— 绝不无限挂起
 - **重试次数 2**（含首次共 3 次尝试）
-- 模型调用失败/超时**不重试**（AC-24 的 11408），与「结果不合规需重试」是两回事
+- 模型调用失败/超时**不重试**（AC-24 的 11608），与「结果不合规需重试」是两回事
 - `determined_by` 落 `'explicit'`（M-2a）或 `'auto'`（M-2b）
 - **`ExtractionService.extract()` 是本 feature 对外的内部 Python API**（design §6.1），后续场景接入直接依赖它
 
@@ -554,7 +554,7 @@ DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configu
 - 试抽取失败返回 `ok:false` + 正确的 `reason`（AC-44）
 - 试抽取成功返回 `missing_fields` 与 `template.field_schema`（AC-45）
 - **编辑器定义不合法 → 拒绝试抽取**（AC-42）
-- **模板已被删 → 11411**（AC-43）
+- **模板已被删 → 11611**（AC-43）
 - 记录检索的筛选与游标分页（AC-32）
 
 **覆盖 AC**: AC-04, AC-05, AC-06, AC-07, AC-08, AC-09, AC-10, AC-11, AC-12, AC-13, AC-32, AC-35, AC-36, AC-37, AC-42, AC-43, AC-44, AC-45
@@ -696,7 +696,7 @@ listRecords({template_id?, status?, start_time?, end_time?, cursor?})
 - 新建模板 `doc_type=business_license`，字段含 `company_name`（必填）与 `valid_to`（非必填）
 - 保存 → 列表可见、默认启用
 - **6 类非法输入逐一验**：空名称、零字段、缺标识、字段标识重复、字段类型越界、呈现形式引用不存在的字段 → **保存前即被拦并提示**（AC-46）
-- **类型标识与既有未删除模板冲突 → 保存被拦**（AC-46 / AC-07，返 11402）
+- **类型标识与既有未删除模板冲突 → 保存被拦**（AC-46 / AC-07，返 11602）
 - 删除模板 → 用同标识可重建（AC-08 的前端侧）
 
 **覆盖 AC**: AC-39, AC-46
@@ -733,7 +733,7 @@ listRecords({template_id?, status?, start_time?, end_time?, cursor?})
 - **作用于编辑器中未保存的定义**，且**恒用当前编辑的这个模板**，不因判定命中别的类型而改用其他模板（AC-41）
 - 试抽取失败 → **走 `ok:false` 的 200 响应**展示原因，**不依赖 HTTP 错误码 + silent**（design 坑 15：`captureAndAlertRequestErrorHoc` 对 `silent` 请求仍会弹 toast）
 - **定义不合法 → 拒绝试抽取并告知**（AC-42）
-- **模板已被删 → 11411**（AC-43）
+- **模板已被删 → 11611**（AC-43）
 - 失败原因按 `reason` 枚举分类展示（AC-44）
 - 成功时标识未抽到的字段（AC-45）
 - **不写回模板**，未保存的改动不因此被保存或丢弃（AC-41）
@@ -741,7 +741,7 @@ listRecords({template_id?, status?, start_time?, end_time?, cursor?})
 **手动验证**：
 - 改字段定义后**不保存**，直接点「试抽取」→ 应跑通且用的是改动后的定义
 - 试抽取后未保存的改动仍在（未被保存也未被丢弃）
-- 传一个空文件 → 应展示 11409 的原因
+- 传一个空文件 → 应展示 11609 的原因
 
 **覆盖 AC**: AC-41, AC-42, AC-43, AC-44, AC-45
 
@@ -785,7 +785,7 @@ listRecords({template_id?, status?, start_time?, end_time?, cursor?})
 
 **改动**：`src/frontend/packages/locales/src/api_errors/{zh-Hans,en,ja}.json`（3 个文件）
 
-各加 11401–11411 十一条。
+各加 11601–11611 十一条。
 
 **为什么**：错误码文案的唯一来源是 `packages/locales`（`api_errors` 域）。**CI 的 `pnpm check-i18n` 会校验后端错误码覆盖率，漏加会导致 CI 失败**。生成产物（`platform/public/locales/*/api_errors.json`、`client/src/locales/*/api_errors.gen.json`）**不得手工编辑**。
 
@@ -801,11 +801,11 @@ listRecords({template_id?, status?, start_time?, end_time?, cursor?})
 
 **改动**：`src/backend/bisheng/doc_extract/domain/services/parse_adapter.py` + `src/backend/test/doc_extract/test_parse_adapter_ocr.py`（2 个文件）
 
-**逻辑**：无文字层且环境配了识别服务 → 经该服务获得内容，`route="ocr"`（AC-23）；未配置 → **11405**，并指明缺失哪项配置。
+**逻辑**：无文字层且环境配了识别服务 → 经该服务获得内容，`route="ocr"`（AC-23）；未配置 → **11605**，并指明缺失哪项配置。
 
 **为什么排在这里**：**图片链路能否跑通完全取决于环境是否配了远程解析服务**，而这一点需求澄清时是「待确认」状态。排在 Wave H 意味着 —— **即使识别服务最终不可用，Wave 0 ~ G 交付的底座仍然完整可用**（design §9）。
 
-**识别服务已配置但调用失败 → 11408**（AC-24），与模型调用失败同码。
+**识别服务已配置但调用失败 → 11608**（AC-24），与模型调用失败同码。
 
 **备选路径**：若环境配的是多模态模型而非 OCR，可参照 `workstation/domain/services/chat_service.py:1559` 或 `core/ai/llm/chat_openai_reasoning.py:37` 的现成写法构造图片消息（design 坑 2）。**但不得为此新增外部服务配置项** —— 那违反 design §1 的非目标。
 

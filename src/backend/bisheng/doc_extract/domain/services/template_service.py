@@ -42,8 +42,8 @@ class TemplateService:
     ) -> None:
         """Reject an unusable template before it is stored.
 
-        Raises ``DocExtractTemplateInvalidError`` (11403) or
-        ``DocExtractRenderRefInvalidError`` (11404).
+        Raises ``DocExtractTemplateInvalidError`` (11603) or
+        ``DocExtractRenderRefInvalidError`` (11604).
         """
         if not (name or '').strip():
             raise DocExtractTemplateInvalidError(msg='模板名称不能为空')

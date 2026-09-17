@@ -66,7 +66,7 @@ async def test_short_text_is_not_treated_as_usable_content(tmp_doc):
                 )
 
 
-async def test_empty_text_without_recognition_service_raises_11405(tmp_doc):
+async def test_empty_text_without_recognition_service_raises_11605(tmp_doc):
     with patch(f'{ADAPTER}.TempFilePipeline') as pipeline_cls:
         pipeline_cls.return_value.arun = AsyncMock(return_value=_fake_pipeline_result(''))
         with patch(f'{ADAPTER}.ParseAdapter._has_recognition_service', return_value=False):

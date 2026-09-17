@@ -252,7 +252,7 @@ async def test_trial_failure_returns_ok_false_with_reason(admin_client, child_te
     assert body['status_code'] == 200
     assert body['data']['ok'] is False
     assert body['data']['reason'] == 'no_parser'
-    assert body['data']['error_code'] == 11405
+    assert body['data']['error_code'] == 11605
 
 
 async def test_trial_success_returns_schema_and_missing_fields(admin_client, child_tenant):

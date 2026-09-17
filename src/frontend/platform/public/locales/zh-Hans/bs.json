@@ -2326,5 +2326,20 @@
     "previewDropped": "超长已丢弃",
     "previewAddedSample": "新增示例",
     "imported": "导入完成，共写入 {{count}} 条"
+  },
+  "feedbackLogs": {
+    "title": "问答评价明细",
+    "desc": "每一次点赞、差评与取消操作都单独留痕，可还原用户的完整操作轨迹（不记录回答原文）。",
+    "type": "评价类型",
+    "typeAll": "全部",
+    "valueNone": "未评价",
+    "valueLiked": "点赞",
+    "valueDisliked": "差评",
+    "time": "时间",
+    "operator": "操作人",
+    "message": "消息ID",
+    "change": "变化",
+    "comment": "差评原因",
+    "empty": "暂无评价记录"
   }
 }

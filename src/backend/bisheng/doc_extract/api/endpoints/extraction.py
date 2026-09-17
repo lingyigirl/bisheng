@@ -164,12 +164,12 @@ def _reason_for(exc: Exception) -> str:
     """
     code = getattr(exc, 'code', None)
     return {
-        11409: 'doc_unreadable',
-        11410: 'over_size',
-        11405: 'no_parser',
-        11407: 'field_invalid',
-        11411: 'template_missing',
-        11401: 'type_unavailable',
-        11406: 'type_unknown',
-        11408: 'content_fetch_failed',
+        11609: 'doc_unreadable',
+        11610: 'over_size',
+        11605: 'no_parser',
+        11607: 'field_invalid',
+        11611: 'template_missing',
+        11601: 'type_unavailable',
+        11606: 'type_unknown',
+        11608: 'content_fetch_failed',
     }.get(code, 'unknown')

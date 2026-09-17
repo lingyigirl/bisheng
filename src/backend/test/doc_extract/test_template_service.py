@@ -206,7 +206,7 @@ async def test_update_validates_and_audits(audit_spy):
     assert audit_spy.await_args.kwargs['action'] == DocExtractAuditAction.TEMPLATE_UPDATE
 
 
-async def test_update_missing_template_raises_11411(audit_spy):
+async def test_update_missing_template_raises_11611(audit_spy):
     with patch(f'{SERVICE}.DocExtractTemplateDao.aget_by_id', new_callable=AsyncMock, return_value=None):
         with pytest.raises(DocExtractTemplateMissingError):
             await TemplateService.aupdate(operator_id=7, template_id=999, **VALID_PAYLOAD)
@@ -251,7 +251,7 @@ async def test_delete_soft_deletes_and_audits(audit_spy):
     assert audit_spy.await_args.kwargs['action'] == DocExtractAuditAction.TEMPLATE_DELETE
 
 
-async def test_delete_missing_template_raises_11411(audit_spy):
+async def test_delete_missing_template_raises_11611(audit_spy):
     with patch(f'{SERVICE}.DocExtractTemplateDao.aget_by_id', new_callable=AsyncMock, return_value=None):
         with pytest.raises(DocExtractTemplateMissingError):
             await TemplateService.adelete(operator_id=7, template_id=999)
@@ -284,7 +284,7 @@ async def test_enable_audits_with_enable_action(audit_spy):
 # --- read -------------------------------------------------------------------
 
 
-async def test_get_missing_template_raises_11411():
+async def test_get_missing_template_raises_11611():
     with patch(f'{SERVICE}.DocExtractTemplateDao.aget_by_id', new_callable=AsyncMock, return_value=None):
         with pytest.raises(DocExtractTemplateMissingError):
             await TemplateService.aget(999)
