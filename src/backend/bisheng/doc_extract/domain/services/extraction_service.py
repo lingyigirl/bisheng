@@ -475,7 +475,10 @@ class ExtractionService:
         -- a privilege escalation, not a convenience gap.
         """
         from bisheng.common.dependencies.user_deps import UserPayload
-        from bisheng.core.context.tenant import get_current_tenant_id
+        from bisheng.core.context.tenant import (
+            DEFAULT_TENANT_ID,
+            get_current_tenant_id,
+        )
         from bisheng.utils.http_middleware import _check_is_global_super
 
         if isinstance(user, UserPayload):
@@ -492,9 +495,14 @@ class ExtractionService:
         except Exception:
             logger.warning('doc_extract super-admin check failed', exc_info=True)
 
+        # Mirrors `get_tenant_admin_user`, which admits a Child Admin only when
+        # the effective tenant is a real child. `has_tenant_admin` is documented
+        # to return False for the Root tenant (Root admins hold the global
+        # super_admin tuple instead, already handled above), so requiring a
+        # non-None tenant here would lock out single-tenant deployments.
         tenant_id = get_current_tenant_id()
         has_admin = getattr(user, 'has_tenant_admin', None)
-        if tenant_id is not None and callable(has_admin):
+        if tenant_id is not None and tenant_id != DEFAULT_TENANT_ID and callable(has_admin):
             try:
                 if await has_admin(tenant_id):
                     return
