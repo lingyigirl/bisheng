@@ -339,7 +339,6 @@ class ExtractionService:
             saved_template=saved_template,
         )
         field_schema = payload['field_schema']
-        render_template = payload['render_template']
 
         # --- rows 9-11: extraction, with records ----------------------------
         try:
@@ -427,7 +426,7 @@ class ExtractionService:
 
             try:
                 fields = cls._parse_fields(reply)
-            except DocExtractFieldInvalidError as exc:
+            except DocExtractFieldInvalidError:
                 # Format problem -- worth another attempt with feedback.
                 last_errors = [{'field_key': '_', 'label': '_', 'expected': 'JSON',
                                 'actual': reply[:200], 'reason': 'malformed_json'}]
