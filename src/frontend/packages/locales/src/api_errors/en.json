@@ -409,5 +409,7 @@
   "11608": "Could not obtain document content or model output (model not configured, call failed, or timed out)",
   "11609": "The document is unreadable or empty",
   "11610": "The document exceeds the size limit",
-  "11611": "Template not found or not accessible"
+  "11611": "Template not found or not accessible",
+  "11301": "Import failed: the file could not be parsed or contains no valid words",
+  "11302": "The word does not exist"
 }

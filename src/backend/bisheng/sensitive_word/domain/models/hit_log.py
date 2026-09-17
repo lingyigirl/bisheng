@@ -52,6 +52,15 @@ class SensitiveWordHitLog(SQLModelSerializable, table=True):
     action: str = Field(
         sa_column=Column(String(16), nullable=False, comment="命中动作: block/mask"),
     )
+    source: str | None = Field(
+        default=None,
+        sa_column=Column(
+            String(16),
+            nullable=True,
+            server_default=text("'tenant'"),
+            comment="命中来源: tenant=租户策略, platform=平台强制词库; NULL 等同 tenant",
+        ),
+    )
     create_time: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"), comment="创建时间"),
@@ -63,22 +72,34 @@ class SensitiveWordHitLogDao:
     async def alist(
         cls,
         *,
-        tenant_id: int,
+        tenant_id: int | None,
         direction: str | None = None,
         flow_id: str | None = None,
+        source: str | None = None,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[SensitiveWordHitLog], int]:
-        """Page through hit logs (newest first) with optional filters."""
+        """Page through hit logs (newest first) with optional filters.
+
+        `tenant_id=None` means "no tenant narrowing", used only by the
+        super-admin query, which runs with the automatic tenant filter bypassed.
+        Stating the tenant explicitly when one IS given matters there: with the
+        filter off in that process, relying on it would silently return every
+        tenant's rows.
+        """
         from sqlalchemy import func, select
 
-        where_clauses = [SensitiveWordHitLog.tenant_id == tenant_id]
+        where_clauses = []
+        if tenant_id is not None:
+            where_clauses.append(SensitiveWordHitLog.tenant_id == tenant_id)
         if direction:
             where_clauses.append(SensitiveWordHitLog.direction == direction)
         if flow_id:
             where_clauses.append(SensitiveWordHitLog.flow_id == flow_id)
+        if source:
+            where_clauses.append(SensitiveWordHitLog.source == source)
         if start_time:
             where_clauses.append(SensitiveWordHitLog.create_time >= start_time)
         if end_time:
@@ -111,12 +132,16 @@ class SensitiveWordHitLogDao:
         flow_id: str | None = None,
         chat_id: str | None = None,
         user_id: int | None = None,
+        source: str = "tenant",
     ) -> None:
         """Write one hit record without ever breaking the chat main flow.
 
         Best-effort audit data (design 决策 5): blocking/detection already happened
         before this call, so a failed log write must not fail the conversation
         (spec AC-16) — warn with traceback instead of raising.
+
+        `source` defaults to `tenant` so every F056 call site keeps its meaning
+        unchanged (spec AC-19); F059's platform layer passes `platform`.
         """
         try:
             async with get_async_db_session() as session:
@@ -130,6 +155,7 @@ class SensitiveWordHitLogDao:
                         flow_id=flow_id,
                         chat_id=chat_id,
                         user_id=user_id,
+                        source=source,
                     )
                 )
                 await session.commit()

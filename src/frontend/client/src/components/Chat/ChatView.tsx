@@ -664,6 +664,10 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
                           onPreviewFile={taskArtifacts.openPreview}
                           hideEmptyState
                           flatMode
+                          // F059: clicking a keyword / related question fills the
+                          // composer so the user can edit before sending — it
+                          // never auto-sends.
+                          onFillInput={setInputText}
                         />
                         {/* Soft translucent fade so the scrolling step flow
                             dissolves into the pinned task panel / input instead of

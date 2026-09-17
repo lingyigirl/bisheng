@@ -27,6 +27,33 @@ def stub_hit_log(monkeypatch):
     return recorder
 
 
+@pytest.fixture(autouse=True)
+def stub_platform_layer_off(monkeypatch):
+    """Switch the F059 platform layer off for these F056 tests.
+
+    Every test here is about the TENANT layer. The platform layer now runs first on
+    both directions (F059), so leaving it live would send each test to a real
+    database for the platform policy table. The platform layer has its own suite:
+    `test_chat_guard_platform.py`.
+    """
+    from bisheng.sensitive_word.domain.schemas import SensitiveWordCheckResult
+
+    async def _no_platform_matcher():
+        return None
+
+    async def _no_platform_text(text):
+        return SensitiveWordCheckResult(enabled=False, hits=[], auto_reply=None)
+
+    monkeypatch.setattr(
+        'bisheng.sensitive_word.domain.services.chat_guard.PlatformWordService.build_platform_matcher',
+        _no_platform_matcher,
+    )
+    monkeypatch.setattr(
+        'bisheng.sensitive_word.domain.services.chat_guard.PlatformWordService.check_platform_text',
+        _no_platform_text,
+    )
+
+
 def _policy(*, enabled=True, words_types=None, custom_words='', auto_reply='命中敏感词', extra_config=None):
     return SimpleNamespace(
         enabled=enabled,

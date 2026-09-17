@@ -23,7 +23,9 @@ import { Avatar, AvatarImage, AvatarName } from "~/components/ui/Avatar";
 import { TextToSpeechButton } from "~/components/Voice/TextToSpeechButton";
 import { ChatErrorCard, isTransientErrorType } from "~/components/ChatErrorCard";
 import { MessageFeedbackButtons } from "~/components/Chat/MessageFeedbackButtons";
-import { likeChatApi, disLikeCommentApi } from "~/api/apps";
+import { AiDisclaimer } from "~/components/Chat/AiDisclaimer";
+import { AnswerSuggestionBar } from "~/components/Chat/AnswerSuggestionBar";
+import { likeChatApi, disLikeCommentApi, getAnswerSuggestionsApi } from "~/api/apps";
 import { useGetBsConfig } from "~/hooks/queries/data-provider";
 import { useAuthContext, useLocalize } from "~/hooks";
 import { useMessageSelection } from "~/hooks/useMessageSelection";
@@ -145,6 +147,8 @@ interface AiMessageBubbleProps {
     /** F035: preview a task-turn document in the inline workspace panel (ChatView
         owns it) — a conversation doc link opens the file directly, no drawer. */
     onPreviewFile?: (file: ArtifactFile) => void;
+    /** F059: fill the composer from the suggestion bar (never sends). */
+    onFillInput?: (text: string) => void;
 }
 
 // --- Copy button with feedback ---
@@ -339,6 +343,7 @@ const AiMessageBubble = memo(
         onOpenCitationPanel,
         activeCitationMessageId,
         onPreviewFile,
+        onFillInput,
     }: AiMessageBubbleProps) => {
         const isUser = message.isCreatedByUser;
 
@@ -368,6 +373,7 @@ const AiMessageBubble = memo(
                 onOpenCitationPanel={onOpenCitationPanel}
                 activeCitationMessageId={activeCitationMessageId}
                 onPreviewFile={onPreviewFile}
+                onFillInput={onFillInput}
             />
         );
     }
@@ -496,6 +502,7 @@ function AssistantBubble({
     onOpenCitationPanel,
     activeCitationMessageId,
     onPreviewFile,
+    onFillInput,
 }: {
     message: ChatMessage;
     isLatest?: boolean;
@@ -510,8 +517,66 @@ function AssistantBubble({
     onOpenCitationPanel?: (payload: CitationReferencesDesktopPayload) => void;
     activeCitationMessageId?: string | null;
     onPreviewFile?: (file: ArtifactFile) => void;
+    /** F059: fill the composer from the suggestion bar (never sends). */
+    onFillInput?: (text: string) => void;
 }) {
     const localize = useLocalize();
+
+    // F059: scenario keywords + related questions, fetched once the answer is
+    // complete. Held in local state only — nothing is persisted, so a remount
+    // (page reload, history reload) simply shows nothing (spec AC-35/AC-43).
+    const [suggestions, setSuggestions] = useState<{ keywords: string[]; questions: string[] } | null>(null);
+    // Tracks WHICH message was already asked about, not merely "asked once".
+    // Regenerating swaps the message on this same component instance (the bubble
+    // carries no `key`), so a boolean would latch after the first answer and the
+    // regenerated one would never get suggestions.
+    const suggestionRequestedFor = useRef<string | null>(null);
+
+    useEffect(() => {
+        // Any failure returns empty arrays server-side and renders nothing; the
+        // catch is just belt-and-braces (spec AC-32/AC-41).
+        if (isStreaming || message.error || !message.messageId) return;
+        // No message id means a blocked round: the input hit the word library and
+        // no model ran, so there is nothing to derive suggestions from. NEVER
+        // synthesize an id here — that would turn this bar into a channel for
+        // echoing the very words that were blocked (spec AC-37).
+        if (suggestionRequestedFor.current === message.messageId) return;
+        const answer = (message.text || "").trim();
+        if (!answer) return;
+        suggestionRequestedFor.current = message.messageId;
+        // A new answer invalidates the previous bar.
+        setSuggestions(null);
+
+        let cancelled = false;
+        getAnswerSuggestionsApi({
+            chat_id: message.conversationId,
+            // Client-side ids are strings; the API expects a number, and only a
+            // persisted answer has one. A non-numeric id means this row was never
+            // stored (e.g. a blocked round), which is exactly the case we skip.
+            message_id: Number(message.messageId),
+            flow_id: (message as { flowId?: string }).flowId,
+            // The bubble owns the answer, not the question. The server derives
+            // keywords from the answer alone and uses the answer as the
+            // retrieval query, so an empty question is a normal case rather
+            // than a degraded one.
+            question: "",
+            answer,
+        })
+            .then((res) => {
+                if (cancelled) return;
+                if (res?.keywords?.length || res?.questions?.length) {
+                    setSuggestions({ keywords: res.keywords || [], questions: res.questions || [] });
+                }
+            })
+            .catch(() => void 0);
+        return () => {
+            cancelled = true;
+        };
+        // `message` is a fresh object each render, so depending on it would
+        // re-fire the request on every render. The fields actually read are
+        // listed individually instead, plus a ref guard for run-once semantics.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isStreaming, message.error, message.messageId, message.conversationId, message.text]);
 
     // Prefer the backend's own classification; fall back to the status code so
     // pre-classification backends still split busy-vs-failed correctly, and land
@@ -806,6 +871,22 @@ function AssistantBubble({
                         {siblingIdx !== undefined && siblingCount !== undefined && setSiblingIdx && (
                             <SiblingSwitch siblingIdx={siblingIdx} siblingCount={siblingCount} setSiblingIdx={setSiblingIdx} />
                         )}
+                    </div>
+                )}
+
+                {/* F059 answer bar. Order is fixed: keywords, then questions, then
+                    the disclaimer LAST — its position must not shift when the
+                    suggestions arrive asynchronously (spec AC-49). */}
+                {!isStreaming && regularContent && !isTransientError && (
+                    <div>
+                        {allowFeedback && suggestions && (
+                            <AnswerSuggestionBar
+                                keywords={suggestions.keywords}
+                                questions={suggestions.questions}
+                                onPick={(text) => onFillInput?.(text)}
+                            />
+                        )}
+                        <AiDisclaimer className="mt-1.5 text-caption text-text-3" />
                     </div>
                 )}
             </div>

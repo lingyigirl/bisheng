@@ -68,4 +68,17 @@ class SensitiveWordHitLogItem(BaseModel):
     user_id: int | None = None
     hits: list[SensitiveWordHit] = Field(default_factory=list)
     action: str
+    # F059: which layer produced the hit. `tenant` for every pre-F059 row and for
+    # rows written by the tenant policy; `platform` for the mandatory platform
+    # library. A NULL from a rolling deploy reports as `tenant`, matching the
+    # column's server default.
+    source: str = 'tenant'
+    # Super-admin view only; the tenant view is already scoped to one tenant,
+    # where repeating the id on every row is noise.
+    tenant_id: int | None = None
+    # Number of distinct hit words. Separate from `hits` because the tenant view
+    # strips `hits` for platform rows but still shows how many matched — the
+    # tenant learns that a block happened and its extent, without learning the
+    # words (spec AC-18).
+    hit_count: int = 0
     create_time: datetime

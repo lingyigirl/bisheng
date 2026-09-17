@@ -177,6 +177,8 @@
   "11190": "Invite code already bound",
   "11201": "Message blocked: input contains sensitive words",
   "11202": "Output truncated: generated content contains sensitive words",
+  "11301": "Import failed: the file could not be parsed or contains no valid words",
+  "11302": "The word does not exist",
   "11403": "No permission to view",
   "11601": "The requested document type is not available (missing or disabled)",
   "11602": "This document type ID is already used by another template",

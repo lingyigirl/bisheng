@@ -2040,5 +2040,8 @@
   "com_app_plaza_recent_empty": "使用履歴はありません",
   "com_app_plaza_preview_start": "チャット開始",
   "com_app_plaza_stats_failed": "統計の読み込みに失敗しました",
-  "com_app_plaza_retry": "再試行"
+  "com_app_plaza_retry": "再試行",
+  "com_ai_generated_disclaimer": "この回答はAIが生成されたものです。参考情報としてご利用いただき、内容はご自身でご確認ください。",
+  "com_suggestion_keywords": "関連キーワード",
+  "com_suggestion_questions": "こんな質問もできます"
 }

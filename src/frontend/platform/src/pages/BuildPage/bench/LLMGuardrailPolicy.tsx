@@ -6,6 +6,10 @@ import { RadioGroup, RadioGroupItem } from "@/components/bs-ui/radio-group";
 import { Switch } from "@/components/bs-ui/switch";
 import { useToast } from "@/components/bs-ui/toast/use-toast";
 import {
+    getPlatformPolicyApi,
+    updatePlatformPolicyApi,
+} from "@/controllers/API/platformSensitiveWord";
+import {
     CHAT_INPUT_POLICY,
     CHAT_OUTPUT_POLICY,
     getSensitiveWordPolicyApi,
@@ -217,10 +221,116 @@ function DirectionPolicySection({
     );
 }
 
+/**
+ * Platform-wide (cross-tenant) guardrail policy.
+ *
+ * Visually distinct from the tenant sections below it, and deliberately so: this
+ * one is enforced on EVERY tenant and cannot be disabled by them (spec AC-08).
+ * Rendering it with the same chrome as the tenant sections would invite a tenant
+ * admin to assume they can turn it off — and they will not even see this page,
+ * because the platform word endpoints are super-admin only.
+ */
+function PlatformPolicySection() {
+    const { t } = useTranslation();
+    const { toast } = useToast();
+    const [enabled, setEnabled] = useState(false);
+    const [action, setAction] = useState<"block" | "mask">("mask");
+    const [autoReply, setAutoReply] = useState("");
+    const [isDefaultReply, setIsDefaultReply] = useState(true);
+    const [loaded, setLoaded] = useState(false);
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        getPlatformPolicyApi()
+            .then((policy) => {
+                setEnabled(Boolean(policy.enabled));
+                setAction(policy.action === "block" ? "block" : "mask");
+                setAutoReply(policy.auto_reply || "");
+                setIsDefaultReply(Boolean(policy.auto_reply_is_default));
+                setLoaded(true);
+            })
+            .catch(() => setLoaded(true));
+    }, []);
+
+    const save = async () => {
+        if (!loaded) return;
+        setSaving(true);
+        const result = await captureAndAlertRequestErrorHoc(
+            updatePlatformPolicyApi({ enabled, action, auto_reply: autoReply.trim() }),
+        );
+        setSaving(false);
+        if (!result) return;
+        // The server resolves an empty reply to the requirement's wording; mirror
+        // that back so the box shows what users will actually receive.
+        setAutoReply(result.auto_reply || "");
+        setIsDefaultReply(Boolean(result.auto_reply_is_default));
+        toast({ title: t("prompt"), variant: "success", description: t("updateSuccess") });
+    };
+
+    return (
+        <div className="mb-6 rounded-lg border border-[#FFD8BF] bg-[#FFF9F5] p-5">
+            <div className="flex items-center justify-between gap-4">
+                <div>
+                    <p className="text-lg font-bold">{t("platformPolicy.title")}</p>
+                    <p className="mt-1 text-sm text-[#86909C]">{t("platformPolicy.desc")}</p>
+                </div>
+                <Switch checked={enabled} onCheckedChange={setEnabled} />
+            </div>
+
+            {enabled && (
+                <div className="mt-4 w-full max-w-[560px] space-y-4 rounded-lg border border-[#ECECEC] bg-white p-4">
+                    <div>
+                        <span className="bisheng-label">{t("guardrail.outputAction")}</span>
+                        <RadioGroup
+                            className="mt-3 flex gap-6"
+                            value={action}
+                            onValueChange={(value: "block" | "mask") => setAction(value)}
+                        >
+                            <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="block" id="platform-block" />
+                                <Label htmlFor="platform-block" className="cursor-pointer">
+                                    {t("guardrail.actionBlock")}
+                                </Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <RadioGroupItem value="mask" id="platform-mask" />
+                                <Label htmlFor="platform-mask" className="cursor-pointer">
+                                    {t("guardrail.actionMask")}
+                                </Label>
+                            </div>
+                        </RadioGroup>
+                    </div>
+
+                    <div>
+                        <span className="bisheng-label">{t("guardrail.autoReply")}</span>
+                        <Input
+                            className="mt-2"
+                            value={autoReply}
+                            onChange={(event) => {
+                                setAutoReply(event.target.value);
+                                setIsDefaultReply(false);
+                            }}
+                            placeholder={t("platformPolicy.defaultReplyPlaceholder")}
+                        />
+                        {isDefaultReply && <p className="mt-1 text-xs text-[#86909C]">{t("platformPolicy.defaultReplyHint")}</p>}
+                    </div>
+
+                    <div className="flex justify-end">
+                        <Button size="sm" onClick={save} disabled={saving}>
+                            {t("save")}
+                        </Button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
 export function LLMGuardrailPolicy() {
     const { t } = useTranslation();
     return (
         <div>
+            <PlatformPolicySection />
             <DirectionPolicySection
                 title={t("guardrail.chatInput")}
                 desc={t("guardrail.chatInputDesc")}

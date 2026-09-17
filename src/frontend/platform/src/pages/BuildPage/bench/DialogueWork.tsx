@@ -9,6 +9,9 @@ import Subscribe from "./Subscribe";
 import KnowledgeSpace from "./KnowledgeSpace";
 import { LLMGuardrailPolicy } from "./LLMGuardrailPolicy";
 import { LLMGuardrailHitLogs } from "./LLMGuardrailHitLogs";
+import { FeedbackEventLogs } from "./FeedbackEventLogs";
+import { PlatformSensitiveWords } from "./PlatformSensitiveWords";
+import { DocExtractSection } from "./DocExtractSection";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/bs-ui/tabs";
 
 export default function DialogueWork() {
@@ -19,6 +22,15 @@ export default function DialogueWork() {
   useEffect(() => {
     i18n.loadNamespaces('tool');
   }, [i18n]);
+
+  // F058 (spec AC-36): the doc-extraction tab manages tenant-level config, which
+  // the backend gates behind `get_tenant_admin_user` — i.e. platform super admin
+  // or Child Admin. `is_department_admin` is deliberately NOT included: a
+  // department admin would see the tab and then get 403s from every call in it.
+  // Same pattern as SystemPage's tab gating; there is no tab-level permission
+  // primitive in `web_menu` (that governs routes, not tabs).
+  const showDocExtractTab =
+    user?.role === "admin" || Boolean(user?.is_child_admin);
 
   return (
     <div className="w-full h-full px-2 pt-4 relative">
@@ -41,6 +53,9 @@ export default function DialogueWork() {
             <TabsTrigger value="subscribe">{t('bench.subscribe')}</TabsTrigger>
             <TabsTrigger value="appCenter">{t('bench.appCenter')}</TabsTrigger>
             <TabsTrigger value="guardrail">{t('bench.guardrail')}</TabsTrigger>
+            {showDocExtractTab && (
+              <TabsTrigger value="docExtract">{t('docExtract.tab')}</TabsTrigger>
+            )}
           </TabsList>
         </div>
         <TabsContent value="client" key="client-tab">
@@ -56,9 +71,19 @@ export default function DialogueWork() {
           <AppCenter scopeVersion={scopeVersion} />
         </TabsContent>
         <TabsContent value="guardrail">
+          {/* F059: the platform-wide library sits above the tenant policy. Only a
+              global super admin sees this tab's platform sections; the endpoints
+              behind them reject everyone else. */}
+          <PlatformSensitiveWords />
           <LLMGuardrailPolicy />
           <LLMGuardrailHitLogs />
+          <FeedbackEventLogs />
         </TabsContent>
+        {showDocExtractTab && (
+          <TabsContent value="docExtract">
+            <DocExtractSection />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

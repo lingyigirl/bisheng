@@ -35,6 +35,13 @@
 | 敏感词命中日志表（sensitive_word_hit_log） | F056-llm-guardrail | 新增独立表（租户 / 方向 / 应用 / 命中词摘要 / 动作 / 时间）；仅本 Feature 写入；平台日志页只读展示 |
 | 组织知识库的部门归属（`knowledge.department_id`） | F057-knowledge-department-ownership | 扩展既有 `knowledge` 对象：新增可空归属列及其写入行为（指派 / 取消 / 部门删除联动）；**不拥有** `knowledge` 对象本身（沿用既有知识库模块归属），不新增表、不新增错误码。归属可见性在**读取时**求值（`可见 = FGA 授权 OR 创建者本人 OR 部门归属`），不写入任何 FGA 元组 |
 | 知识库列表的部门筛选参数与部门维度统计端点（只读） | F057-knowledge-department-ownership | 扩展 `GET /api/v1/knowledge` 的筛选查询参数 + 新增 `GET /api/v1/knowledge/department_stats` 只读聚合；筛选只收窄展示，不授予任何权限 |
+| 平台级敏感词库词条（`platform_sensitive_word`） | F059-chat-compliance-and-answer-enhancements | 新增独立全局表（无租户列：词条内容 / 来源标记 / 创建人 / 时间）；仅本 Feature 写入；超管维护，所有租户只读引用；命中归属与词库内容不向租户暴露 |
+| 平台级敏感词策略（`platform_sensitive_word_policy`） | F059-chat-compliance-and-answer-enhancements | 新增独立全局表（启用位 / 输出动作 / 固定话术）；**不并入** F036/F056 的 `sensitive_word_policy` 租户表（该表 `tenant_id` 非空且受租户自动过滤，混存全局行会破坏 C3 隔离口径）；仅本 Feature 写入；读取路径显式 `bypass_tenant_filter` |
+| 敏感词命中日志的 `source` 字段（命中来源：`tenant` 租户策略 / `platform` 平台强制） | F059-chat-compliance-and-answer-enhancements | 扩展 F056 的 `sensitive_word_hit_log` 新增可空列；仅本 Feature 写入该字段；**不拥有**该表本身（F056 归属），不改变既有行的语义（历史行按 `tenant` 回填）。平台来源的命中词在租户侧查询响应中以占位返回 |
+| 评价事件表（`message_feedback_event`） | F059-chat-compliance-and-answer-enhancements | 新增 append-only 事件表（租户 / 用户 / 消息 ID / 应用 / 变更前后评价 / 差评原因 / 时间）；每次状态变更写一行（含取消与改评）；**不拥有** `chatmessage.liked` / `chatmessage.remark`（既有归属），仅在写入时读取其变更前后值；租户读本租户、超管读全局 |
+| 场景热词生成端点（即时生成，不落库） | F059-chat-compliance-and-answer-enhancements | 新增即时生成 API（当轮会话内展示，不持久化）；输入为当轮用户提问与 AI 回答文本，**不检索知识库**；不拥有任何既有领域对象，不新增表 |
+| 关联问题生成端点（即时生成，不落库） | F059-chat-compliance-and-answer-enhancements | 新增即时生成 API（当轮会话内展示，不持久化）；只读调用 F055 的检索构建入口与既有 `recommend_question` 的 LLM 槽位 `qa_similar_model`；不拥有任何既有领域对象，不新增表 |
+| 对话回答区的热词列表、关联问题列表与免责提示（前端展示态） | F059-chat-compliance-and-answer-enhancements | 扩展 `AiMessageBubble` 回答区（热词 → 关联问题 → 友情提醒，顺序固定）；纯展示，不新增领域对象；友情提醒文案为 i18n 词条（三语），无服务端配置项 |
 
 **规则**：
 - 非 Owner Feature 的 AC 中不得出现其他对象的"创建/修改/删除"行为，只能"读取"或"调用" Owner 的 Service
@@ -50,8 +57,12 @@
 |----|-----------|------------|---------|
 | INV-8 | 系统默认模型配置（知识库 / 工作台 / 助手 / 评估 / 工作流）中的模型 ID 必须是本租户内可见（自有或 Root 共享）的 `llm_model` 行，且其 `model_type` 与配置槽位匹配（如工作台 `asr_model` 必须为 `asr` 类型、`tts_model` 必须为 `tts` 类型） | llm_model, tenant_system_model_config | F022（v2.6.0 遗留） |
 | INV-9 | 服务商配置中的密钥类字段（`openai_api_key` 等）在读取响应中必须脱敏；写入路径沿用既有 CRUD 与审计 | llm_server | v2.6.0 LLM 管理 |
+| INV-10 | 平台级强制词库对所有租户的对话入口无条件生效：其检测独立于租户策略的启停，不受租户管理员修改或关闭；同一输入同时命中平台词库与租户词表时，以平台词库的判定与话术为准；平台词库内容不得经由租户侧任何界面（含命中日志）被反向获取 | platform_sensitive_word_policy, platform_sensitive_word, sensitive_word_hit_log | F059 |
+| INV-11 | 对话留痕数据的存储边界：命中日志与评价事件均只存标识与摘要（命中词及计数、评价类型与变更前后值、消息 ID），**不存对话原文**；该边界对后续所有扩展留痕的 Feature 生效 | sensitive_word_hit_log, message_feedback_event | F056（沿用）/ F059 |
 
 > 注：INV-8 / INV-9 为 v2.6.0 既有约束的回填登记（原 v2.6.0 release-contract 未编号记录，此处补记，与 F022/F020 行为一致）。编号续接 v2.6.0 的 INV-1 ~ INV-7。F045 不改动这些不变量，仅在其框架内注册新的 TTS 客户端。
+>
+> INV-10 由 F059 引入，**放宽了 F056 的三条既有 AC**（AC-02「未启用不检测」、AC-04「租户策略隔离」、AC-17「未配置行为不变」的绝对措辞）——F056 spec 已同步加「除平台强制词库外」的范围限定。Impacted Specs 见变更历史。
 
 **规则**：
 - 新增不变量：先在此表追加，再写 AC
@@ -72,6 +83,7 @@
 | F055-risk-compliance-knowledge | 无（既有知识库模块 / 工作流检索节点已上线） | 扩展既有知识库对象与检索链路；复用 metadata 过滤、双引擎（Milvus+ES）AND 组合机制；不依赖其他 feature 的新增能力 |
 | F056-llm-guardrail | 无（v2.6.0 F036 sensitive_word 模块已上线） | 扩展既有策略基础设施到对话链路；复用 AC 自动机 / 策略表 / 管理 API；不依赖本版本其他 feature 的新增能力 |
 | F057-knowledge-department-ownership | 无（既有 department 模块与知识库权限体系已上线） | 复用既有部门树（`department.path` 物化路径）、`PermissionService` 五级短路的隐式回退位、知识库列表的游标分页链路；不依赖本版本其他 feature 的新增能力 |
+| F059-chat-compliance-and-answer-enhancements | F056-llm-guardrail（对话围栏链路与命中日志已上线）、F055-risk-compliance-knowledge（检索构建入口与标签体系已上线） | 复用 F056 的 `ChatGuardService` / 命中日志表 / 平台安全围栏页；复用 F055 的 `retrieve_knowledge_documents` 与标签过滤；复用既有 `recommend_question` 的 LLM 槽位 `qa_similar_model`（场景热词与关联问题共用该槽位）。本 Feature 引入 INV-10，据此**放宽** F056 的 AC-02 / AC-04 / AC-17（见 Impacted Specs） |
 
 ---
 
@@ -86,6 +98,7 @@
 | —（F052 不新增错误码：窗口/参数校验沿用 F046 call-logs 的 HTTP 400 口径） | — | — |
 | 112 | 敏感词 / 安全围栏（`common/errcode/sensitive_word.py` 新增：11201=输入命中拦截、11202=输出命中截断） | F056-llm-guardrail |
 | —（F057 不新增错误码：归属写入的拒绝路径复用既有 HTTP 错误信封 403） | — | — |
+| 113 | 平台敏感词库（`common/errcode/platform_sensitive_word.py` 新增：导入文件无法解析 / 无有效词条 / 词条不存在；命中拦截复用 F056 的 11201、11202 不改语义） | F059-chat-compliance-and-answer-enhancements |
 
 ---
 
@@ -101,3 +114,4 @@
 | 2026-09-06 | 登记 F055-risk-compliance-knowledge（知识库/文档时效与权重/优先级字段 + 检索注入） | — |
 | 2026-09-07 | 登记 F056-llm-guardrail（敏感词策略 chat_input/chat_output 场景扩展 + 命中日志表 + 错误码模块 112） | — |
 | 2026-09-16 | 登记 F057-knowledge-department-ownership（knowledge.department_id 归属列 + 读时可见性求值 + 列表部门筛选参数 + 只读部门统计端点；不新增错误码） | — |
+| 2026-09-17 | 登记 F059-chat-compliance-and-answer-enhancements（平台级敏感词库词条表 + 平台级策略表 + 命中日志 source 字段 + 评价事件表 + **场景热词生成端点** + 关联问题生成端点 + 回答区展示态 + 错误码模块 113）。**新增不变量**：INV-10（平台强制词库效力与优先级）、INV-11（留痕存储边界）。**Impacted Specs**：F056-llm-guardrail — AC-02 / AC-04 / AC-17 需加「除平台强制词库外」范围限定，本次已回写；F036 的知识库文件解析 / 订阅文章两个场景**不受影响** | F056, F036 |

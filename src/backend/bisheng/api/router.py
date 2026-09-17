@@ -16,6 +16,7 @@ from bisheng.finetune.api.finetune import router as finetune_router
 from bisheng.finetune.api.server import router as server_router
 from bisheng.gpu_manage.api.router import router as gpu_manage_router
 from bisheng.knowledge.api.router import (
+    answer_suggestion_router,
     qa_router,
     knowledge_router,
     knowledge_space_router,
@@ -53,6 +54,8 @@ router.include_router(knowledge_router)
 router.include_router(knowledge_space_tag_library_router)
 router.include_router(knowledge_space_router)
 router.include_router(knowledge_version_router)
+# F059: answer-bar suggestions (keywords + related questions).
+router.include_router(answer_suggestion_router)
 router.include_router(server_router)
 router.include_router(gpu_manage_router)
 router.include_router(user_router)

@@ -11,6 +11,7 @@
 import { Outlined } from 'bisheng-icons';
 import type { ReactNode } from 'react';
 import { useLocalize } from '~/hooks';
+import { AiDisclaimer } from '~/components/Chat/AiDisclaimer';
 import { MessageFeedbackButtons } from '~/components/Chat/MessageFeedbackButtons';
 import { likeChatApi, disLikeCommentApi } from '~/api/apps';
 import { INK } from './execTokens';
@@ -68,6 +69,10 @@ export function ResultPanel({ children, messageId, liked, allowFeedback, onLiked
                     />
                 </div>
             )}
+            {/* F059: the disclaimer is NOT behind `allowFeedback` — the share
+                view hides the rating buttons but still shows AI-generated
+                content, which is exactly when the notice matters. */}
+            <AiDisclaimer className="mt-2 text-caption text-text-3" />
         </div>
     );
 }

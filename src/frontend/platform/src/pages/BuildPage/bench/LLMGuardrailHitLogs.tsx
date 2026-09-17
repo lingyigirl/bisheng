@@ -3,11 +3,13 @@ import { Button } from "@/components/bs-ui/button";
 import { Input } from "@/components/bs-ui/input";
 import SelectSearch from "@/components/bs-ui/select/select";
 import {
+    getAllSensitiveWordHitLogsApi,
     getSensitiveWordHitLogsApi,
     type SensitiveWordHitLogItem,
 } from "@/controllers/API/sensitiveWordHitLog";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
-import { useEffect, useState } from "react";
+import { userContext } from "@/contexts/userContext";
+import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 const PAGE_SIZE = 20;
@@ -21,27 +23,43 @@ function formatTime(value: string) {
 
 export function LLMGuardrailHitLogs() {
     const { t } = useTranslation();
+    const { user } = useContext(userContext);
+    // F059: a global super admin owns the platform library, so they get the
+    // cross-tenant view (AC-20). Everyone else stays tenant-scoped and sees
+    // platform hit words redacted (AC-18) — the backend enforces both; this only
+    // picks which endpoint to call.
+    const isSuperAdmin = user?.role === "admin";
     const [rows, setRows] = useState<SensitiveWordHitLogItem[]>([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
     const [direction, setDirection] = useState("");
     const [flowId, setFlowId] = useState("");
+    const [source, setSource] = useState("");
     const [loading, setLoading] = useState(false);
     // 查询条件快照：点击「查询」后生效，翻页沿用同一条件
     const [appliedDirection, setAppliedDirection] = useState("");
     const [appliedFlowId, setAppliedFlowId] = useState("");
+    const [appliedSource, setAppliedSource] = useState("");
 
-    const load = async (targetPage: number, nextDirection?: string, nextFlowId?: string) => {
+    const load = async (
+        targetPage: number,
+        nextDirection?: string,
+        nextFlowId?: string,
+        nextSource?: string,
+    ) => {
         const useDirection = nextDirection !== undefined ? nextDirection : appliedDirection;
         const useFlowId = nextFlowId !== undefined ? nextFlowId : appliedFlowId;
+        const useSource = nextSource !== undefined ? nextSource : appliedSource;
         setLoading(true);
+        const query = {
+            direction: useDirection || undefined,
+            flow_id: useFlowId || undefined,
+            source: useSource || undefined,
+            page: targetPage,
+            page_size: PAGE_SIZE,
+        };
         const res = await captureAndAlertRequestErrorHoc(
-            getSensitiveWordHitLogsApi({
-                direction: useDirection || undefined,
-                flow_id: useFlowId || undefined,
-                page: targetPage,
-                page_size: PAGE_SIZE,
-            }),
+            isSuperAdmin ? getAllSensitiveWordHitLogsApi(query) : getSensitiveWordHitLogsApi(query),
         );
         setLoading(false);
         if (res) {
@@ -60,7 +78,8 @@ export function LLMGuardrailHitLogs() {
         if (loading) return;
         setAppliedDirection(direction);
         setAppliedFlowId(flowId.trim());
-        await load(1, direction, flowId.trim());
+        setAppliedSource(source);
+        await load(1, direction, flowId.trim(), source);
     };
 
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -88,6 +107,20 @@ export function LLMGuardrailHitLogs() {
                     />
                 </div>
                 <div className="flex items-center gap-2">
+                    <span className="text-sm text-[#86909C]">{t("guardrail.source")}</span>
+                    <SelectSearch
+                        selectClass="w-[140px]"
+                        value={source}
+                        options={[
+                            { label: t("guardrail.sourceAll"), value: "" },
+                            { label: t("guardrail.sourceTenant"), value: "tenant" },
+                            { label: t("guardrail.sourcePlatform"), value: "platform" },
+                        ]}
+                        onValueChange={setSource}
+                        onChange={() => undefined}
+                    />
+                </div>
+                <div className="flex items-center gap-2">
                     <span className="text-sm text-[#86909C]">{t("guardrail.app")}</span>
                     <Input
                         className="w-[220px]"
@@ -106,6 +139,7 @@ export function LLMGuardrailHitLogs() {
                     <thead>
                         <tr className="border-b border-[#ECECEC] text-left text-[#86909C]">
                             <th className="py-2 pr-4 font-normal">{t("guardrail.hitTime")}</th>
+                            <th className="py-2 pr-4 font-normal">{t("guardrail.source")}</th>
                             <th className="py-2 pr-4 font-normal">{t("guardrail.direction")}</th>
                             <th className="py-2 pr-4 font-normal">{t("guardrail.app")}</th>
                             <th className="py-2 pr-4 font-normal">{t("guardrail.words")}</th>
@@ -117,6 +151,11 @@ export function LLMGuardrailHitLogs() {
                         {rows.map((row) => (
                             <tr key={row.id} className="border-b border-[#ECECEC] last:border-0">
                                 <td className="py-2 pr-4">{formatTime(row.create_time)}</td>
+                                <td className="py-2 pr-4">
+                                    {row.source === "platform"
+                                        ? t("guardrail.sourcePlatform")
+                                        : t("guardrail.sourceTenant")}
+                                </td>
                                 <td className="py-2 pr-4">
                                     {row.direction === "input"
                                         ? t("guardrail.directionInput")
@@ -130,12 +169,18 @@ export function LLMGuardrailHitLogs() {
                                                 {hit.word}
                                             </Badge>
                                         ))}
+                                        {/* Platform rows arrive with no words — the server
+                                            strips them (INV-10). Say so, rather than
+                                            rendering an empty cell that reads as a bug. */}
+                                        {row.source === "platform" && (row.hits || []).length === 0 && (
+                                            <span className="text-[#86909C]">{t("guardrail.wordsHidden")}</span>
+                                        )}
                                     </div>
                                 </td>
                                 <td className="py-2 pr-4">
-                                    {(row.hits || []).map((hit) => (
-                                        <div key={hit.word}>{hit.count}</div>
-                                    ))}
+                                    {(row.hits || []).length > 0
+                                        ? (row.hits || []).map((hit) => <div key={hit.word}>{hit.count}</div>)
+                                        : row.hit_count || 0}
                                 </td>
                                 <td className="py-2 pr-4">
                                     {row.action === "block" ? t("guardrail.actionBlock") : t("guardrail.actionMask")}
@@ -144,7 +189,7 @@ export function LLMGuardrailHitLogs() {
                         ))}
                         {!loading && rows.length === 0 && (
                             <tr>
-                                <td colSpan={6} className="py-8 text-center text-[#86909C]">
+                                <td colSpan={7} className="py-8 text-center text-[#86909C]">
                                     {t("guardrail.empty")}
                                 </td>
                             </tr>

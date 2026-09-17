@@ -8,6 +8,8 @@ Covers the three output guard surfaces:
 
 from types import SimpleNamespace
 
+import pytest
+
 from bisheng.api.services.guardrail import build_output_guard
 from bisheng.api.v1.callback import AsyncStreamingLLMCallbackHandler
 from bisheng.api.v1.schemas import ChatResponse
@@ -17,6 +19,31 @@ from bisheng.workflow.common.workflow import WorkflowStatus
 
 POLICY_DAO_PATH = 'bisheng.sensitive_word.domain.models.sensitive_word_policy.SensitiveWordPolicyDao.get_policy'
 HIT_LOG_PATH = 'bisheng.sensitive_word.domain.models.hit_log.SensitiveWordHitLogDao.acreate_async_best_effort'
+
+
+@pytest.fixture(autouse=True)
+def stub_platform_layer_off(monkeypatch):
+    """Switch the F059 platform layer off: these tests cover the TENANT layer.
+
+    The platform layer runs first on both directions since F059, so leaving it live
+    would send every test to a real database for the platform policy table.
+    """
+    from bisheng.sensitive_word.domain.schemas import SensitiveWordCheckResult
+
+    async def _no_platform_matcher():
+        return None
+
+    async def _no_platform_text(text):
+        return SensitiveWordCheckResult(enabled=False, hits=[], auto_reply=None)
+
+    monkeypatch.setattr(
+        'bisheng.sensitive_word.domain.services.chat_guard.PlatformWordService.build_platform_matcher',
+        _no_platform_matcher,
+    )
+    monkeypatch.setattr(
+        'bisheng.sensitive_word.domain.services.chat_guard.PlatformWordService.check_platform_text',
+        _no_platform_text,
+    )
 
 
 def _policy(*, enabled=True, words_types=None, custom_words='', auto_reply='命中敏感词', extra_config=None):

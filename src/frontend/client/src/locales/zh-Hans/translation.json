@@ -2046,5 +2046,8 @@
   "com_app_plaza_recent_empty": "暂无使用记录",
   "com_app_plaza_preview_start": "开始对话",
   "com_app_plaza_stats_failed": "统计加载失败",
-  "com_app_plaza_retry": "重试"
+  "com_app_plaza_retry": "重试",
+  "com_ai_generated_disclaimer": "本回答由AI生成，内容仅供参考，请仔细甄别",
+  "com_suggestion_keywords": "场景热词",
+  "com_suggestion_questions": "你可能还想问"
 }

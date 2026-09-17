@@ -495,3 +495,31 @@ export async function removeFavoriteApi(appId: number | string, appType: number)
 export async function getFavoritesApi(page = 1, limit = 50) {
     return await request.get('/api/v1/workstation/app/favorites', { params: { page, limit } });
 }
+
+/**
+ * Scenario keywords + related questions for one finished answer (F059).
+ *
+ * Called once per answer, after it finishes streaming. The answer TEXT is sent
+ * rather than a message id because the suggestion should follow what the user
+ * actually read: for a streamed answer the stored text can differ (a blocked or
+ * masked round is rewritten before persisting). Nothing is persisted server-side.
+ *
+ * Every failure mode returns empty lists server-side, so the caller can render
+ * nothing and move on — the bar is decorative and must never surface an error.
+ */
+export interface AnswerSuggestions {
+    keywords: string[];
+    questions: string[];
+}
+
+export async function getAnswerSuggestionsApi(params: {
+    chat_id?: string;
+    message_id?: number;
+    flow_id?: string;
+    question: string;
+    answer: string;
+}): Promise<AnswerSuggestions> {
+    // `request.post` is untyped (mirroring the rest of this module); the response
+    // interceptor already unwraps the envelope, so the cast is the whole contract.
+    return (await request.post('/api/v1/chat/suggestions', params)) as unknown as AnswerSuggestions;
+}

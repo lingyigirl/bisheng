@@ -165,8 +165,15 @@ class ChatMessageService:
         ChatMessageDao.delete_by_message_id(user_id, message_id)
 
     @staticmethod
-    def like_response(data: ChatInput) -> None:
-        """Process like/dislike with session counter updates."""
+    def like_response(data: ChatInput, login_user: UserPayload | None = None) -> None:
+        """Process like/dislike with session counter updates.
+
+        F059 adds an append-only audit event. `chatmessage.liked` holds only the
+        CURRENT verdict, so a user who likes, cancels and then dislikes would
+        otherwise leave a single `liked=2` and no trace of the earlier actions.
+        The event write sits AFTER the unchanged-verdict early return and is
+        best-effort — it can never fail the rating itself.
+        """
         message_id = data.message_id
         message = ChatMessageDao.get_message_by_id(data.message_id)
         if not message:
@@ -174,6 +181,10 @@ class ChatMessageService:
 
         if message.liked == data.liked:
             return
+
+        # Capture the previous verdict BEFORE the mutation below overwrites it —
+        # this is the "from" half of the audit event.
+        from_value = message.liked if message.liked is not None else LikedType.UNRATED.value
 
         like_count = 0
         dislike_count = 0
@@ -198,6 +209,28 @@ class ChatMessageService:
         MessageSessionDao.add_like_count(message.chat_id, like_count)
         MessageSessionDao.add_dislike_count(message.chat_id, dislike_count)
 
+        # The event is written LAST, after the verdict is durable. An audit row
+        # describing a change that then failed to persist would be worse than no
+        # row at all, and writing it here costs nothing since the write is
+        # best-effort (never raises).
+        from bisheng.chat_session.domain.services.feedback_event_service import FeedbackEventService
+
+        try:
+            FeedbackEventService.record(
+                tenant_id=_resolve_leaf_tenant_id(login_user),
+                user_id=getattr(login_user, 'user_id', None),
+                message_id=message_id,
+                flow_id=message.flow_id,
+                from_value=from_value,
+                to_value=data.liked,
+            )
+        except Exception:
+            # Includes the tenant-context refusal. A rating must not fail because
+            # its audit row could not be attributed (design 决策 6).
+            logger.opt(exception=True).warning(
+                'feedback event skipped for message_id={}', message_id
+            )
+
     @staticmethod
     def mark_copied(message_id: int) -> None:
         """Mark a message as copied with session counter update."""
@@ -209,6 +242,26 @@ class ChatMessageService:
             MessageSessionDao.add_copied_count(message.chat_id, 1)
 
     @staticmethod
-    def comment_on_answer(message_id: int, comment: str) -> None:
-        """Add a comment to a message answer."""
+    def comment_on_answer(message_id: int, comment: str, login_user: UserPayload | None = None) -> None:
+        """Add a comment to a message answer.
+
+        F059 also backfills the reason onto the dislike event that
+        `like_response` wrote moments earlier: the frontend submits a dislike in
+        two requests (verdict, then reason), so the reason arrives second and has
+        to find its row (design 决策 6). Best-effort — the reason is already
+        durable on `chatmessage.remark` by this point.
+        """
         comment_answer(message_id, comment)
+
+        from bisheng.chat_session.domain.services.feedback_event_service import FeedbackEventService
+
+        try:
+            FeedbackEventService.backfill_comment(
+                message_id=message_id,
+                user_id=getattr(login_user, 'user_id', None),
+                comment=comment,
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                'feedback comment backfill skipped for message_id={}', message_id
+            )
