@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.schemas.api import resp_200
@@ -43,7 +43,7 @@ async def list_records(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     cursor: int | None = None,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=200, description='每页条数（1~200）'),
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
 ):
     rows, next_cursor = await DocExtractRunDao.alist_runs(

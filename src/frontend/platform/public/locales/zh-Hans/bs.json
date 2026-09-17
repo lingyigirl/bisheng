@@ -1317,7 +1317,8 @@
       "knowledge_space": "知识空间",
       "tenant": "租户管理",
       "llm": "模型管理",
-      "approval": "审批管理"
+      "approval": "审批管理",
+      "docExtract": "文档抽取"
     },
     "eventTypeEnum": {
       "createChat": "新建会话",
@@ -2282,11 +2283,12 @@
     "reasonDocUnreadable": "文档不可读或为空",
     "reasonOverSize": "文档超出体量上限",
     "reasonNoParser": "文档无文字层且未配置识别服务",
-    "reasonModelUnconfigured": "当前租户未配置抽取模型",
-    "reasonModelFailed": "模型调用失败",
     "reasonFieldInvalid": "抽取结果不符合字段定义",
     "reasonTemplateMissing": "模板不存在或无权访问",
-    "reasonUnknown": "未知原因"
+    "reasonUnknown": "未知原因",
+    "reasonContentFetchFailed": "无法获取文档内容或模型输出（模型未配置、调用失败或超时）",
+    "reasonTypeUnavailable": "指定的文档类型不可用",
+    "reasonTypeUnknown": "无法确定文档类型"
   },
   "platformPolicy": {
     "title": "平台强制词库（对所有租户生效）",

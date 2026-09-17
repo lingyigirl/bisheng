@@ -1334,7 +1334,8 @@
       "knowledge_space": "Knowledge Space",
       "tenant": "Tenant Management",
       "llm": "Model Management",
-      "approval": "Approval Management"
+      "approval": "Approval Management",
+      "docExtract": "Document Extraction"
     },
     "eventTypeEnum": {
       "createChat": "Create Session",
@@ -2337,11 +2338,12 @@
     "reasonDocUnreadable": "Document is unreadable or empty",
     "reasonOverSize": "Document exceeds the size limit",
     "reasonNoParser": "No text layer and no recognition service configured",
-    "reasonModelUnconfigured": "No extraction model configured for this tenant",
-    "reasonModelFailed": "Model call failed",
     "reasonFieldInvalid": "Result does not match the field definition",
     "reasonTemplateMissing": "Template not found or not accessible",
-    "reasonUnknown": "Unknown reason"
+    "reasonUnknown": "Unknown reason",
+    "reasonContentFetchFailed": "Could not obtain document content or model output (model not configured, call failed, or timed out)",
+    "reasonTypeUnavailable": "The requested document type is not available",
+    "reasonTypeUnknown": "Could not determine the document type"
   },
   "platformPolicy": {
     "title": "Platform-enforced word library (applies to all tenants)",

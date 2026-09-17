@@ -8,7 +8,7 @@ from sqlmodel import Field, select
 
 from bisheng.common.models.base import SQLModelSerializable
 from bisheng.core.context.tenant import get_current_tenant_id, strict_tenant_filter
-from bisheng.core.database import get_async_db_session, get_sync_db_session
+from bisheng.core.database import get_async_db_session
 from bisheng.core.database.dialect_helpers import JsonType, LargeText
 
 ROOT_TENANT_ID = 1
@@ -121,11 +121,6 @@ class DocExtractTemplateDao:
         return select(DocExtractTemplate).where(DocExtractTemplate.is_deleted == 0)
 
     @classmethod
-    def get_by_id(cls, template_id: int) -> DocExtractTemplate | None:
-        with strict_tenant_filter(), get_sync_db_session() as session:
-            return session.exec(cls._live_stmt().where(DocExtractTemplate.id == template_id)).first()
-
-    @classmethod
     async def aget_by_id(cls, template_id: int) -> DocExtractTemplate | None:
         with strict_tenant_filter():
             async with get_async_db_session() as session:
@@ -135,13 +130,6 @@ class DocExtractTemplateDao:
                 return result.first()
 
     @classmethod
-    def get_by_doc_type(cls, doc_type: str) -> DocExtractTemplate | None:
-        """Live template for ``doc_type``, or None. Deleted rows are excluded so
-        the identifier is free for reuse."""
-        with strict_tenant_filter(), get_sync_db_session() as session:
-            return session.exec(cls._live_stmt().where(DocExtractTemplate.doc_type == doc_type)).first()
-
-    @classmethod
     async def aget_by_doc_type(cls, doc_type: str) -> DocExtractTemplate | None:
         with strict_tenant_filter():
             async with get_async_db_session() as session:
@@ -149,14 +137,6 @@ class DocExtractTemplateDao:
                     cls._live_stmt().where(DocExtractTemplate.doc_type == doc_type)
                 )
                 return result.first()
-
-    @classmethod
-    def list_templates(cls, enabled_only: bool = False) -> list[DocExtractTemplate]:
-        stmt = cls._live_stmt()
-        if enabled_only:
-            stmt = stmt.where(DocExtractTemplate.enabled == 1)
-        with strict_tenant_filter(), get_sync_db_session() as session:
-            return list(session.exec(stmt).all())
 
     @classmethod
     async def alist_templates(cls, enabled_only: bool = False) -> list[DocExtractTemplate]:
@@ -214,5 +194,10 @@ class DocExtractTemplateDao:
                     return False
                 template.is_deleted = 1
                 session.add(template)
-            await session.commit()
-            return True
+                # Commit INSIDE the session context: outside it the session is
+                # already closed, so the write silently never lands while this
+                # still returns True -- the caller sees success and the row
+                # stays live (which is exactly how this was caught: delete
+                # returned 200 and the identifier stayed taken).
+                await session.commit()
+                return True

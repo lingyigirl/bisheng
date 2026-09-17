@@ -45,6 +45,12 @@ export async function getModulesApi(): Promise<{ data: any[] }> {
             { name: 'log.systemIdEnum.tenant', value: 'tenant' },
             { name: 'log.systemIdEnum.llm', value: 'llm' },
             { name: 'log.systemIdEnum.approval', value: 'approval' },
+            // F058: templates are admin-editable config that silently changes
+            // how every later document of that type is extracted, so the module
+            // must be filterable here. Mirrors `_V2_NAMESPACE_TO_ACTION_PREFIX`
+            // in `database/models/audit_log.py` -- without this entry the rows
+            // are written but no filter can reach them.
+            { name: 'log.systemIdEnum.docExtract', value: 'doc_extract' },
         ],
 
     }

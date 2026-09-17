@@ -22,15 +22,26 @@ interface Props {
     };
 }
 
-/** Failure reason → i18n key. Mirrors the `reason` tokens the backend emits. */
+/**
+ * Failure reason → i18n key.
+ *
+ * Must mirror `_reason_for()` in the backend's `doc_extract/api/endpoints/
+ * extraction.py` exactly. An unmapped token falls back to "unknown reason",
+ * which for a *tuning* dialog is the one outcome that defeats its purpose --
+ * the admin cannot tell a misconfigured template from an unconfigured
+ * environment. Note `content_fetch_failed` is one token covering several
+ * distinct backend cases (model unconfigured / call failed / recognition
+ * failed); they are one entry here on purpose rather than three dead keys.
+ */
 const REASON_KEY: Record<string, string> = {
     doc_unreadable: "reasonDocUnreadable",
     over_size: "reasonOverSize",
     no_parser: "reasonNoParser",
-    model_unconfigured: "reasonModelUnconfigured",
-    model_failed: "reasonModelFailed",
+    content_fetch_failed: "reasonContentFetchFailed",
     field_invalid: "reasonFieldInvalid",
     template_missing: "reasonTemplateMissing",
+    type_unavailable: "reasonTypeUnavailable",
+    type_unknown: "reasonTypeUnknown",
 };
 
 /**

@@ -14,7 +14,10 @@ from unittest.mock import patch
 
 import pytest
 
-from bisheng.common.errcode.doc_extract import DocExtractNoParserError
+from bisheng.common.errcode.doc_extract import (
+    DocExtractContentFetchError,
+    DocExtractNoParserError,
+)
 from bisheng.doc_extract.domain.services.parse_adapter import (
     MIN_USABLE_TEXT_LENGTH,
     ROUTE_OCR,
@@ -130,18 +133,37 @@ async def test_empty_result_without_recognition_service_raises_11605(tmp_doc):
             )
 
 
-async def test_empty_result_from_recognition_service_raises_11605(tmp_doc):
-    """Configured but produced nothing is a distinct case from "not configured";
-    the message must not tell the operator to configure what is already set."""
+async def test_empty_result_from_recognition_service_raises_11608(tmp_doc):
+    """Spec §3.1 row 9, not row 4.
+
+    "Configured but produced nothing" is a *different* failure from "no service
+    exists", and it carries a different code on purpose: 11605 tells the
+    operator to configure a recognition service, which is actively misleading
+    when one is already configured and simply failed. Regression guard -- this
+    previously raised 11605, sending operators to check a setting that was fine.
+    """
     with (
         _patch_pipeline('   \n  ', 'MineruLoader'),
         patch(f'{ADAPTER}.ParseAdapter._has_recognition_service', return_value=True),
     ):
-        with pytest.raises(DocExtractNoParserError) as exc:
+        with pytest.raises(DocExtractContentFetchError) as exc:
             await ParseAdapter.run_sync_doc_extract(
                 file_path=str(tmp_doc), file_name='license.txt', user_id=1
             )
     assert '已配置识别服务' in str(exc.value)
+
+
+async def test_parse_exception_with_service_configured_raises_11608(tmp_doc):
+    """An exception from a *configured* service is a service failure (row 9),
+    not "no parser" (row 4)."""
+    with (
+        patch(f'{ADAPTER}.TempFilePipeline', side_effect=RuntimeError('mineru unreachable')),
+        patch(f'{ADAPTER}.ParseAdapter._has_recognition_service', return_value=True),
+    ):
+        with pytest.raises(DocExtractContentFetchError):
+            await ParseAdapter.run_sync_doc_extract(
+                file_path=str(tmp_doc), file_name='license.txt', user_id=1
+            )
 
 
 # --- pipeline failure handling ----------------------------------------------

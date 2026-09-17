@@ -1317,7 +1317,8 @@
       "knowledge_space": "ナレッジスペース",
       "tenant": "テナント管理",
       "llm": "モデル管理",
-      "approval": "承認管理"
+      "approval": "承認管理",
+      "docExtract": "文書抽出"
     },
     "eventTypeEnum": {
       "createChat": "新規チャット作成",
@@ -2282,11 +2283,12 @@
     "reasonDocUnreadable": "文書が読み取れないか空です",
     "reasonOverSize": "文書がサイズ上限を超えています",
     "reasonNoParser": "テキストレイヤーがなく、認識サービスも未設定です",
-    "reasonModelUnconfigured": "このテナントに抽出モデルが設定されていません",
-    "reasonModelFailed": "モデル呼び出しに失敗しました",
     "reasonFieldInvalid": "結果がフィールド定義に一致しません",
     "reasonTemplateMissing": "テンプレートが存在しないかアクセス権がありません",
-    "reasonUnknown": "不明な理由"
+    "reasonUnknown": "不明な理由",
+    "reasonContentFetchFailed": "文書の内容またはモデル出力を取得できません（モデル未設定・呼び出し失敗・タイムアウト）",
+    "reasonTypeUnavailable": "指定された文書タイプは利用できません",
+    "reasonTypeUnknown": "文書タイプを判定できません"
   },
   "platformPolicy": {
     "title": "プラットフォーム強制辞書（全テナントに適用）",
