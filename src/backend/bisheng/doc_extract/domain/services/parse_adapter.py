@@ -27,11 +27,15 @@ from bisheng.common.errcode.doc_extract import DocExtractNoParserError
 from bisheng.common.services.config_service import settings
 from bisheng.knowledge.rag.temp_file_pipeline import TempFilePipeline
 
-#: A scanned PDF often carries a thin, useless text layer. Anything below this
-#: many characters is treated as "no real content" and sent to recognition
-#: instead of being extracted from noise. Low on purpose: a short but genuine
-#: document must not be pushed through OCR needlessly.
-MIN_USABLE_TEXT_LENGTH = 100
+#: Floor for "the parse produced something usable". Deliberately small: a
+#: certificate's fields can be short, and an OCR'd image legitimately yields
+#: little text. This only exists to catch the empty/near-empty result that a
+#: scanned PDF with no text layer produces -- it is NOT a quality bar.
+#:
+#: An earlier value of 100 rejected a perfectly good OCR result (a 91-character
+#: license image) and reported it as "document has no content". Raising this
+#: number does not improve extraction; it only invents failures.
+MIN_USABLE_TEXT_LENGTH = 10
 
 ROUTE_TEXT = 'text'
 ROUTE_OCR = 'ocr'
@@ -59,9 +63,15 @@ class ParseAdapter:
 
         Returns ``(text, route)`` with route in ``{'text', 'ocr'}``.
 
-        Raises ``DocExtractNoParserError`` (11605) when there is no usable text
-        and the deployment has no recognition service to fall back to. That is
-        a configuration problem, not a document problem, and the message says
+        The route is derived from which loader the pipeline actually selected,
+        not guessed from the file extension: when a recognition provider is
+        configured, `_build_pdf_loader` hands images and scanned PDFs to it, and
+        the caller deserves to know that happened (it dominates the latency and
+        is the first thing to check when output looks wrong).
+
+        Raises ``DocExtractNoParserError`` (11605) when nothing usable came out
+        and the deployment has no recognition service to fall back to. That is a
+        configuration problem, not a document problem, and the message says
         which -- the operator needs to know what to set up.
         """
         file_rule = FileProcessBase(
@@ -73,6 +83,7 @@ class ParseAdapter:
         )
 
         text = ''
+        loader_name = ''
         try:
             pipeline = TempFilePipeline(
                 invoke_user_id=user_id,
@@ -82,6 +93,9 @@ class ParseAdapter:
             )
             result = await pipeline.arun()
             text = ParseAdapter._join_documents(result)
+            loader_name = type(getattr(pipeline, 'loader', None)).__name__
+            if loader_name in ('NoneType', ''):
+                loader_name = ''
         except Exception:
             # A parse failure is not necessarily fatal -- it is exactly the
             # "scanned document" case, so fall through to the route decision
@@ -92,7 +106,7 @@ class ParseAdapter:
             text = ''
 
         if len(text.strip()) >= MIN_USABLE_TEXT_LENGTH:
-            return text, ROUTE_TEXT
+            return text, ParseAdapter._route_for(loader_name)
 
         if not ParseAdapter._has_recognition_service():
             raise DocExtractNoParserError(
@@ -102,12 +116,21 @@ class ParseAdapter:
                 )
             )
 
-        # A recognition service is configured, but wiring the OCR branch is the
-        # second phase of this feature (design §9) -- everything before it runs
-        # without any external service.
+        # A recognition service is configured and was used, yet produced nothing
+        # usable -- a different failure from "we have no way to read this".
         raise DocExtractNoParserError(
-            msg='识别服务分支尚未启用（第二阶段实现）。'
+            msg='已配置识别服务，但未能从该文档中解析出可用内容。'
         )
+
+    #: Loaders that mean "an external recognition service did the reading".
+    _OCR_LOADER_NAMES = ('MineruLoader', 'PaddleOcrLoader', 'Etl4lmLoader')
+
+    @staticmethod
+    def _route_for(loader_name: str) -> str:
+        """Map the loader the pipeline picked onto the route the caller sees."""
+        if loader_name in ParseAdapter._OCR_LOADER_NAMES:
+            return ROUTE_OCR
+        return ROUTE_TEXT
 
     @staticmethod
     def _join_documents(result: Any) -> str:
