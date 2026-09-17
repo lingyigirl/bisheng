@@ -7,8 +7,28 @@ from sqlalchemy import Column, DateTime, Integer, SmallInteger, String, Text, te
 from sqlmodel import Field, select
 
 from bisheng.common.models.base import SQLModelSerializable
+from bisheng.core.context.tenant import get_current_tenant_id, strict_tenant_filter
 from bisheng.core.database import get_async_db_session, get_sync_db_session
 from bisheng.core.database.dialect_helpers import JsonType, LargeText
+
+ROOT_TENANT_ID = 1
+
+
+def _belongs_to_current_tenant(template) -> bool:
+    """Whether ``template`` belongs to the tenant making this call.
+
+    Belt-and-braces on top of the narrowed SELECT: a mutated ORM row is flushed
+    without any tenant predicate (the listener only rewrites SELECTs), so the
+    ownership check is what actually prevents a write crossing tenants if the
+    read ever widens again.
+
+    No current tenant in context means an internal/system call -- allowed, since
+    the narrowed read has already restricted what it could have loaded.
+    """
+    current = get_current_tenant_id()
+    if current is None:
+        return True
+    return template.tenant_id == current
 
 
 class DocExtractTemplateBase(SQLModelSerializable):
@@ -79,8 +99,21 @@ class DocExtractTemplate(DocExtractTemplateBase, table=True):
 class DocExtractTemplateDao:
     """DAO for ``doc_extract_template``.
 
-    Tenant scoping is injected by the global event listener (C3) -- the queries
-    here never write ``WHERE tenant_id = X`` by hand.
+    **Every read runs inside ``strict_tenant_filter()``.** Templates are
+    tenant-level configuration: a tenant must never see or touch another
+    tenant's, Root's included. The global listener's default for a Child tenant
+    is the IN-list ``WHERE tenant_id IN (child, ROOT)`` -- which is right for
+    *shared* resources but wrong here, and it only filters SELECTs.
+
+    That combination is the trap this module has to avoid: a SELECT would return
+    a Root row, and the subsequent dirty-flush UPDATE is **not** rewritten by
+    the listener (``tenant_filter.py``: `if not orm_execute_state.is_select:
+    return`), nor by ``before_flush`` (which only fills ``session.new``). So
+    without the narrowing, a Child Admin could update or soft-delete a Root
+    template simply by passing its id -- and ids are small integers.
+
+    Same reasoning and same idiom as ``linsight/domain/models/linsight_skill.py``
+    (see its class docstring) and ``knowledge_department_service.py``.
     """
 
     @classmethod
@@ -89,34 +122,40 @@ class DocExtractTemplateDao:
 
     @classmethod
     def get_by_id(cls, template_id: int) -> DocExtractTemplate | None:
-        with get_sync_db_session() as session:
+        with strict_tenant_filter(), get_sync_db_session() as session:
             return session.exec(cls._live_stmt().where(DocExtractTemplate.id == template_id)).first()
 
     @classmethod
     async def aget_by_id(cls, template_id: int) -> DocExtractTemplate | None:
-        async with get_async_db_session() as session:
-            result = await session.exec(cls._live_stmt().where(DocExtractTemplate.id == template_id))
-            return result.first()
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.exec(
+                    cls._live_stmt().where(DocExtractTemplate.id == template_id)
+                )
+                return result.first()
 
     @classmethod
     def get_by_doc_type(cls, doc_type: str) -> DocExtractTemplate | None:
         """Live template for ``doc_type``, or None. Deleted rows are excluded so
         the identifier is free for reuse."""
-        with get_sync_db_session() as session:
+        with strict_tenant_filter(), get_sync_db_session() as session:
             return session.exec(cls._live_stmt().where(DocExtractTemplate.doc_type == doc_type)).first()
 
     @classmethod
     async def aget_by_doc_type(cls, doc_type: str) -> DocExtractTemplate | None:
-        async with get_async_db_session() as session:
-            result = await session.exec(cls._live_stmt().where(DocExtractTemplate.doc_type == doc_type))
-            return result.first()
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.exec(
+                    cls._live_stmt().where(DocExtractTemplate.doc_type == doc_type)
+                )
+                return result.first()
 
     @classmethod
     def list_templates(cls, enabled_only: bool = False) -> list[DocExtractTemplate]:
         stmt = cls._live_stmt()
         if enabled_only:
             stmt = stmt.where(DocExtractTemplate.enabled == 1)
-        with get_sync_db_session() as session:
+        with strict_tenant_filter(), get_sync_db_session() as session:
             return list(session.exec(stmt).all())
 
     @classmethod
@@ -124,9 +163,10 @@ class DocExtractTemplateDao:
         stmt = cls._live_stmt()
         if enabled_only:
             stmt = stmt.where(DocExtractTemplate.enabled == 1)
-        async with get_async_db_session() as session:
-            result = await session.exec(stmt)
-            return list(result.all())
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.exec(stmt)
+                return list(result.all())
 
     @classmethod
     async def acreate(cls, data: dict[str, Any]) -> DocExtractTemplate:
@@ -139,26 +179,40 @@ class DocExtractTemplateDao:
 
     @classmethod
     async def aupdate(cls, template_id: int, data: dict[str, Any]) -> DocExtractTemplate | None:
-        async with get_async_db_session() as session:
-            result = await session.exec(cls._live_stmt().where(DocExtractTemplate.id == template_id))
-            template = result.first()
-            if template is None:
-                return None
-            for key, value in data.items():
-                setattr(template, key, value)
-            session.add(template)
-            await session.commit()
-            await session.refresh(template)
-            return template
+        """Update a template that belongs to the current tenant.
+
+        The lookup is narrowed (see the class docstring), and the ownership is
+        re-asserted before the write: the narrowed SELECT is what makes the row
+        unreachable, but a mutated row is persisted by the flush with no tenant
+        predicate at all, so the check is the thing that actually holds if a
+        future filter change re-widens the read.
+        """
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.exec(
+                    cls._live_stmt().where(DocExtractTemplate.id == template_id)
+                )
+                template = result.first()
+                if template is None or not _belongs_to_current_tenant(template):
+                    return None
+                for key, value in data.items():
+                    setattr(template, key, value)
+                session.add(template)
+                await session.commit()
+                await session.refresh(template)
+                return template
 
     @classmethod
     async def asoft_delete(cls, template_id: int) -> bool:
-        async with get_async_db_session() as session:
-            result = await session.exec(cls._live_stmt().where(DocExtractTemplate.id == template_id))
-            template = result.first()
-            if template is None:
-                return False
-            template.is_deleted = 1
-            session.add(template)
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.exec(
+                    cls._live_stmt().where(DocExtractTemplate.id == template_id)
+                )
+                template = result.first()
+                if template is None or not _belongs_to_current_tenant(template):
+                    return False
+                template.is_deleted = 1
+                session.add(template)
             await session.commit()
             return True

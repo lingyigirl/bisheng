@@ -7,6 +7,7 @@ from sqlalchemy import Column, DateTime, Float, Integer, SmallInteger, String, t
 from sqlmodel import Field, select
 
 from bisheng.common.models.base import SQLModelSerializable
+from bisheng.core.context.tenant import strict_tenant_filter
 from bisheng.core.database import get_async_db_session
 from bisheng.core.database.dialect_helpers import JsonType, LargeText
 
@@ -97,7 +98,14 @@ class DocExtractRunDao:
         matching the platform's cursor-pagination convention.
 
         Returns ``(rows, next_cursor)``; ``next_cursor`` is None on the last page.
+
+        ``limit`` is clamped to at least 1: the pagination below takes
+        ``rows[-1]`` to build the cursor, so a caller-supplied 0 or negative
+        would index an empty slice. Clamping rather than raising keeps a
+        nonsensical page size from turning into a 500 on an admin-only read.
         """
+        limit = max(1, limit)
+
         stmt = select(DocExtractRun)
         if template_id is not None:
             stmt = stmt.where(DocExtractRun.template_id == template_id)
@@ -112,9 +120,12 @@ class DocExtractRunDao:
         # Fetch one extra row to decide whether another page exists.
         stmt = stmt.order_by(DocExtractRun.id.desc()).limit(limit + 1)
 
-        async with get_async_db_session() as session:
-            result = await session.exec(stmt)
-            rows = list(result.all())
+        # Narrowed like the template reads: run records belong to the tenant that
+        # produced them and are never shared upward from Root.
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.exec(stmt)
+                rows = list(result.all())
 
         if len(rows) > limit:
             rows = rows[:limit]

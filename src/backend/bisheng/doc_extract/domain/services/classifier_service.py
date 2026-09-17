@@ -71,7 +71,10 @@ class ClassifierService:
         try:
             payload = json.loads(text)
         except (ValueError, TypeError) as exc:
-            raise DocExtractContentFetchError(msg=f'判定结果不是合法 JSON：{text[:200]}') from exc
+            logger.warning(
+                'doc_extract classify reply is not valid JSON: len=%d', len(text)
+            )
+            raise DocExtractContentFetchError(msg='判定结果不是合法 JSON') from exc
 
         if not isinstance(payload, dict):
             raise DocExtractContentFetchError(msg='判定结果不是 JSON 对象')
@@ -134,7 +137,8 @@ class ClassifierService:
             raise
         except Exception as exc:
             logger.warning('doc_extract classify call failed', exc_info=True)
-            raise DocExtractContentFetchError(msg=f'判定模型调用失败：{exc}') from exc
+            logger.warning('doc_extract classify call failed', exc_info=True)
+            raise DocExtractContentFetchError(msg='判定模型调用失败') from exc
 
         doc_type, confidence = cls._parse_reply(reply)
 

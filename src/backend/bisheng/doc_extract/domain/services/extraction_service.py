@@ -88,7 +88,42 @@ class ExtractionService:
     # --- model slot ---------------------------------------------------------
 
     @staticmethod
-    def _resolve_model_id(tenant_id: int | None) -> int | None:
+    def _parse_slot_value(value: Any) -> int | None:
+        """Pull the model id out of a stored slot value.
+
+        The slot column holds **JSON text** (``{"model_id": N}``), not a bare
+        number -- every writer in the platform stores ``json.dumps(payload)``,
+        and every existing reader deserializes it first
+        (``llm/domain/services/llm.py``: ``model_cls(**(json.loads(value) ...))``).
+
+        Skipping the ``json.loads`` here is not a cosmetic difference: ``int()``
+        on ``'{"model_id": 5}'`` raises, so the slot would look permanently
+        unconfigured and every extraction would fail with 11608 regardless of
+        what the operator configured. A bare integer is still accepted so a
+        hand-written row does not silently break.
+        """
+        if value is None:
+            return None
+        payload = value
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (ValueError, TypeError):
+                # Not JSON -- fall through and try it as a plain number.
+                payload = value
+        if isinstance(payload, dict):
+            model_id = payload.get('model_id') or payload.get('extract_model_id')
+            try:
+                return int(model_id) if model_id is not None else None
+            except (TypeError, ValueError):
+                return None
+        try:
+            return int(payload)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _resolve_model_id(cls, tenant_id: int | None) -> int | None:
         """Read the tenant's configured extraction model.
 
         Returns None when unconfigured, which the caller turns into 11608 before
@@ -108,15 +143,15 @@ class ExtractionService:
             logger.warning('doc_extract model slot resolve failed', exc_info=True)
             return None
 
-        if not value:
-            return None
-        if isinstance(value, dict):
-            model_id = value.get('model_id') or value.get('extract_model_id')
-            return int(model_id) if model_id else None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
+        model_id = cls._parse_slot_value(value)
+        if model_id is None and value:
+            # Configured but unreadable -- worth a line, because the caller
+            # reports it as "not configured" and that would otherwise send the
+            # operator looking at the wrong thing.
+            logger.warning(
+                'doc_extract model slot is set but unparseable: %r', value
+            )
+        return model_id
 
     # --- model calls --------------------------------------------------------
 
@@ -139,8 +174,19 @@ class ExtractionService:
         try:
             payload = json.loads(text)
         except (ValueError, TypeError) as exc:
+            # Neither the message nor this log line carries the reply text. It
+            # would land in three places the caller cannot scrub: the API
+            # response, `doc_extract_run.error_message`, and the application
+            # log. On a certificate that text *is* the extracted personal data,
+            # so echoing it persists identity fields into a queryable table.
+            # Shape-only telemetry is enough to tell the failure modes apart
+            # (prose wrapper vs. empty reply vs. truncated output).
+            logger.warning(
+                'doc_extract model reply is not valid JSON: len=%d starts_with_brace=%s',
+                len(text), text.startswith('{'),
+            )
             raise DocExtractFieldInvalidError(
-                msg=f'模型输出不是合法 JSON：{text[:200]}'
+                msg='模型输出不是合法 JSON'
             ) from exc
         if not isinstance(payload, dict):
             raise DocExtractFieldInvalidError(msg='模型输出不是 JSON 对象')
@@ -225,6 +271,16 @@ class ExtractionService:
         trial_definition: dict[str, Any] | None = None,
         tenant_id: int | None = None,
     ) -> ExtractResult:
+        # Fall back to the ambient tenant rather than passing None onward:
+        # `TenantSystemModelConfigDao.resolve(None, ...)` queries
+        # `tenant_id IS NULL`, which never matches a NOT NULL column, so the
+        # tenant's own slot would be unreachable and every call would fall
+        # through to the Root default (or to "not configured").
+        if tenant_id is None:
+            from bisheng.core.context.tenant import get_current_tenant_id
+
+            tenant_id = get_current_tenant_id()
+
         # --- rows 1-3: apply to every mode, including trial ---------------
         size = cls._assert_readable(file_path)
         cls._assert_within_size(size)
@@ -353,7 +409,8 @@ class ExtractionService:
                 user_id=user_id,
             )
         except Exception as exc:
-            raise DocExtractContentFetchError(msg=f'抽取模型初始化失败：{exc}') from exc
+            logger.warning('doc_extract model init failed', exc_info=True)
+            raise DocExtractContentFetchError(msg='抽取模型初始化失败') from exc
 
         messages = build_extract_messages(text, field_schema)
         last_errors: list[dict[str, Any]] = []
@@ -365,7 +422,8 @@ class ExtractionService:
             except Exception as exc:
                 # Transport failure: retrying multiplies the delay without
                 # improving the odds (spec AC-24 / row 10).
-                raise DocExtractContentFetchError(msg=f'抽取模型调用失败：{exc}') from exc
+                logger.warning('doc_extract model call failed', exc_info=True)
+                raise DocExtractContentFetchError(msg='抽取模型调用失败') from exc
 
             try:
                 fields = cls._parse_fields(reply)
