@@ -20,6 +20,7 @@ obtainable) and never write a record.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -59,6 +60,14 @@ MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 #: One initial attempt plus two retries. Most format failures clear on the
 #: first retry; beyond that the cost outweighs the shrinking chance of success.
 MAX_RETRIES = 2
+
+#: Hard ceiling on the whole synchronous extraction (parse + classify + extract
+#: + render). Design decision 14 promises a bounded wait rather than an
+#: indefinitely hung request; without this the request could outlive the
+#: gateway's own timeout, and the caller would get a 504 instead of the 11608
+#: this feature promises. The recognition loader's own default is 600s, so the
+#: outer bound is what actually protects the caller.
+EXTRACT_TIMEOUT_SECONDS = 120
 
 _JSON_FENCE_RE = re.compile(r'```(?:json)?\s*(.*?)\s*```', re.DOTALL)
 
@@ -417,7 +426,19 @@ class ExtractionService:
 
         for attempt in range(MAX_RETRIES + 1):
             try:
-                reply = await cls._invoke(llm, messages)
+                # Bounded so a hung provider surfaces as the 11608 this feature
+                # promises, rather than a request that outlives the gateway's
+                # own timeout and comes back to the caller as a 504.
+                reply = await asyncio.wait_for(
+                    cls._invoke(llm, messages), timeout=EXTRACT_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError as exc:
+                logger.warning(
+                    'doc_extract model call timed out after %ss', EXTRACT_TIMEOUT_SECONDS
+                )
+                raise DocExtractContentFetchError(
+                    msg=f'抽取模型调用超时（{EXTRACT_TIMEOUT_SECONDS} 秒）'
+                ) from exc
             except Exception as exc:
                 # Transport failure: retrying multiplies the delay without
                 # improving the odds (spec AC-24 / row 10).

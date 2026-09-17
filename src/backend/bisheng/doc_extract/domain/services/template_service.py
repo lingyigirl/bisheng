@@ -77,10 +77,25 @@ class TemplateService:
 
         The DB deliberately has no unique constraint -- soft-deleted rows would
         occupy the identifier forever (design decision 9 / pitfall 11).
+
+        The caller must pass the **normalized** identifier. An earlier version
+        checked the raw input while storing the stripped value, so
+        ``'  business_license'`` missed the existing row and then landed as
+        ``business_license`` -- two live rows with one identifier, quietly
+        defeating the uniqueness rule this function exists to enforce.
         """
         existing = await DocExtractTemplateDao.aget_by_doc_type(doc_type)
         if existing is not None and existing.id != exclude_id:
             raise DocExtractTypeDuplicateError()
+
+    @staticmethod
+    def _normalize_identifier(doc_type: str) -> str:
+        """Collapse the identifier to the form that gets stored.
+
+        Called before the uniqueness check so the two cannot disagree -- the
+        whole point is that what is checked is what is written.
+        """
+        return (doc_type or '').strip()
 
     @classmethod
     async def acreate(
@@ -100,11 +115,12 @@ class TemplateService:
             field_schema=field_schema,
             render_template=render_template,
         )
+        doc_type = cls._normalize_identifier(doc_type)
         await cls._assert_identifier_free(doc_type)
 
         template = await DocExtractTemplateDao.acreate({
             'name': name.strip(),
-            'doc_type': doc_type.strip(),
+            'doc_type': doc_type,
             'description': description.strip(),
             'field_schema': field_schema,
             'render_template': render_template or '',
@@ -148,11 +164,12 @@ class TemplateService:
             field_schema=field_schema,
             render_template=render_template,
         )
+        doc_type = cls._normalize_identifier(doc_type)
         await cls._assert_identifier_free(doc_type, exclude_id=template_id)
 
         updated = await DocExtractTemplateDao.aupdate(template_id, {
             'name': name.strip(),
-            'doc_type': doc_type.strip(),
+            'doc_type': doc_type,
             'description': description.strip(),
             'field_schema': field_schema,
             'render_template': render_template or '',

@@ -227,6 +227,49 @@ async def test_update_rejects_identifier_taken_by_another_template():
             )
 
 
+async def test_whitespace_padded_identifier_still_collides(audit_spy):
+    """Regression: the uniqueness check ran on the RAW identifier while the row
+    was stored STRIPPED, so ``'  business_license'`` missed the existing row and
+    then landed as ``business_license`` -- two live rows sharing one identifier,
+    silently defeating AC-07.
+
+    The check must see the normalized value, i.e. what actually gets written.
+    """
+    with patch(
+        f'{SERVICE}.DocExtractTemplateDao.aget_by_doc_type',
+        new_callable=AsyncMock,
+        return_value=_make_template(doc_type='business_license'),
+    ) as lookup:
+        with pytest.raises(DocExtractTypeDuplicateError):
+            await TemplateService.acreate(
+                operator_id=7,
+                **{**VALID_PAYLOAD, 'doc_type': '  business_license  '},
+            )
+
+    # and it must have looked up the stripped form, not the padded one
+    assert lookup.await_args.args[0] == 'business_license'
+    audit_spy.assert_not_awaited()
+
+
+async def test_identifier_is_stored_stripped(audit_spy):
+    """The value checked and the value stored are the same one."""
+    captured = {}
+
+    async def _capture(data):
+        captured.update(data)
+        return _make_template()
+
+    with (
+        patch(f'{SERVICE}.DocExtractTemplateDao.aget_by_doc_type', new_callable=AsyncMock, return_value=None),
+        patch(f'{SERVICE}.DocExtractTemplateDao.acreate', side_effect=_capture),
+    ):
+        await TemplateService.acreate(
+            operator_id=7, **{**VALID_PAYLOAD, 'doc_type': '  business_license  '}
+        )
+
+    assert captured['doc_type'] == 'business_license'
+
+
 async def test_update_keeping_own_identifier_is_allowed():
     """The template's own row must not count as a conflict with itself."""
     existing = _make_template(id=1)
