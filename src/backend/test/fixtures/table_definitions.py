@@ -302,6 +302,43 @@ CREATE TABLE IF NOT EXISTS user_app_favorite (
     UNIQUE (user_id, app_id, app_type)
 )"""
 
+# F058: document extraction template (mirrors doc_extract/domain/models/extract_template.py).
+# `doc_type` is deliberately NOT unique here either — see design decision 9.
+TABLE_DOC_EXTRACT_TEMPLATE = """\
+CREATE TABLE IF NOT EXISTS doc_extract_template (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    doc_type VARCHAR(64) NOT NULL,
+    description TEXT NOT NULL,
+    field_schema JSON,
+    render_template TEXT NOT NULL DEFAULT '',
+    enabled SMALLINT NOT NULL DEFAULT 1,
+    is_deleted SMALLINT NOT NULL DEFAULT 0,
+    create_user INTEGER,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+)"""
+
+# F058: document extraction run (mirrors doc_extract/domain/models/extract_run.py)
+TABLE_DOC_EXTRACT_RUN = """\
+CREATE TABLE IF NOT EXISTS doc_extract_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL,
+    template_id INTEGER NOT NULL,
+    doc_type VARCHAR(64) NOT NULL,
+    determined_by VARCHAR(16) NOT NULL,
+    confidence FLOAT,
+    preprocess_route VARCHAR(16),
+    fields JSON,
+    markdown TEXT NOT NULL DEFAULT '',
+    status SMALLINT NOT NULL DEFAULT 1,
+    error_code INTEGER,
+    error_message VARCHAR(500),
+    user_id INTEGER,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+)"""
+
 TABLE_KNOWLEDGE_FILE = """\
 CREATE TABLE IF NOT EXISTS knowledgefile (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -525,6 +562,9 @@ TABLE_DEFINITIONS: dict[str, str] = {
     "knowledge_space_user_pin": TABLE_KNOWLEDGE_SPACE_USER_PIN,
     # F047: agent plaza favorite.
     "user_app_favorite": TABLE_USER_APP_FAVORITE,
+    # F058: document extraction templates + run records.
+    "doc_extract_template": TABLE_DOC_EXTRACT_TEMPLATE,
+    "doc_extract_run": TABLE_DOC_EXTRACT_RUN,
 }
 
 # Indexes emitted after CREATE TABLE via create_all_tables.

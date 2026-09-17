@@ -59,6 +59,18 @@ _TENANT_AWARE_MODEL_MODULES = (
     "bisheng.org_sync.domain.models.org_sync",
     "bisheng.approval.domain.models.approval_request",
     "bisheng.citation.domain.models.message_citation",
+    # F059: tenant-scoped feedback audit trail (message_feedback_event). Listed
+    # explicitly although its endpoint chain already imports it — the discovery
+    # runs ONCE at startup over SQLModel.metadata, so a future refactor that
+    # severs an indirect import edge would silently drop it from the filter set:
+    # cross-tenant reads plus NULL tenant_id on insert.
+    "bisheng.chat_session.domain.models.feedback_event",
+    # F058: document extraction templates and their run records. Same reasoning
+    # as F059 above — the router chain happens to import them today, but the
+    # discovery snapshot is taken once and never re-taken, so listing them
+    # explicitly is what keeps them filtered if that import edge moves.
+    "bisheng.doc_extract.domain.models.extract_template",
+    "bisheng.doc_extract.domain.models.extract_run",
     # Previously *not* on any auto-imported chain — silent tenant-id leaks.
     "bisheng.database.models.failed_tuple",
     "bisheng.database.models.flow_version",

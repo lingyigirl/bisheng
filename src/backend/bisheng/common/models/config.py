@@ -23,6 +23,11 @@ class ConfigKeyEnum(Enum):
     WORKSTATION_KNOWLEDGE_SPACE = "workstation_knowledge_space"  # Knowledge Space Configuration
 
     LINSIGHT_LLM = "linsight_llm"  # workstation Default Model Configuration
+    # F058: document extraction (structured field extraction from a document).
+    # Deliberately NOT reusing KNOWLEDGE_LLM: extraction demands stronger
+    # instruction-following than title/abstract/tagging, and sharing the slot
+    # would make tuning one silently change the other.
+    DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configuration
 
 
 class ConfigBase(SQLModelSerializable):
