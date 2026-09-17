@@ -31,6 +31,10 @@ class ApplicationTypeEnum(str, Enum):
     ASR = "asr"
     # TTS
     TTS = "tts"
+    # F058: document extraction (structured field extraction from a document).
+    # Distinct from KNOWLEDGE_BASE so telemetry and cost attribution can tell
+    # the two apart -- they use different model slots by design (decision 10).
+    DOC_EXTRACT = "doc_extract"
 
     UNKNOWN = "unknown"
 
