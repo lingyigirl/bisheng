@@ -82,13 +82,13 @@ def _has_suffix_prefix_pair(words) -> bool:
 
 # (word list, a triggering stream) — each list is asserted to have the trigger.
 #
-# Passed through pytest as a plain list index rather than as parametrized
-# arguments on purpose: this repo runs on Windows, where pytest collects
-# parametrize ids and arguments under the console's GBK codec, and a Chinese
-# word list arrives mangled (observed: '习尽评吓台' reached the test body as
-# 'ϰ������̨', so the leak assertions ran against garbage words and reported
-# failures that had nothing to do with the code). Indexing keeps the strings
-# inside the module, where they are read as UTF-8 source.
+# Kept as module-level tuples and indexed rather than passed as parametrized
+# arguments. The Chinese in a parametrize id is rendered through the console
+# codec on Windows, so a failure message shows the words as mojibake
+# ('ϰ������̨'), which makes a real failure very hard to read. The characters
+# themselves are fine either way — an earlier version of this comment blamed
+# the codec for a failure that was actually the missing platform-layer stub
+# below, and the mojibake is only ever in the display.
 CASES = [
     (['jb', 'bbc中文网'], 'jbbc中文网'),
     (['习尽评吓台', '台独万岁'], '习尽评吓台独万岁'),
@@ -228,3 +228,89 @@ async def test_case_data_reaches_the_test_body_intact():
     for index in range(len(CASES)):
         words, text = CASES[index]
         assert await _stream_masked(words, text, 2) == _expected_mask(words, text)
+
+
+# --- H4: the non-streaming paths must not lose the hold-back tail -------------
+
+
+async def _build_guard_with(words):
+    """A real closure guard whose state carries our matcher."""
+    from unittest.mock import patch
+
+    import bisheng.api.services.guardrail as guardrail_module
+    from bisheng.sensitive_word.domain.services.chat_guard import ChatGuardService
+
+    state = ChatGuardService.start_output_guard(1, flow_id='f', chat_id='c', user_id=1)
+    state.enabled = True
+    state.action = 'mask'
+    state.auto_reply = '[X]'
+    state.matcher = _matcher(words)
+
+    guard = guardrail_module._build_output_guard(tenant_id=1, user_id=1, flow_id='f')
+    patcher = patch.object(ChatGuardService, 'start_output_guard', return_value=state)
+    patcher.start()
+    return guard, state, patcher
+
+
+# Each of these ends on '考', the live prefix of '考答案', so mask mode holds the
+# tail back. An answer that merely CONTAINS the prefix mid-string (e.g.
+# '参考答案') holds nothing and would not exercise this bug at all -- checked
+# rather than assumed, because two such cases silently passed under mutation.
+@pytest.mark.parametrize(
+    'answer',
+    [
+        '上述内容仅供学习参考',  # tail '参考' held back
+        '参考答案是上述内容',  # tail '考' held back
+        '考',  # the whole answer IS the live prefix -> held back entirely
+    ],
+)
+async def test_non_streaming_answer_is_complete(answer):
+    """H4: the answer must survive the guard intact.
+
+    Both non-streaming call sites fed the guard the whole answer and then read
+    `full_text()` — but they only flushed BEFORE feeding, when nothing was held
+    back yet, so the tail mask mode withheld was dropped forever. Measured:
+    `'上述内容仅供学习参考'` came back as `'上述内容仅供学习'`, and a short answer
+    whose entire tail is a live prefix came back EMPTY and was persisted so.
+
+    The flush now happens inside `full_text()`, so callers cannot get the order
+    wrong.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from bisheng.sensitive_word.domain.services.chat_guard import ChatGuardService
+
+    guard, _state, patcher = await _build_guard_with(['考答案'])
+    try:
+        with patch.object(ChatGuardService, '_write_hit_log', new=AsyncMock(return_value=None)):
+            result = await guard(None, answer)
+            full = await guard.full_text()
+            final = full if full else result.safe_text
+    finally:
+        patcher.stop()
+
+    assert final != '', 'the answer came back empty'
+    assert final == _expected_mask(['考答案'], answer), (
+        f'guard lost or failed to mask part of the answer\n'
+        f'  input {answer!r}\n  final {final!r}'
+    )
+
+
+async def test_full_text_is_idempotent():
+    """`full_text()` now flushes; calling it twice must not duplicate the tail.
+    Every call site reads it after already having fed the guard, and some read
+    it more than once."""
+    from unittest.mock import AsyncMock, patch
+
+    from bisheng.sensitive_word.domain.services.chat_guard import ChatGuardService
+
+    guard, _state, patcher = await _build_guard_with(['考答案'])
+    try:
+        with patch.object(ChatGuardService, '_write_hit_log', new=AsyncMock(return_value=None)):
+            await guard(None, '上述内容仅供学习参考')
+            first = await guard.full_text()
+            second = await guard.full_text()
+    finally:
+        patcher.stop()
+
+    assert first == second, f'not idempotent:\n  first  {first!r}\n  second {second!r}'

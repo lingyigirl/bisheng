@@ -392,13 +392,14 @@ class ChatClient:
             if self.output_guard is not None and isinstance(answer, str):
                 # 流式模型: 分片已逐 token 守卫, 用累计守卫文本重写最终答案;
                 # 非流式模型: 整段过一遍守卫 (design 坑 6 — 历史与回显均为守卫后文本)
-                await self.output_guard(self.chat_id, '')
+                #
+                # Feed first, read second. `full_text()` flushes the hold-back
+                # tail itself; calling it before the answer was fed (as this used
+                # to) is a no-op, and the tail was then lost — mask mode drops the
+                # answer's last characters when it ends on a live pattern prefix.
+                guarded = await self.output_guard(self.chat_id, answer)
                 guarded_full = await self.output_guard.full_text()
-                if guarded_full:
-                    answer = guarded_full
-                else:
-                    guarded = await self.output_guard(self.chat_id, answer)
-                    answer = guarded.safe_text
+                answer = guarded_full if guarded_full else guarded.safe_text
 
             # Record contains
             new_history = result[len(chat_history) : -1]

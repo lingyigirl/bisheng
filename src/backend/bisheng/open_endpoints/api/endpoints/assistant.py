@@ -106,9 +106,12 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
             answer = await agent.run(question, chat_history)
             answer = answer[-1].content
             if output_guard is not None and isinstance(answer, str):
-                await output_guard(None, '')  # flush (无流式分片时为 no-op)
+                # Feed the whole answer, THEN read the guarded text. `full_text()`
+                # flushes the hold-back tail itself -- it has to, or mask mode
+                # silently drops the answer's last characters (see its docstring).
+                guarded = await output_guard(None, answer)
                 guarded_full = await output_guard.full_text()
-                answer = guarded_full if guarded_full else (await output_guard(None, answer)).safe_text
+                answer = guarded_full if guarded_full else guarded.safe_text
 
             openai_resp_id = generate_uuid()
 

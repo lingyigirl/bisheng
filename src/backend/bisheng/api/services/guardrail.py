@@ -78,6 +78,30 @@ def _build_output_guard(*, tenant_id: int, user_id: int, flow_id: str):
         return OutputGuardResult(safe_text=out_text, blocked=result.blocked)
 
     async def full_text() -> str:
+        """Everything emitted so far, guarded — and COMPLETE.
+
+        Flushes the hold-back tail first. Callers use this to rewrite the final
+        answer (design pitfall 6), and without the flush the tail is simply
+        dropped: mask mode withholds ``min(max_word_len - 1, len)`` characters
+        whenever the text ends on a live pattern prefix, so an answer ending in
+        one came back truncated — measured, `'上述内容仅供学习参考'` returned
+        `'上述内容仅供学习'`, and a short answer whose whole tail is a prefix
+        came back EMPTY and was persisted that way.
+
+        The ordering trap is worth naming, because all three call sites had it:
+        they flush with ``guard(chat_id, '')`` BEFORE feeding the answer, which
+        is a no-op since nothing is held back yet, and then never flush again
+        after the answer has been fed. Pushing the flush here rather than into
+        each caller means a future call site cannot get it wrong.
+
+        Idempotent: `flush_output` clears the tail, so a second call adds
+        nothing, and it returns early when nothing is pending.
+        """
+        nonlocal state
+        if state is not None and state.enabled and state.tail:
+            flushed = await ChatGuardService.flush_output(state)
+            if flushed.safe_text:
+                accumulated.append(flushed.safe_text)
         return ''.join(accumulated)
 
     async def reset() -> None:
