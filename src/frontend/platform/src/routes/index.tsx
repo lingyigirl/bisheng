@@ -11,6 +11,7 @@ import { AppNumType } from "../types/app";
 import RouteErrorBoundary from "./RouteErrorBoundary";
 import EditorPage from "@/pages/Dashboard/editor";
 import SharePage from "@/pages/Dashboard/share";
+import { getWorkspaceClientUrl } from "@/utils/workspaceUrl";
 
 // 异步加载页面组件
 const Templates = lazy(() => import("@/pages/BuildPage/appTemps"));
@@ -53,8 +54,11 @@ const baseConfig = {
 
 const RedirectToExternalLink = () => {
   useEffect(() => {
-    const path = import.meta.env.DEV ? '/admin' : '/workspace/'
-    window.location.href = window.location.origin + path;
+    // 工作台可能与平台不同源（VITE_WORKSPACE_ORIGIN），必须走 getWorkspaceClientUrl
+    // 而不是 location.origin + '/workspace/'。DEV 保留原行为：进自己的 /admin。
+    window.location.href = import.meta.env.DEV
+      ? `${window.location.origin}/admin`
+      : getWorkspaceClientUrl('/');
   }, []);
 
   return null;
@@ -63,7 +67,9 @@ const RedirectToExternalLink = () => {
 // Redirect standalone chat routes to client app (separate SPA at /workspace)
 const RedirectToClient = () => {
   useEffect(() => {
-    window.location.replace('/workspace' + window.location.pathname + window.location.search);
+    window.location.replace(
+      getWorkspaceClientUrl(window.location.pathname + window.location.search),
+    );
   }, []);
 
   return null;

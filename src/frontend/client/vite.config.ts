@@ -136,8 +136,8 @@ export default defineConfig(({ command, mode }) => {
   // VITE_DEV_MINIO_TARGET, whose host MUST match the backend `sharepoint` config —
   // SigV4 presigned URLs sign the Host header, so a mismatch yields 403
   // SignatureDoesNotMatch (e.g. set http://localhost:9000 when sharepoint=localhost:9000).
-  const minioTarget = env.VITE_DEV_MINIO_TARGET || 'http://192.168.106.105:3001/';
-  const apiTarget = env.VITE_DEV_API_TARGET || 'http://192.168.106.105:3001/';
+  const minioTarget = env.VITE_DEV_MINIO_TARGET || 'http://172.19.70.189:7860/';
+  const apiTarget = env.VITE_DEV_API_TARGET || 'http://172.19.70.189:7860/';
   // 同源化（2026-09-07）：直连 client preview（:4001）时，管理端链接（/admin、
   // /login）反代回平台 preview；经平台单一入口（:3001）访问时这些请求由平台
   // 自身处理，不会到这里。平台 preview 同为 https（VITE_DEV_HTTPS），故用
