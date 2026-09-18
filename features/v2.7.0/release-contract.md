@@ -42,6 +42,15 @@
 | 场景热词生成端点（即时生成，不落库） | F059-chat-compliance-and-answer-enhancements | 新增即时生成 API（当轮会话内展示，不持久化）；输入为当轮用户提问与 AI 回答文本，**不检索知识库**；不拥有任何既有领域对象，不新增表 |
 | 关联问题生成端点（即时生成，不落库） | F059-chat-compliance-and-answer-enhancements | 新增即时生成 API（当轮会话内展示，不持久化）；只读调用 F055 的检索构建入口与既有 `recommend_question` 的 LLM 槽位 `qa_similar_model`；不拥有任何既有领域对象，不新增表 |
 | 对话回答区的热词列表、关联问题列表与免责提示（前端展示态） | F059-chat-compliance-and-answer-enhancements | 扩展 `AiMessageBubble` 回答区（热词 → 关联问题 → 友情提醒，顺序固定）；纯展示，不新增领域对象；友情提醒文案为 i18n 词条（三语），无服务端配置项 |
+| 数据源（`db_datasource`） | F061-datasource-qa | 新增独立表（租户 / 名称 / 引擎 / 主机·端口·库名·账号 / 密码密文 / 启用位）；仅本 Feature 写入；密码 Fernet 加密存储、任何读取路径不回显（见 INV-19）。**不并入** `Knowledge` 表、**不进入** `KnowledgeTypeEnum`、不产生向量、不创建 Milvus 集合 / ES 索引 |
+| 数据源表元数据（`db_datasource_table`） | F061-datasource-qa | 新增独立表（数据源引用 / 表名 / 结构快照（字段名·类型·库内注释）/ 人工业务描述 / 暴露开关）；仅本 Feature 写入；重新采集只刷新结构快照，**不覆盖人工业务描述**；**不采集表内真实数据行**（无样例值采样） |
+| 数据源查询执行记录（`db_query_log`） | F061-datasource-qa | 新增独立表（租户 / 操作人 / 数据源 / 涉及的表 / 执行的语句 / 执行状态 / 降级标记 / 时间）；仅本 Feature 写入；**只存语句与状态，不存结果集数据**（见 INV-19） |
+| 数据源查询失败留档（`db_query_failure`） | F061-datasource-qa | 新增独立表（租户 / 数据源 / 失败语句 / 错误类别 / 供应商错误码 / 时间）；供管理员定位需补全描述的表；**不存对话原文**——遵守 INV-11 的留痕存储边界，仅存标识与摘要 |
+| AuthorizationModel 中**新增的数据源资源类型定义**（OpenFGA type definition） | F061-datasource-qa | 在 F004 的授权模型中新增一类受控资源（**与知识库同级**，非其子类型）；仅本 Feature 写入该类定义；**不拥有** AuthorizationModel 本身（F004 归属），**不修改**任何既有资源类型的定义与任何既有元组；须按 v2.5.0 INV-15 完成权限接入（创建时 `PermissionService.authorize()`、变更前 `check()`） |
+| 工作流 Agent 节点的数据源配置（由「内联连接信息」改为「引用数据源」） | F061-datasource-qa | 扩展既有 Agent 节点参数：新增「选择数据源」形态；**保留对既有内联 `sql_agent` 配置的兼容读取**（既有流程对外行为不变，且不再允许经内联新建连接）；不拥有 `node_params` 本身（既有归属） |
+| 数据源检索工具（可被模型调用的工具形态，运行时不落库） | F061-datasource-qa | 数据源以工具形态进入对话与工作流 Agent 节点，**与知识库检索工具同层**（同一轮内模型可自由选择其一或两者）；不拥有知识库任何对象，不改变知识库检索链路与授权形状 |
+| 抽取模板（`doc_extract_template`） | F058-doc-extract-template | 新增独立表（租户 / 名称 / 文档类型标识 / 适用范围 / 字段定义 / 呈现形式 / 启用位）；仅本 Feature 写入。**2026-09-17 由 v2.8.0 移入本版本** |
+| 抽取记录（`doc_extract_run`） | F058-doc-extract-template | 新增独立表（模板引用 / 分类置信度 / 预处理链路 / 抽取字段 / 渲染结果 / 状态）；仅本 Feature 写入；**仅在「已进入抽取后」落记录**——业务抽取的成功与失败均落，试抽取不落，前置校验被拒（未进入抽取）不落。**2026-09-17 由 v2.8.0 移入本版本** |
 
 **规则**：
 - 非 Owner Feature 的 AC 中不得出现其他对象的"创建/修改/删除"行为，只能"读取"或"调用" Owner 的 Service
@@ -59,10 +68,23 @@
 | INV-9 | 服务商配置中的密钥类字段（`openai_api_key` 等）在读取响应中必须脱敏；写入路径沿用既有 CRUD 与审计 | llm_server | v2.6.0 LLM 管理 |
 | INV-10 | 平台级强制词库对所有租户的对话入口无条件生效：其检测独立于租户策略的启停，不受租户管理员修改或关闭；同一输入同时命中平台词库与租户词表时，以平台词库的判定与话术为准；平台词库内容不得经由租户侧任何界面（含命中日志）被反向获取 | platform_sensitive_word_policy, platform_sensitive_word, sensitive_word_hit_log | F059 |
 | INV-11 | 对话留痕数据的存储边界：命中日志与评价事件均只存标识与摘要（命中词及计数、评价类型与变更前后值、消息 ID），**不存对话原文**；该边界对后续所有扩展留痕的 Feature 生效 | sensitive_word_hit_log, message_feedback_event | F056（沿用）/ F059 |
+| INV-12 | 抽取模板按租户隔离：`doc_type` 仅在同租户内唯一；模板的读取、分类候选集构建、抽取执行均限定在当前租户内，不跨租户生效 | doc_extract_template | F058（**2026-09-17 由 v2.8.0 移入**） |
+| INV-13 | 抽取模板的**呈现形式**中出现的每个字段变量，必须在该模板的**字段定义**中存在；二者在保存时即校验一致，不得存在运行期才暴露的悬空引用 | doc_extract_template | F058（**2026-09-17 由 v2.8.0 移入**） |
+| INV-14 | 抽取执行**不修改**源文档、不写入知识库、不产生向量；本 Feature 对既有知识库数据只读 | doc_extract_run, knowledge | F058（**2026-09-17 由 v2.8.0 移入**） |
+| INV-15 | 抽取模板的创建与变更**必须留痕**（操作者 / 时间 / 模板名）。模板是管理员可改的配置，改了会直接改变后续所有同类型文档的抽取结果，因此「谁改的」必须可事后查阅 | doc_extract_template | F058（**2026-09-17 由 v2.8.0 移入**） |
+| INV-19 | 数据源查询的安全与留痕边界：①连接凭据加密存储、任何读取响应与日志不回显；②查询仅放行单条 SELECT，拒绝多语句 / 写操作 / 结构变更 / 加锁读取，并受行数上限与超时约束；③执行记录与失败留档**只存语句与状态摘要，不存结果集数据、不存对话原文**（延续 INV-11）；④平台**不施加行级数据过滤**——可见行范围等于所配置数据库账号的权限范围，数据源被显式授权给谁即对该主体全量开放；⑤查询生成的答案文本受既有对话合规约束保护（不绕过敏感词关卡） | db_datasource, db_datasource_table, db_query_log, db_query_failure | F061 |
 
 > 注：INV-8 / INV-9 为 v2.6.0 既有约束的回填登记（原 v2.6.0 release-contract 未编号记录，此处补记，与 F022/F020 行为一致）。编号续接 v2.6.0 的 INV-1 ~ INV-7。F045 不改动这些不变量，仅在其框架内注册新的 TTS 客户端。
 >
 > INV-10 由 F059 引入，**放宽了 F056 的三条既有 AC**（AC-02「未启用不检测」、AC-04「租户策略隔离」、AC-17「未配置行为不变」的绝对措辞）——F056 spec 已同步加「除平台强制词库外」的范围限定。Impacted Specs 见变更历史。
+>
+> INV-19 由 F061 引入，**不放宽任何既有不变量**。其 ③ 为 INV-11 边界在本特性的具体化（本特性不新增例外，仅遵守）；其 ④ 为**显式声险**：平台不提供行级过滤，安全责任落在「所配置数据库账号的权限」与「数据源的授权治理」两处外部因素上，平台侧不作技术强制——该风险由本特性显式接受，后续任何 Feature 若引入行级过滤能力，应回写本行并重新评审。
+>
+> **跨版本依赖登记**：F061 消费 v2.5.0 **F004-rebac-core** 拥有的 `AuthorizationModel`——新增一类数据源资源类型的 type definition，并按 v2.5.0 **INV-15** 完成权限接入。这是本 Feature 唯一跨越版本边界的对象写入，特此登记（v2.5.0 契约的 INV-15 资源清单为**开放枚举**，新增类型即扩该清单，无需修改 v2.5.0 既有文本；仅需保证：创建调 `authorize()`、变更前调 `check()`）。
+
+> INV-12 ~ INV-15 由 F058-doc-extract-template 引入，**2026-09-17 随该 Feature 的版本归属调整由 v2.8.0 移入本版本**。不变量内容与其来源 Feature 均未变化，仅登记位置改变；编号为全局编号，**不因移入而重新编排**。
+>
+> **本版本 INV 全貌**：INV-8 / INV-9（v2.6.0 回填）、INV-10 / INV-11（F059）、INV-12 ~ INV-15（F058）、INV-19（F061）。**注意编号不连续是正常的**：INV-16 ~ INV-18 由 v2.8.0 的 F060-term-library 持有，未移入本版本。**不要按编号是否连续推断是否有遗漏，也不要仅凭某个 INV 编号落在本版本的区间内就认为它属于本版本**——以本表实际登记为准。
 
 **规则**：
 - 新增不变量：先在此表追加，再写 AC
@@ -84,6 +106,8 @@
 | F056-llm-guardrail | 无（v2.6.0 F036 sensitive_word 模块已上线） | 扩展既有策略基础设施到对话链路；复用 AC 自动机 / 策略表 / 管理 API；不依赖本版本其他 feature 的新增能力 |
 | F057-knowledge-department-ownership | 无（既有 department 模块与知识库权限体系已上线） | 复用既有部门树（`department.path` 物化路径）、`PermissionService` 五级短路的隐式回退位、知识库列表的游标分页链路；不依赖本版本其他 feature 的新增能力 |
 | F059-chat-compliance-and-answer-enhancements | F056-llm-guardrail（对话围栏链路与命中日志已上线）、F055-risk-compliance-knowledge（检索构建入口与标签体系已上线） | 复用 F056 的 `ChatGuardService` / 命中日志表 / 平台安全围栏页；复用 F055 的 `retrieve_knowledge_documents` 与标签过滤；复用既有 `recommend_question` 的 LLM 槽位 `qa_similar_model`（场景热词与关联问题共用该槽位）。本 Feature 引入 INV-10，据此**放宽** F056 的 AC-02 / AC-04 / AC-17（见 Impacted Specs） |
+| F061-datasource-qa | **跨版本**：v2.5.0 F004-rebac-core（OpenFGA 授权模型与 `PermissionService` 已上线）、v2.5.0 F005-role-menu-quota（独立权限点所需的菜单权限机制已上线）。**本版本**：F056-llm-guardrail（对话链路输入/输出缝合点已上线）、F059-chat-compliance-and-answer-enhancements（回答区附属信息的展示位已上线） | **复用（跨版本）**：F004 的 `AuthorizationModel`（新增一类数据源资源类型，按 v2.5.0 INV-15 接入 `PermissionService.authorize()` / `check()`；见 INV-19 后的跨版本依赖登记）、F005 的菜单权限机制（承载数据源的独立管理权限点）。**复用（本版本）**：F056 的对话合规关卡（数据库生成的答案文本同样受限，见 INV-19 ⑤）、F059 的回答区展示位（引用锚点与展开区需与其共存不冲突）。**复用（既有平台机制，非 feature 依赖）**：`tenant_system_model_config` 槽位机制与 Root 租户回退（承载 SQL 生成的独立模型槽位）、既有 LLM 工厂、既有知识库检索工具形态（数据源以同层工具形态呈现，**不修改知识库任何对象**）。**开发基线**：本特性所在的项目交付集成基线（特性间为线性叠加，非各自独立分支）——见 spec.md 依赖栏 |
+| F058-doc-extract-template | 无（既有知识库解析链路 / LLM 管理 / 多租户体系已上线） | 复用既有 loader 栈与 `TempFilePipeline`（`knowledge/rag/`）、`settings.get_knowledge()` 的 provider 配置、`LLMService.get_bisheng_llm_sync` 与 `TenantSystemModelConfig` 槽位机制、`UserPayload.get_tenant_admin_user` 鉴权；不依赖本版本其他 feature 的新增能力。**2026-09-17 由 v2.8.0 移入本版本**（该特性**已实现**，此行为登记迁移，非新增设计） |
 
 ---
 
@@ -99,6 +123,12 @@
 | 112 | 敏感词 / 安全围栏（`common/errcode/sensitive_word.py` 新增：11201=输入命中拦截、11202=输出命中截断） | F056-llm-guardrail |
 | —（F057 不新增错误码：归属写入的拒绝路径复用既有 HTTP 错误信封 403） | — | — |
 | 113 | 平台敏感词库（`common/errcode/platform_sensitive_word.py` 新增：导入文件无法解析 / 无有效词条 / 词条不存在；命中拦截复用 F056 的 11201、11202 不改语义） | F059-chat-compliance-and-answer-enhancements |
+| 116 | 文档抽取（`common/errcode/doc_extract.py` 新增：11601 指定文档类型不可用（不存在或已停用）、11602 类型标识重复、11603 模板定义非法（字段定义非法 / 名称为空 / 字段定义为空）、11604 呈现形式悬空引用、11605 无可用识别服务、11606 类型未识别（含无可判定候选、置信度低于阈值）、11607 字段校验失败、11608 内容获取失败（模型未配置 / 模型调用失败或超时 / 识别服务调用失败）、11609 文档不可读或为空、11610 文档超出体量上限、11611 模板不存在或无权限访问） | F058-doc-extract-template（**2026-09-17 由 v2.8.0 移入**；该模块**已实现并落盘**） |
+| 117 | 数据源 / 数据库问答（`common/errcode/datasource.py` 新增：连接失败 / 引擎不支持 / 表结构采集失败 / 语句被安全策略拒绝 / 语句执行失败 / 执行超时 / 结果超行数上限 / 数据源不存在或无权限访问 / 数据源名称重复 / 模型槽位未配置） | F061-datasource-qa |
+
+> **模块编码分配口径（F061 / F058 补充）**：117 在分配前已扫**三个来源**并确认全空——① `src/backend/bisheng/common/errcode/*.py` 无 117xx；② 全部版本 `release-contract.md` 无 117 占用；③ `src/frontend/packages/locales/src/api_errors/*.json` 无 117xx（该处曾有后端不存在的遗留码，F058 的 11403 撞车即源于漏扫此来源）。
+> **本版本编号现状**：v2.7.0 当前占用 **112**（F056）、**113**（F059）、**116**（F058）、**117**（F061）。其中 **114** 为前端 403 跳转哨兵（`11403`，**非本版本分配**）、**115** 属 v2.8.0（F060 术语库）。
+> **编号连续性说明**：本表出现 `112 / 113 / 116 / 117` 的间隔**不是空缺**——114 为前端遗留哨兵、115 由 v2.8.0 的 F060 持有。**编号全局共享，不按版本连续**；分配前必须按上述三来源扫描确认（见 v2.8.0 契约同口径说明）。
 
 ---
 
@@ -115,3 +145,5 @@
 | 2026-09-07 | 登记 F056-llm-guardrail（敏感词策略 chat_input/chat_output 场景扩展 + 命中日志表 + 错误码模块 112） | — |
 | 2026-09-16 | 登记 F057-knowledge-department-ownership（knowledge.department_id 归属列 + 读时可见性求值 + 列表部门筛选参数 + 只读部门统计端点；不新增错误码） | — |
 | 2026-09-17 | 登记 F059-chat-compliance-and-answer-enhancements（平台级敏感词库词条表 + 平台级策略表 + 命中日志 source 字段 + 评价事件表 + **场景热词生成端点** + 关联问题生成端点 + 回答区展示态 + 错误码模块 113）。**新增不变量**：INV-10（平台强制词库效力与优先级）、INV-11（留痕存储边界）。**Impacted Specs**：F056-llm-guardrail — AC-02 / AC-04 / AC-17 需加「除平台强制词库外」范围限定，本次已回写；F036 的知识库文件解析 / 订阅文章两个场景**不受影响** | F056, F036 |
+| 2026-09-17 | **F058-doc-extract-template 由 v2.8.0 移入本版本**（使用户可见的交付版本与特性登记版本一致）。自 v2.8.0 移入：表1 两行（`doc_extract_template` / `doc_extract_run`）、表2 四条（**INV-12 ~ INV-15**）、表3 一行（F058 依赖图）、错误码表一行（**116**）。**编号不变**：F058 仍为 F058，仍占用 INV-12~INV-15 与错误码 116，仅登记位置改变。**本特性已实现**（Wave A–G 已提交，迁移 `f058_doc_extract` 已落盘），本次为**登记迁移，不涉及任何代码改动**；v2.8.0 保持存在（由 F060 及后续特性继续使用） | 无（纯版本归属调整） |
+| 2026-09-17 | 登记 F061-datasource-qa（数据源表 + 数据源表元数据表 + 查询执行记录表 + 查询失败留档表 + AuthorizationModel 新增数据源资源类型 + 工作流 Agent 节点数据源配置收敛 + 数据源检索工具 + 错误码模块 117）。**新增不变量**：INV-19（数据源查询的安全与留痕边界，**不放宽任何既有不变量**）。**跨版本依赖**：消费 v2.5.0 F004-rebac-core 的 `AuthorizationModel`（新增一类资源 type definition）与 F005-role-menu-quota 的菜单权限机制，按 v2.5.0 INV-15 完成权限接入——**不修改 v2.5.0 任何既有文本**（其 INV-15 资源清单为开放枚举）。**Impacted Specs**：无（本特性不修改任何既有 Feature 的 AC；对 Agent 节点既有内联 `sql_agent` 配置改为**兼容读取**，既有流程对外行为不变）。**明确不涉及**：知识库对象 / `KnowledgeTypeEnum` / 知识库检索链路 / 知识库授权形状（F055 / F057 不受影响）；F004 的既有资源类型与既有元组不受影响 | 无（跨版本消费 F004 / F005，均为只读复用 + 一类新增 type definition） |
