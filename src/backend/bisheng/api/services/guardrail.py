@@ -57,9 +57,10 @@ def build_output_guard_for_callback(*, tenant_id: int, user_id: int, flow_id: st
 def _build_output_guard(*, tenant_id: int, user_id: int, flow_id: str):
     state = None
     accumulated: list[str] = []
+    reply_emitted = False
 
     async def guard(chat_id: str, chunk: str) -> OutputGuardResult:
-        nonlocal state
+        nonlocal state, reply_emitted
         if state is None:
             state = ChatGuardService.start_output_guard(
                 tenant_id, flow_id=flow_id, chat_id=chat_id, user_id=user_id
@@ -71,7 +72,16 @@ def _build_output_guard(*, tenant_id: int, user_id: int, flow_id: str):
             return OutputGuardResult(safe_text=flushed.safe_text)
         result = await ChatGuardService.check_output_chunk(state, chunk)
         out_text = result.safe_text
-        if result.blocked:
+        if result.blocked and not reply_emitted:
+            # Once. `state.blocked` is sticky -- `check_output_chunk` keeps
+            # returning `blocked=True` for every later chunk -- so appending on
+            # each one accumulated the phrase once per chunk; measured,
+            # `full_text()` returned '先[BLOCKED][BLOCKED][BLOCKED]' for a
+            # three-chunk stream. The per-chunk callers never noticed because
+            # they DROP a blocked frame outright; only the callers that rewrite
+            # the final answer from `full_text()` saw the repetition, and that
+            # text is what gets persisted.
+            reply_emitted = True
             out_text += state.auto_reply
         if out_text:
             accumulated.append(out_text)
@@ -105,9 +115,13 @@ def _build_output_guard(*, tenant_id: int, user_id: int, flow_id: str):
         return ''.join(accumulated)
 
     async def reset() -> None:
-        nonlocal state
+        nonlocal state, reply_emitted
         state = None
         accumulated.clear()
+        # Must clear with the rest: a fresh round that blocks again has to close
+        # out again, and leaving this set would drop the phrase from every
+        # subsequent round on the same connection.
+        reply_emitted = False
 
     guard.full_text = full_text  # type: ignore[attr-defined]
     guard.reset = reset  # type: ignore[attr-defined]

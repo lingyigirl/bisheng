@@ -330,3 +330,54 @@ async def test_control_frames_are_not_rewritten(monkeypatch):
     result = await client._guard_output_event(event)
 
     assert result.message['msg'] == '这是敏感词', 'a control frame was rewritten'
+
+
+# --- M-新5: the close-out phrase must be appended exactly once ---------------
+
+
+async def test_close_out_phrase_is_appended_once_per_block(monkeypatch):
+    """Block mode must close out ONCE, not once per chunk.
+
+    `state.blocked` is sticky: `check_output_chunk` keeps returning
+    `blocked=True` for every later chunk. The wrapper appended the phrase on
+    each of those, so `full_text()` returned
+    '先[BLOCKED][BLOCKED][BLOCKED]' over a three-chunk stream -- and
+    `full_text()` is what rewrites the persisted answer, so the repetition was
+    stored and shown again on history reload.
+
+    The per-chunk callers never exposed this because they DROP a blocked frame
+    outright; only the final-answer rewrite path reads the accumulated text.
+    """
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='违规词', extra_config={'action': 'block'}))
+    monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
+
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+
+    for chunk in ('先违规词', '后续内容', '更多内容'):
+        await guard('chat-1', chunk)
+
+    text = await guard.full_text()
+    assert text.count('命中敏感词') == 1, f'close-out phrase repeated: {text!r}'
+    assert text == '先命中敏感词', f'unexpected accumulated text: {text!r}'
+
+
+async def test_close_out_phrase_is_emitted_again_after_reset(monkeypatch):
+    """`reset()` starts a fresh round, which must be able to close out again.
+
+    The once-only flag has to be cleared with the rest of the state -- leaving
+    it set would silently drop the phrase from every round after the first on
+    the same websocket connection.
+    """
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='违规词', extra_config={'action': 'block'}))
+    monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
+
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+
+    await guard('chat-1', '先违规词')
+    assert (await guard.full_text()).count('命中敏感词') == 1
+
+    await guard.reset()
+    await guard('chat-1', '再违规词')
+
+    text = await guard.full_text()
+    assert text.count('命中敏感词') == 1, f'a fresh round did not close out correctly: {text!r}'
