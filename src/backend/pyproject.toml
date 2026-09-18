@@ -64,6 +64,18 @@ dependencies = [
     "pymongo>=4.15.3",
     "pymupdf>=1.26.5",
     "pymysql>=1.1.2",
+    # SQL parser for the datasource query guard (F061): parses model-generated
+    # SQL into an AST so writes, locking reads and multi-statement input are
+    # rejected structurally rather than by keyword matching.
+    #
+    # No DaMeng dialect exists (34 built-ins, none is `dm`). Measured, that is
+    # NOT a real problem: 27 DM/Oracle constructs (ROWNUM, (+) joins, CONNECT
+    # BY, NVL/DECODE, DUAL, FETCH FIRST, DM hints, VARCHAR2, @dblink, PARTITION,
+    # TABLE(), Chinese identifiers) all parse under `oracle`, which is what DM
+    # datasources use. The failures that DO happen come from syntax noise such
+    # as `FOR UPDATE SKIP LOCKED`; those degrade to keyword validation instead
+    # of being rejected (spec AC-20).
+    "sqlglot>=30.18.0",
     # DaMeng database drivers — available on PyPI (Linux x86_64/aarch64, Windows).
     # dmPython bundles the dmssl package which includes the required native .so
     # files, so no separate DaMeng client installation is needed.

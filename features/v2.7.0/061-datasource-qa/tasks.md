@@ -98,7 +98,9 @@ design §8 的 4 项开放项 + 拆解粒度，经调研后已定：
 | **CTE 内藏写操作**：`WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x` | 解析成功，**根节点是 `Select`**，`Delete` 在子节点 | 必须**遍历整棵树**找写节点，不能只判根节点（AC-17） |
 | **加锁读取**：`FOR UPDATE` / `LOCK IN SHARE MODE` / `FOR SHARE` | 解析成功且**锁子句在 AST 中被剥离**：`parse_one(...).sql()` 输出 `SELECT * FROM t`；仅 `args['locks']` 残留 `Lock(update=True)` | 必须检查 `tree.args.get('locks')`，**不能靠 SQL 文本里有没有 `FOR UPDATE` 字样**（AC-17 明列「加锁读取」） |
 
-**另**：`FOR UPDATE SKIP LOCKED` **确实解析失败**（ParseError）。按 AC-20，解析失败**不得拒绝执行**，故它将落到窄校验档 —— 而窄校验若不单独识别 `FOR UPDATE`，这条**加锁读取会被放行**。窄校验档**必须**包含 `FOR UPDATE` / `LOCK IN SHARE MODE` 关键字检查。
+**另**：有些**合法**语句确实解析失败（Oracle/DM 的 `MODEL` 子句等）。按 AC-20，解析失败**不得拒绝执行**，故它们落到窄校验档 —— 而窄校验若不单独识别 `FOR UPDATE`，则「不可解析语句 + 加锁读取」这一组合**无人拦截**。窄校验档**必须**包含 `FOR UPDATE` / `LOCK IN SHARE MODE` 关键字检查。
+
+> **⚠ 订正（2026-09-18，T-10 实现期）**：本节此前写「`FOR UPDATE SKIP LOCKED` 确实解析失败」——**该结论错误**。探测语句当时写作 `SELECT ... FOR UPDATE SKIP LOCKED`，`...` 不是合法列清单，**是占位符导致的 ParseError**。真实语句可正常解析并由 AST 档拦截。窄校验档的加锁关键字**仍然必需**，只是服务的对象是 `MODEL` 子句那类真正不可解析的语句。
 
 > **对决策 8 的影响**：这进一步坐实「AST 校验不是安全边界」（design 决策 8 的判断正确）——它至少有三个已知绕过面已由平台侧显式堵上，但仍不应被视为唯一依赖。只读账号仍是首要边界。
 
@@ -321,7 +323,10 @@ uv run python -m pytest test/datasource/test_sql_guard.py -q
 | `SELECT * FROM t FOR UPDATE` | **拒绝**（锁子句被剥离，必须查 `args['locks']`） |
 | `SELECT * FROM t LOCK IN SHARE MODE` / `FOR SHARE` | **拒绝**（同上） |
 | 普通 `SELECT` / `WITH ... SELECT` | 放行 |
-| `FOR UPDATE SKIP LOCKED` | **降级放行**（ParseError → 窄校验档，但窄校验须拒 —— 见 T-11） |
+| `SELECT * FROM t FOR UPDATE SKIP LOCKED` | **拒绝**（AST 档，经 `args['locks']`；非降级） |
+| `SELECT ... MODEL ... RULES (...)`（DM/Oracle） | **降级放行**（真 ParseError → 窄校验档） |
+| 上述 `MODEL` 语句 + 尾部 `FOR UPDATE` | **拒绝**（窄校验档的关键字检查 —— 见 T-11） |
+| `SELECT FROM WHERE`（语法错误） | **放行给数据库**（非缺陷：AC-37 明确「语法错误」属回喂模型重试的失败类型，护栏不是语法检查器） |
 
 **覆盖 AC**: AC-16, AC-17, AC-20
 
@@ -335,9 +340,9 @@ uv run python -m pytest test/datasource/test_sql_guard.py -q
 - 在 `sql_guard.py` 内实现窄校验：单语句（按 `;` 分隔后须只有一条有效语句）+ 首关键字 `SELECT`/`WITH` + **禁写关键字集**
 - **禁写关键字集必须包含 `FOR UPDATE` / `LOCK IN SHARE MODE`**（R1-补 的连带结论）
 
-**为什么**：design 决策 7 方案 B 的落地。**若窄校验不识别加锁读取，`FOR UPDATE SKIP LOCKED` 这条加锁读取会被放行** —— 而它是 AC-17 明列须拒的。
+**为什么**：design 决策 7 方案 B 的落地。**若窄校验不识别加锁读取，「不可解析语句 + 加锁读取」这一组合会被整体放行** —— 因为 AST 档根本没读懂它，而它是 AC-17 明列须拒的。
 
-**验证**：`uv run python -m pytest test/datasource/test_sql_guard.py -q -k narrow`；须有专门用例断言 `FOR UPDATE SKIP LOCKED` 走窄校验档且**被拒绝**。
+**验证**：`uv run python -m pytest test/datasource/test_sql_guard.py -q -k narrow`；须有专门用例断言「`MODEL` 语句 + 尾部 `FOR UPDATE`」走窄校验档且**被拒绝**。
 
 **覆盖 AC**: AC-17, AC-20
 
