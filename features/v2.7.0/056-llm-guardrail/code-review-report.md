@@ -10,15 +10,21 @@
 
 ## Summary
 
+> **⚠ 本表为第二轮（三维度补审 + 我的订正）后的结果，与初版不同。** 初版判定「代码维度全部通过」，**该判定有误** —— 见 H3/H4。
+
 | Dimension | High | Medium | Low | Status |
 |-----------|------|--------|-----|--------|
-| 1. 边界条件 | 0 | 0 | 2 | PASS |
-| 2. 权限与认证 | 0 | 0 | 0 | PASS |
+| 1. 边界条件 | 2 (H3/H4) | 3 | 2 | **NEEDS_FIX** |
+| 2. 权限与认证 | 1 (H8) | 2 | 0 | **NEEDS_FIX** |
 | 3. 并发安全 | 0 | 0 | 1 | PASS |
-| 4. 信息泄漏 | 0 | 0 | 0 | PASS |
-| 5. 测试覆盖 | 2 | 1 | 0 | **NEEDS_FIX**（M1 已闭合，M2 保留） |
-| 6. 代码风格 | 0 | 0 | 0 | PASS |
-| 7. 文档同步 | 1 | 1 | 0 | **NEEDS_FIX**（H2 / M3 已回写） |
+| 4. 信息泄漏 | 1 (H6) | 2 | 2 | **NEEDS_FIX** |
+| 5. 测试覆盖 | 1 (H7) | 2 | 1 | **NEEDS_FIX** |
+| 6. 代码风格 | 0 | 0 | 1 | PASS |
+| 7. 文档同步 | 1 (H5) | 3 | 2 | **NEEDS_FIX** |
+| 8. 出口一致性（补审新增） | 1 (H6) | 3 | 0 | **NEEDS_FIX** |
+
+**首轮已闭合**：H2（design 未同步 F059 两层现状，已回写）、M1（AC-18 无测试，已补 `test_f036_regression.py`）、M3。
+**首轮 H1 仍开放**：核心 AC 的真实链路验证依赖未执行的手动清单。
 
 ## Overall: **NEEDS_FIX**（1 条 HIGH 待处理）
 
@@ -53,19 +59,11 @@ k=2   : 同上   OK      k=5 : 同上   OK
 
 任意粒度结果**逐项一致**，跨分片词无一漏检。重叠模式全报符合 design 坑 5 的规定语义。
 
-### mask 打码不泄漏词头 —— 正确
+### ~~mask 打码不泄漏词头~~ —— **原判有误，实为 HIGH**（见下 H3 与订正说明）
 
-design 坑 5 的核心安全属性：永不输出半个敏感词。
+> **⚠ 本节结论已被推翻（2026-09-18）。** 原判断基于一次**词表构造不足**的穷举，见文末「订正：一次被构造不足的穷举」。真实缺陷见下方 **H3**。
 
-**验证方式**：25 种分片方式（12 单切分 + 13 固定粒度）× mask/block 两种动作，检查输出中是否出现完整敏感词：
-
-```
-MASK:  12 single-cut splits + 13 fixed chunkings over 13 chars
-  leaks found: NONE
-BLOCK: leaks found: NONE
-```
-
-`_resolve_emit_len` 的 `hold = min(matcher.max_word_len - 1, buf_len)` 保证缓冲窗口被最长词长界住，**不会无界增长**；`tail_state` 回退用 `prior_state` 而非 `state_after`（`emit_len==0` 时全量重扫），注释解释了为何不能反过来。
+`_resolve_emit_len` 的 `hold = min(matcher.max_word_len - 1, buf_len)` 保证缓冲窗口被最长词长界住，**不会无界增长**；`tail_state` 回退用 `prior_state` 而非 `state_after`（`emit_len==0` 时全量重扫），注释解释了为何不能反过来。**这两点仍成立**，但不足以保证「不泄漏」。
 
 > 附注：流真在词中间结束时（如只生成了 `绝密文`），原样输出是**正确行为** —— 敏感词从未生成完，不存在可泄漏的完整词。
 
@@ -106,7 +104,84 @@ design K2 的核心风险是「任一入口漏埋点 = 围栏有洞」。全部 
 
 ---
 
-## HIGH
+## HIGH（第二轮：边界/并发 + 测试/风格/文档三维度补审，2026-09-18）
+
+> 以下 6 条来自两个补审 agent（边界与并发、测试与文档），**全部经实际执行确认**（agent 用真实 `ChatGuardService` + 真实 `build_output_guard_for_callback` + 随包 `words.txt` 2809 词驱动，探针文件已删）。其中 H3 推翻了本报告初版的一个结论。
+
+### H3. mask 模式在 emit 边界明文吐出命中词的大部分 —— `in_progress` 忽略了 AC 失败链
+
+- **位置**：`sensitive_word/domain/services/ac_automaton.py:59`（`return node is not self.root and bool(node.children)`），消费点 `chat_guard.py:552` / `:571`
+- **缺陷**：trie 节点是叶节点 ⟺ 有词在此结束，故 `bool(node.children)` 回答的是「**本节点**能否延伸」，但文本后缀完全可能经 **fail 链**仍是更长模式的活前缀。此时 `hold = 0`，整个缓冲被发出；当那个更长的词在下一分片完成时，`_mask` 因跨度起点在边界之前（`start >= 0` 守卫）而**丢弃它**。
+- **实测（我独立复现，真实内置词表）**：
+  ```
+  词表 = ['习尽评吓台', '台独万岁']    ← 均为随包 words.txt 真实词条
+  流式输入 '习尽评吓台独万岁'，逐字符分片
+  输出     '*****独万岁'
+  →  '台独万岁' 有 3/4 字符明文可读
+  ```
+  agent 另报 `jb` / `bbc中文网` 一组可泄漏 5/6，最坏 14/15。
+- **影响面**：内置 2809 词中 **1530 个**词以「叶节点且 fail 链前缀仍活」的形态结束。
+- **违反**：design 坑 5「命中词永不跨 emit 边界被拆开发出」+ AC-11。
+- **状态**：**CONFIRMED**（agent 与我各自独立执行）。
+
+### H4. mask 模式下非流式路径的扣留尾部从不冲刷 → 回答被静默截断甚至整个消失
+
+- **位置**：`common/chat/client.py:395-401`、`open_endpoints/api/endpoints/assistant.py:109-111`
+- **缺陷**：两条路径把整段回答作为**一个** chunk 喂给守卫，而此前那次 `chunk == ''` 调用是空操作（尚无累积内容，`guardrail.py:67` 不冲刷），随后却直接 `answer = guarded.safe_text`。mask 模式在回答尾部是活前缀时会扣留 `min(max_word_len-1, buf_len)` 个字符，而**该尾部被丢弃** —— 既不发出也不打码。
+- **实测**：回答 `上述内容仅供学习参考`（10 字符，结尾 `考` 是 `考答案`/`考题` 的活前缀）→ `safe_text == ''`，用户看到**空气泡**，且空串被写入聊天历史。更长的回答最多丢失末 15 字符（`max_word_len=16`）。
+- **影响面**：内置词表中 1018 个不同字符是活前缀，故任何以之结尾的回答都会被截断。命中所有非流式模型 + 任何 `stream=false` 的 `/api/v2/...` 调用方。
+- **状态**：**CONFIRMED**（agent 经真实 wrapper 执行；我独立复现了机制）。
+
+### H5. 工作流侧历史落库保存的是**未过滤原文**；design 坑 6 与 §7 的断言是错的
+
+- **位置**：`design.md:154`（坑 6）、`:191`（§7）
+- **缺陷**：design 称「输出截断后 chat 历史保存的是截断后文本（`send_response` 带 `add` 参数负责入库）」—— **`send_response` 根本没有 `add` 参数，也从不写库**（`common/chat/clients/base.py:129-133`，函数体只 `send_json`）。
+- **真实链路**：`worker/workflow/redis_callback.py:807-829` `on_stream_over` → `:822 save_chat_message(...)` → `:545 ChatMessageDao.insert_one(...)`，**发生在 `:829 self.send_chat_response(...)` 之前**，拿的是引擎侧原文。客户端侧改写（`workflow_client.py:215`）只改 ws 帧，**发生在落库之后**。
+- **后果（合规级）**：工作流链路历史里存着被围栏拦下的违规原文，与 design 承诺「历史文本本身不含违规内容」完全相反。助手链路是对的（`common/chat/client.py:391-403` 先改写再 `:434 add_message` 落库）——**两条链路行为不一致，design 把助手的语义当成了通用语义**。
+- **状态**：**CONFIRMED**（agent 逐层读码追踪）
+
+### H6. 工作流 `OutputMsg` 帧完全绕过输出围栏，命中词原样到达前端并落库
+
+- **位置**：`common/chat/clients/workflow_client.py:184-201`（`_guard_output_event`），触发点 `workflow/callback/llm_callback.py:154-173`
+- **缺陷**：`:201` 对 `category != StreamMsg` 的事件**直接放行**。`llm_callback.py:154` 的判据是 `if self.stream and self.output_len > 0`，否则走 `:169 on_output_msg`（其注释自承 "This happens when the cache is hit"）→ `redis_callback.py:772` 发 `category='output_msg'` 帧。
+- **后果**：命中缓存的 LLM 节点、或未开流式的节点，其输出**完全不经输出检测**即送前端，且 `redis_callback.py:774` 同样落库。
+- **实测**：构造 `output_msg` 帧走真实 `_workflow_run` → `OUTPUT-MSG over output_msg len=8 leaked_raw=True masked=False`。
+- **design §5 未记载**（其声称 12 条坑，无此条）。
+- **状态**：**CONFIRMED**（agent 执行探针）
+
+### H7. 输出方向的 `business_type` 无任何测试锚定；改坏后 143 个测试全绿
+
+- **位置**：`chat_guard.py:261`（`start_output_guard` 读 `CHAT_OUTPUT`）、`test/sensitive_word/test_chat_guard.py` 的 autouse `stub_hit_log` 夹具
+- **缺陷**：夹具 stub 是 `lambda **kwargs: _policy(...)`，**把 `business_type` 丢弃不校验**，故策略查询传什么都「过」。
+- **实测（变异）**：把 `:261` 的 `CHAT_OUTPUT` 改成 `CHAT_INPUT`（输出方向误用输入词表）→ **143 passed**。
+- **后果**：AC-09「输出使用输出方向**独立**配置的词表」在自动化层面**实质零覆盖**。与 F058 报告那条同源：测试 mock 掉了被测层的判别依据。
+- **状态**：**CONFIRMED**（agent 变异实验）
+
+### H8. 第 4 个对话入口 `/api/v1/workstation/chat/completions` 完全没有围栏
+
+- **位置**：`workstation/api/endpoints/chat.py:97` → `workstation/domain/services/chat_service.py:2010 stream_chat_completion`
+- **缺陷**：整条链路零 guardrail 引用，既不在 spec 的「任一对话入口」枚举里，也不在 design §5 的入口清单里。
+- **后果**：AC-05「任一对话入口」不成立；从 workstation 发起的对话输入输出均不受检。
+- **状态**：PLAUSIBLE（已确认无引用、已确认是 chat 入口；未实跑该链路）
+
+### 相关 MEDIUM（详见 agent 原始记录）
+
+- **M-新1**：4 个 ws 端点的 `input_guard=` / `output_guard=` 实参**可整体删除而 143 测试全绿** —— 无人断言 `dispatch_client` 真收到了 kwargs。AC-05/AC-17 的接线无回归保护。
+- **M-新2**：命中日志端点的权限依赖从未被求值（测试绕开 FastAPI DI），降级依赖后全绿。
+- **M-新3**：spec/design 写的 `POST /api/v2/chat/completions` **不存在**，实际是 `POST /api/v2/assistant/chat/completions`（`api/router.py:101` + open_endpoints 的 `assistant` 前缀）。按 spec 写集成代码会 404。
+- **M-新4**：design 四处仍称输出检测落点是 `send_response`，实现重构后已改为事件层三处；§6.2 记的是一条**假的隐性契约**（这正是 H6 漏掉 `output_msg` 的根因）。
+- **M-新5**：`auto_reply` 在每次 blocked 调用后被重复追加（`state.blocked` 永不清除），`full_text()` 实测返回 `'xx[BLOCKED][BLOCKED][BLOCKED]'`。
+- **M-新6**：工作流的 `full_text()` 跨整个 run 累积，却重写**每一个** `StreamMsg` 的 `end` 帧 → 两个流式节点时第二个气泡会带上第一个的回答。
+- **M-新7**：任何未经 `''` 冲刷就结束的流（用户 Stop、工作流错误、非 `stream_msg` 结束）丢尾部。
+- **M-新8**：终局收口逻辑三处复制，`workflow_client.py:215` 少了空值兜底。
+- **M-新9**：design 坑 3 对 `clear_cache` 的因果描述夸大（AC-03 实际由缓存键含 `words_digest` 保证）。
+- **LOW**：同步 DB 读发生在事件循环上（K4 说「检测路径不查库」）；HTTP 路径 `chat_id` 传 `None` 致日志 `chat_id=NULL`；`str.lower()` 长度不守恒（`'İ'` → 2 字符）会使打码错位；2 处新增 RUF003。
+
+### 已核验无问题（避免重复排查）
+
+进程级自动机缓存在线程池下**安全**（8 线程压测：8000 次并发扫描 × 400 轮 `_get_automaton`/`clear_cache`，0 错误）；每会话守卫状态隔离正确；`capture_at` / `_rewind_scan_state` 在每个切点都正确；尾部有界（实测最坏 11 字符）；去重水位单调安全；block 跨分片取两层最早命中正确；空/纯空白分片处理正确；分页边界正确。
+
+## HIGH（首轮）
 
 ### H1. [测试覆盖] AC-05 / AC-10 / AC-11 / AC-12 / AC-14 的真实链路验证从未执行
 
@@ -207,10 +282,35 @@ design K2 的核心风险是「任一入口漏埋点 = 围栏有洞」。全部 
 |---|---|---|
 | F056 单测（6 个归属文件） | `pytest test_ac_automaton_incremental test_chat_client_input_guard test_chat_client_output_guard test_chat_guard test_hit_log_query test_open_endpoints_guard` | **52 passed** |
 | F057 单测（对照） | 6 个 f057 文件 | 52 passed |
-| 跨分片穷举 | 直接驱动 `find_all_matches`，12 单切分 + 13 粒度 | 与全量扫描**逐项一致** |
-| mask/block 泄漏穷举 | 25 种分片 × 2 动作 | **零泄漏** |
+| 跨分片穷举 | 直接驱动 `find_all_matches`，12 单切分 + 13 粒度 | 与全量扫描**逐项一致** —— 匹配**总能被找到** |
+| ~~mask/block 泄漏穷举~~ | ~~25 种分片 × 2 动作~~ | ~~零泄漏~~ → **结论作废**：穷举用的词表构造不足，未含「叶节点 + fail 链活前缀」结构。见 H3 |
 | ruff（核心新增文件） | `ruff check` × 5 | 净增 **0** |
 | 全目录混合跑 | `pytest test/sensitive_word/ test/knowledge/ test/permission/` | 106 failed / 1485 passed —— 失败全部落在需中间件的模块（space service / openfga / f006 migration），**与 F056/F057 无关**，两特性各自子集全绿 |
+
+---
+
+## 订正：一次被构造不足的穷举（2026-09-18）
+
+本报告初版断言「mask 打码零泄漏」，并据此判定边界维度 PASS。**该结论错误**，源自我的验证方法本身有缺陷 —— 记在这里，因为它比结论本身更有用。
+
+**我做了什么**：构造词表 `['绝密文件', '密码', 'ab']`，遍历全部单切分点与全部固定分片粒度（共 25 种），检查输出是否含完整敏感词 —— 零泄漏。
+
+**为什么它必然零泄漏**：mask 泄漏的触发条件是**「某词在 trie 叶节点结束，且该节点的 fail 链上仍存在活前缀」**。我那个词表里：
+
+- `绝密文件` 结尾的节点 fail 链上没有活前缀
+- `ab` 同理
+
+**一个不包含触发结构的词表，无论切多少刀都不会泄漏。** 我的 25 种分片不是 25 次独立验证，而是**同一个未触发条件下测了 25 遍**。测试全绿，因为它测的根本不是那个属性。
+
+换个词表立刻暴露（`习尽评吓台` + `台独万岁`，两条都是随包 `words.txt` 的真实词条）：
+
+```
+输出 '*****独万岁'   →  '台独万岁' 3/4 字符明文可读
+```
+
+**与 F058 那条教训的关系**：058 报告记的是「mock 掉被测层等于不测」。这里是同一模式的另一种形态 —— **被测对象是真实的，但输入空间没有覆盖到触发条件**。mock 掉的测试和构造不足的测试，都会以「全绿」的形式给出虚假信心。
+
+**可操作的结论**：对「穷举验证」这类结论，必须先证明**词表/输入里存在能让该缺陷发生的结构**，否则穷举的每一种分片都只是同一条件的重复。具体到本特性：验证 mask 不泄漏，词表里**必须**含一对「A 的某个后缀是 B 的前缀」的词。
 
 ---
 

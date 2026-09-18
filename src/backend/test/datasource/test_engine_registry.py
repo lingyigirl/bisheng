@@ -380,3 +380,56 @@ def test_delegated_method_raises_the_module_error_code_for_an_unknown_engine():
     with pytest.raises(DatasourceUnsupportedEngineError) as excinfo:
         AgentNode._init_sql_address(_QueryOnlyNode(_params(database_engine="")))
     assert excinfo.value.code == 11702
+
+
+# --- DB2 Windows DLL shim ----------------------------------------------------
+
+
+def test_db2_shim_is_a_noop_off_windows(monkeypatch):
+    """The shim must not touch anything on Linux/macOS -- it exists solely to
+    work around a Windows DLL-search-path change."""
+    import bisheng.datasource.domain.services.engine_registry as reg
+
+    monkeypatch.setattr(reg.sys, 'platform', 'linux')
+    monkeypatch.setattr(reg, '_dll_path_registered', False)
+    called = []
+    monkeypatch.setattr(reg.os, 'add_dll_directory', lambda p: called.append(p), raising=False)
+
+    reg.ensure_db2_driver_loadable()
+
+    assert called == []
+
+
+def test_db2_shim_registers_at_most_once(monkeypatch):
+    """Idempotent: a per-connection re-registration would leak handles and turn
+    one import problem into a per-query log line."""
+    import bisheng.datasource.domain.services.engine_registry as reg
+
+    monkeypatch.setattr(reg.sys, 'platform', 'win32')
+    monkeypatch.setattr(reg, '_dll_path_registered', False)
+    registered = []
+    monkeypatch.setattr(reg.os, 'add_dll_directory', lambda p: registered.append(p), raising=False)
+    monkeypatch.setattr(reg.Path, 'is_dir', lambda self: True)
+
+    reg.ensure_db2_driver_loadable()
+    reg.ensure_db2_driver_loadable()
+    reg.ensure_db2_driver_loadable()
+
+    assert len(registered) == 1, f'registered {len(registered)} times'
+
+
+def test_db2_shim_swallows_a_registration_failure(monkeypatch):
+    """A missing/unreadable clidriver must surface as the driver's own import
+    error, not as an exception from the shim."""
+    import bisheng.datasource.domain.services.engine_registry as reg
+
+    monkeypatch.setattr(reg.sys, 'platform', 'win32')
+    monkeypatch.setattr(reg, '_dll_path_registered', False)
+    monkeypatch.setattr(reg.Path, 'is_dir', lambda self: True)
+
+    def boom(_path):
+        raise OSError('no such directory')
+
+    monkeypatch.setattr(reg.os, 'add_dll_directory', boom, raising=False)
+
+    reg.ensure_db2_driver_loadable()  # must not raise

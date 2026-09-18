@@ -521,7 +521,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.120.4" },
     { name = "faust-cchardet", specifier = ">=2.1.19" },
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
-    { name = "ibm-db", marker = "platform_machine == 'AMD64' or platform_machine == 'x86_64'", specifier = ">=3.2.7" },
+    { name = "ibm-db", marker = "platform_machine == 'AMD64' or platform_machine == 'x86_64'", specifier = ">=3.2.7,<3.3" },
     { name = "ibm-db-sa", marker = "platform_machine == 'AMD64' or platform_machine == 'x86_64'", specifier = ">=0.4.2" },
     { name = "jieba", specifier = ">=0.42.1" },
     { name = "json-repair", specifier = ">=0.55.0" },

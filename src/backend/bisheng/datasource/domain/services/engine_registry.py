@@ -31,8 +31,11 @@ Anything that can take a URL should take the URL -- ``create_engine`` does.
 
 from __future__ import annotations
 
+import os
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -243,3 +246,44 @@ def connect_uri(url: URL) -> str:
     accept one.
     """
     return url.render_as_string(hide_password=False)
+
+
+_dll_path_registered = False
+
+
+def ensure_db2_driver_loadable() -> None:
+    """Make ``import ibm_db`` work on Windows. No-op everywhere else.
+
+    Measured, on Windows with the pinned ``ibm-db 3.2.7``: the win_amd64 wheel
+    installs fine but ``import ibm_db`` then fails with ``ImportError: DLL load
+    failed ... The specified module could not be found``. The extension module
+    needs the DLLs vendored in its own ``clidriver/bin`` on the *DLL search
+    path*, and Python 3.8+ stopped searching the PATH for an extension module's
+    dependencies. Registering that directory explicitly is the documented fix,
+    and it is the difference between DB2 working and not working here --
+    verified both ways against the installed wheel.
+
+    Deliberately lazy and idempotent: registered at most once, only when a DB2
+    connection is actually attempted, and failure degrades quietly rather than
+    raising. A machine that never touches DB2 should not pay for this, and a
+    missing ``clidriver`` should surface as a normal driver connection error
+    rather than as an error from here.
+
+    Not needed for ``ibm-db 3.3.0``, which loads without it -- but that version
+    is deliberately not pinned; see the note in ``pyproject.toml``.
+    """
+    global _dll_path_registered
+    if _dll_path_registered or sys.platform != 'win32':
+        return
+
+    clidriver_bin = Path(sys.prefix) / 'Lib' / 'site-packages' / 'clidriver' / 'bin'
+    try:
+        if clidriver_bin.is_dir() and hasattr(os, 'add_dll_directory'):
+            os.add_dll_directory(str(clidriver_bin))
+    except OSError:
+        # Fall through: the subsequent import raises the real, more
+        # informative error.
+        pass
+    # Latched even on failure, so one clear import error is not turned into a
+    # per-connection log line.
+    _dll_path_registered = True

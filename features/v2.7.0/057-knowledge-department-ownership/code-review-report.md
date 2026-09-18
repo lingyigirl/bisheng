@@ -10,7 +10,7 @@
 > 本报告写于 2026-09-16 15:25，但此后**三个文件在 15:49–15:51 被继续修改**，并随 `ed68ccfdf`（16:45 起）一并提交：
 > `knowledge_department_service.py`、`test_f057_my_departments.py`、`useKnowledgeDepartmentFilter.ts`。
 > 因此本报告**未覆盖这三个文件的最终状态**，其「49 passed」也已过期（现为 **52**）。
-> 补审结论见文末 §补审（2026-09-18）——**结论：无新增 HIGH/MEDIUM，三个文件通过**。
+> 补审结论见文末 §补审（2026-09-18）—— **⚠ 初版补审结论「无新增 HIGH/MEDIUM」已被推翻**：第二轮深度补审（同样三个文件，逐层读码 + vitest 探针执行）找到 **1 HIGH + 2 MEDIUM**，见文末 §补审第二轮。
 
 ---
 
@@ -192,3 +192,66 @@
 ### 补审结论
 
 **PASS。** 原报告结论（PASS_WITH_WARNINGS）维持不变，无需升级。报告写就后的三个文件改动均为**加固性质**（补测试护栏、补注释），未引入新缺陷。原报告「保留未修」的 6 项仍按 design §8 处置，本次补审未新增。
+
+---
+
+## 补审第二轮（2026-09-18，深度）
+
+> 上一节只核对了「原报告的 6 项修复是否在最终代码里」，未重新审查三个文件本身。第二轮按这个方向重做（逐层读码 + 可执行探针），**找到 1 HIGH + 2 MEDIUM**。上一节的「无新增 HIGH/MEDIUM」因此**作废**。
+
+### HIGH — 部门筛选树对普通成员是死的：`fetchChildren` 未传，回落到了管理族端点
+
+- **位置**：`src/frontend/platform/src/pages/KnowledgePage/useKnowledgeDepartmentFilter.ts:84`
+- **缺陷**：该 hook 调 `useLazyDepartmentTree({ fetchSearch, cacheKey })` —— **只传了 `fetchSearch`，没传 `fetchChildren`**。后者在 `components/bs-comp/department/useLazyDepartmentTree.ts:116` 有默认值：
+  ```
+  children: options.fetchChildren ?? ((p) => getDepartmentChildrenApi(p, includeArchived))
+  ```
+  而 `getDepartmentChildrenApi`（`controllers/API/department.ts:64-68`）打的是 **`/api/v1/departments/children`** —— 部门**管理**族端点，对普通成员答 **21009**。
+- **讽刺的是**：同一文件 `:27` 的注释**正在解释这件事**：
+  > "Not `/departments/children`: that family is department MANAGEMENT and ..."
+  并指向 `getMyDepartmentsApi` 作为成员安全的替代 —— **而该函数现在全前端零调用方**。
+- **后果**：普通成员打开知识库 → 首层拉取 21009 → `captureAndAlertRequestErrorHoc` 返回 false → `if (layer) storeLayer(...)` 被跳过 → `rootIds` 恒为 `[]` → 树空 + 一条错误提示。**部门筛选对成员完全不可用**，只有管理员看得到树。而搜索仍可用（走成员安全的 `/knowledge/my_departments/search`），于是用户看到一个「展不开的树 + 能返回结果的搜索框」的半坏状态。
+- **实测（agent 执行）**：临时 vitest 探针挂载 hook 打桩 API，记录调用计数 `{"children":1,"myDepartments":0,"mySearch":0}` —— 证明确实打了管理族端点。探针已删。
+- **与文档冲突**：`e2e-checklist.md:40-49` 写着「没有任何请求打到 `/departments/`」（该项**未勾选**）；`design.md` 决策 10 亦声称如此。
+- **状态**：**CONFIRMED**（我独立核验了 hook 未传 `fetchChildren`、默认值指向管理族端点、`getMyDepartmentsApi` 零调用方三处事实）
+
+### MEDIUM-1 — 管理员的默认部门豁免在硬刷新时失效
+
+- **位置**：同文件 `:110-129`
+- **缺陷**：`defaultsAppliedRef.current = true` 在**首次** effect 运行时即锁存，而那次运行发生在挂载期 —— 此时 `userContext` 仍是 `{}`（provider 立即渲染 `{children}`，`user` 异步填充）。于是 `user?.role === 'admin'` 为 false，主部门默认值被照常应用，且该 effect **不会**在真实 role 到达后重跑。
+- **后果**：管理员硬刷新知识库页 → 列表默认选中种子管理员的 guest 部门（其名下无任何东西）→ 页面看起来是空的，尽管该管理员其实可读全部。**这正是该豁免当初被加进来要修的 bug**，只在 `user` 恰好先于挂载就位时（应用内跳转）才有效。
+- **实测（agent 执行）**：`user` 预置 → `selected:null`（豁免生效）；`user` 挂载后到达 → `selected:5`（豁免失效）。
+- **状态**：**CONFIRMED**
+
+### MEDIUM-2 — 归属变更只失效「新部门」成员；两个方向的注释都是假的
+
+- **位置**：`bisheng/knowledge/domain/services/knowledge_department_service.py:89-92`、`:116-129`（注释 `:126-128`）、docstring `:293-298`
+- **缺陷**：
+  - (a) `assign_department(..., department_id=None)`（清空）在 `:92` 直接返回，**完全不失效缓存**。
+  - (b) 改派 A→B 只失效 B 的成员；**A 的成员保留着缓存里的授权**。
+  - (c) `:126-128` 的注释称反向由「`clear_department_ownership` 里的同一调用」处理 —— **可证伪**：该方法仅有两处调用点，都在 `department_service.py`（`:833` 归档、`:893` 清除），`assign_department` **从不**调它。
+  - (d) docstring `:295-297` 称「在此清理以便每个调用方 —— 平台归档/清除以及 **org-sync 清理** —— 都继承到」，而 `DepartmentArchiveCleanupService._collect_and_delete_mysql_refs` 自己做 `UPDATE knowledge SET department_id=NULL`，**从不调用该方法**。更糟：同一事务先删了 `user_department` 行，故即使之后调用也会静默 no-op（`_invalidate_department_members` 正是经该表解析成员）。
+- **后果**：撤销某部门的库访问（清空或改派）后，该部门成员在 10s TTL 内仍能列出并通过读取检查。
+- **定级说明**：运行时窗口受 TTL 限制且自愈，故为 MEDIUM —— **真正的严重性是那两条声称「已处理」的假注释**。
+- **状态**：**CONFIRMED**（静态：调用点确实不存在，注释所述为假）
+
+### 其余（LOW）
+
+- `aget_by_name_like` 收到原始关键字，LIKE 元字符未转义 → 搜 `%` / `_` 会当通配符（结果错误；租户隔离不受影响）。
+- `total_matches` 返回截断**后**的 `len(matches)`，永远报告上限值（500 条显示成 50）。且 `test_truncation_is_reported` **把这个错误契约固化了下来**（11 条匹配断言 `total_matches == 10`）。
+- hook 被两个 tab 共用，但统计请求是常量 `{}` → `type=0` / `permission_id="view_kb"`，故 QA tab 的徽标显示的是文档库计数。
+- 文档漂移：hook 注释 `:95-101` 仍称「chain 端点返回调用者的部门及其祖先」（实际不查 chain）；`design.md:194-195` 仍把 `knowledge/my_departments` 列为该 hook 的来源。
+
+### 第二轮同时确认「无问题」的部分
+
+- **fail-closed 成立且健全**：`_implicit_department_library_level`（`permission_service.py:1185-1251`）整体 try/except，任何异常返回 `None`；每个提前返回都是 `None`。**未发现 fail-open 分支**。它唯一授予的是 `can_read`，且仅当 `user_path.startswith(owning_path)`。
+- **尾斜杠 / 前缀逻辑三处全对**：`assign_department:113`（方向正确）、`department_stats:190`（上卷）、`_implicit_department_library_level:1239`。无 off-by-one，无 `/1/2/` 误配 `/1/20/`。
+- **上一轮补审的盲区**正在于此：它把这几个文件当成「已审过」对待，只核对了修复项是否存在，没有重新读实现本身。
+
+### 关于「那 3 条多出来的测试」的准确答案
+
+不存在「恰好 3 条新增」—— 是 **5 条新增替换 2 条删除**（净 +3，故 49→52）。15:46 时 8 条旧 `my_departments` chain 测试被改写为 6 条 `browse_departments` 测试；15:51 追加 5 条 `search_departments` 测试。
+
+**成色（变异测试）**：改坏 `browse_departments` → 4 failed；改坏 `search_departments` → 4/5 failed（幸存的是空结果路径，合理）。**但改坏 `department_chain_for_paths` → 52 passed, 0 failed** —— 该函数**没有任何护栏**，包括其真实调用点 `knowledge_service.py:341`。
+
+两点保留：(i) `test_root_layer_is_returned_to_a_caller_with_no_membership` 与 `test_deep_branches_are_reachable` 实质是同义反复（service 已不接收 user，「无成员过滤」无法被它们证伪）；(ii) `test_truncation_is_reported` 固化了上面的 `total_matches` 缺陷。DAO 全程被 mock，但那是 DB 边界而非被测层 —— service 逻辑确实被执行（上述变异已证明），故与 F058 的陷阱不同，这些测试**不是空壳**。

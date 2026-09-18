@@ -45,7 +45,11 @@ from sqlalchemy.pool import NullPool
 
 from bisheng.common.errcode.datasource import DatasourceUnsupportedEngineError
 from bisheng.datasource.domain.services.credentials import redact
-from bisheng.datasource.domain.services.engine_registry import build_url, spec_for
+from bisheng.datasource.domain.services.engine_registry import (
+    build_url,
+    ensure_db2_driver_loadable,
+    spec_for,
+)
 
 CATEGORY_OK = "ok"
 CATEGORY_UNSUPPORTED_ENGINE = "unsupported_engine"
@@ -302,6 +306,11 @@ class ConnectionTester:
         outlive the request that created it, holding an idle session on the
         customer's database.
         """
+        # Before the driver is imported, not after: on Windows the DB2 DBAPI
+        # cannot load until its vendored DLL directory is on the search path,
+        # and `create_engine` is what triggers that import. No-op off Windows
+        # and for every other engine.
+        ensure_db2_driver_loadable()
         probe_engine = create_engine(url, connect_args=dict(connect_args), poolclass=NullPool)
         try:
             with probe_engine.connect() as connection:
