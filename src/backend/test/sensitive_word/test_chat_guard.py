@@ -295,3 +295,84 @@ async def test_disabled_state_passthrough():
     state = OutputGuardState(enabled=False)
     # Disabled states ignore the automaton entirely.
     assert await ChatGuardService.check_output_chunk(state, 'x') == GuardedChunk(safe_text='x')
+
+
+# --- H7: the policy is looked up per DIRECTION, and that must be anchored -----
+
+
+class _PolicyQueryRecorder:
+    """Records the `business_type` each policy lookup asks for.
+
+    Added because of a measurement: swapping `CHAT_OUTPUT` for `CHAT_INPUT` in
+    `start_output_guard` left 214 tests green. Every stub in this file was
+    `lambda **kwargs: _policy(...)`, which swallows `business_type` without
+    looking at it, so a guard that read the WRONG direction's word list was
+    indistinguishable from a correct one. Spec AC-09 requires the output
+    direction to use its own independently configured list; nothing asserted it.
+    """
+
+    def __init__(self, policy):
+        self.policy = policy
+        self.business_types = []
+
+    def __call__(self, **kwargs):
+        self.business_types.append(kwargs.get('business_type'))
+        return self.policy
+
+
+async def test_output_guard_queries_the_output_direction(monkeypatch):
+    """The anchor for AC-09. Fails if the output path reads the input policy."""
+    from bisheng.sensitive_word.domain.schemas import SensitiveWordBusinessType
+
+    recorder = _PolicyQueryRecorder(_policy(custom_words='敏感词', extra_config={'action': 'mask'}))
+    monkeypatch.setattr(POLICY_DAO_PATH, recorder)
+
+    state = ChatGuardService.start_output_guard(tenant_id=1, flow_id='f', chat_id='c', user_id=1)
+
+    assert state.enabled is True, 'guard did not activate; the lookup went wrong'
+    assert recorder.business_types, 'no policy lookup happened at all'
+    assert all(bt == SensitiveWordBusinessType.CHAT_OUTPUT for bt in recorder.business_types), (
+        f'output guard queried {recorder.business_types}; it must use CHAT_OUTPUT '
+        '(spec AC-09 — the two directions are configured independently)'
+    )
+
+
+async def test_input_guard_queries_the_input_direction(monkeypatch):
+    """The mirror anchor: a symmetric mistake on the input side."""
+    from bisheng.sensitive_word.domain.schemas import SensitiveWordBusinessType
+
+    recorder = _PolicyQueryRecorder(_policy(custom_words='敏感词'))
+    monkeypatch.setattr(POLICY_DAO_PATH, recorder)
+
+    await ChatGuardService.check_chat_input(tenant_id=1, text='含敏感词的内容')
+
+    assert recorder.business_types, 'no policy lookup happened at all'
+    assert all(bt == SensitiveWordBusinessType.CHAT_INPUT for bt in recorder.business_types), (
+        f'input guard queried {recorder.business_types}; it must use CHAT_INPUT'
+    )
+
+
+async def test_the_two_directions_use_different_word_lists(monkeypatch):
+    """The user-visible consequence, asserted end to end rather than on the
+    lookup argument: a tenant whose INPUT list contains a word its OUTPUT list
+    does not must NOT have that word masked in output.
+
+    Written this way because the lookup-argument assertions above would still
+    pass if some later layer re-resolved the policy; this one would not.
+    """
+    from bisheng.sensitive_word.domain.schemas import SensitiveWordBusinessType
+
+    def _policy_for(business_type):
+        # Only the INPUT direction carries '仅输入词'.
+        words = '仅输入词' if business_type == SensitiveWordBusinessType.CHAT_INPUT else '仅输出词'
+        return _policy(custom_words=words, extra_config={'action': 'mask'})
+
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy_for(kwargs.get('business_type')))
+
+    state = ChatGuardService.start_output_guard(tenant_id=1, flow_id='f', chat_id='c', user_id=1)
+    result = await ChatGuardService.check_output_chunk(state, '这句含仅输入词')
+
+    assert '仅输入词' in result.safe_text, (
+        'an input-only word was masked on the output path — the directions are '
+        'sharing one word list (spec AC-09)'
+    )
