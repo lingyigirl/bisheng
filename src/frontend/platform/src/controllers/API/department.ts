@@ -20,6 +20,47 @@ function depSeg(deptId: string): string {
 // `has_children` for the expand arrow. `include_archived` is true only for the
 // management nav tree (AC-16); pickers leave it false (archived not selectable).
 
+/**
+ * F057: one layer of the CALLER's own department chain (their departments plus
+ * ancestors), for the knowledge page's filter tree.
+ *
+ * Not `/departments/children`: that family is department MANAGEMENT and F038
+ * scopes it to system admins / department admins / tenant admins, answering
+ * 21009 for everyone else — so ordinary members, exactly who needs this filter,
+ * get a permission error. This one is scoped by membership.
+ *
+ * Node shape is identical to `getDepartmentChildrenApi`, so the lazy tree
+ * component consumes it unchanged.
+ */
+export async function getMyDepartmentsApi(
+  parentId: number | null,
+  includeArchived = false
+): Promise<DepartmentTreeNode[]> {
+  return await axios.get(`/api/v1/knowledge/my_departments`, {
+    params: {
+      parent_id: parentId ?? undefined,
+      include_archived: includeArchived,
+    },
+  })
+}
+
+/**
+ * F057: name search over the same tenant-wide department tree.
+ *
+ * Server-side, not filtered from the loaded layers: the tree is the whole
+ * organisation, so a client-side search only sees what the user already
+ * expanded and reports "no results" for departments that are plainly there.
+ */
+export async function searchMyDepartmentsApi(
+  keyword: string,
+  limit = 50,
+  includeArchived = false
+): Promise<DepartmentSearchResult> {
+  return await axios.get(`/api/v1/knowledge/my_departments/search`, {
+    params: { keyword, limit, include_archived: includeArchived },
+  })
+}
+
 export async function getDepartmentChildrenApi(
   parentId: number | null,
   includeArchived = false
@@ -65,6 +106,19 @@ export async function getDepartmentApi(
   deptId: string
 ): Promise<DepartmentDetail> {
   return await axios.get(`/api/v1/departments/${depSeg(deptId)}`)
+}
+
+/**
+ * F057: the caller's own primary department (empty array when they have none).
+ *
+ * Note this route takes a numeric `user_id` QUERY param, not a `dept_id` path
+ * segment — do not route it through `getDepartmentApi`, whose `depSeg` encoding
+ * is for the `BS@...` business key.
+ */
+export async function getMyPrimaryDepartmentApi(): Promise<
+  Array<{ id: number; dept_id: string; name: string }>
+> {
+  return await axios.get(`/api/v1/departments/get_user_primary_department`)
 }
 
 export async function updateDepartmentApi(

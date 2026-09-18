@@ -140,11 +140,19 @@ async def create_local_member_body(
 
 @router.get("/get_user_primary_department")
 async def get_user_primary_department(
-    user_id: int,
+    user_id: int | None = None,
     login_user: UserPayload = Depends(UserPayload.get_login_user),
 ):
-    """Return the user's primary department. Called by Gateway for traffic control."""
+    """Return a user's primary department. Called by Gateway for traffic control.
+
+    F057: `user_id` is now optional and defaults to the caller — the knowledge
+    management page needs its own primary department to preselect the tree, and
+    the tenant filter already scopes every lookup to the caller's tenant.
+    """
     from bisheng.database.models.department import DepartmentDao, UserDepartmentDao
+
+    if user_id is None:
+        user_id = login_user.user_id
 
     ud = await UserDepartmentDao.aget_user_primary_department(user_id)
     if not ud:

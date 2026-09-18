@@ -33,6 +33,8 @@
 | 工作流知识检索节点（rag / knowledge_retriever / qa_retriever）的检索注入扩展（时效过滤、标签过滤、权重排序、top_k / 分数阈值参数） | F055-risk-compliance-knowledge | 扩展既有检索节点的参数与召回后处理（`workflow/common/knowledge.py` 检索构建链路）；不改变未配置新参数时的既有行为（AC-11/AC-13 兼容）；仅本 Feature 写入该扩展逻辑 |
 | 敏感词策略的对话场景（business_type=`chat_input` / `chat_output` 的配置语义与检测行为） | F056-llm-guardrail | 扩展 v2.6.0 F036 既有的 `SensitiveWordPolicy` 对象到对话输入/输出场景（新增枚举值 + `extra_config` 中 action 语义 + 检测点接入）；**不拥有**策略表本身（F036 归属），不改变知识库文件解析 / 订阅文章两个既有场景的行为 |
 | 敏感词命中日志表（sensitive_word_hit_log） | F056-llm-guardrail | 新增独立表（租户 / 方向 / 应用 / 命中词摘要 / 动作 / 时间）；仅本 Feature 写入；平台日志页只读展示 |
+| 组织知识库的部门归属（`knowledge.department_id`） | F057-knowledge-department-ownership | 扩展既有 `knowledge` 对象：新增可空归属列及其写入行为（指派 / 取消 / 部门删除联动）；**不拥有** `knowledge` 对象本身（沿用既有知识库模块归属），不新增表、不新增错误码。归属可见性在**读取时**求值（`可见 = FGA 授权 OR 创建者本人 OR 部门归属`），不写入任何 FGA 元组 |
+| 知识库列表的部门筛选参数与部门维度统计端点（只读） | F057-knowledge-department-ownership | 扩展 `GET /api/v1/knowledge` 的筛选查询参数 + 新增 `GET /api/v1/knowledge/department_stats` 只读聚合；筛选只收窄展示，不授予任何权限 |
 
 **规则**：
 - 非 Owner Feature 的 AC 中不得出现其他对象的"创建/修改/删除"行为，只能"读取"或"调用" Owner 的 Service
@@ -69,6 +71,7 @@
 | F054-eval-form-workflows | F053-agent-version-eval-compare（对比组机制已上线） | 复用 F053 的对比组与对比端点；只改评测执行链的表单分支，不依赖 F051/F052 |
 | F055-risk-compliance-knowledge | 无（既有知识库模块 / 工作流检索节点已上线） | 扩展既有知识库对象与检索链路；复用 metadata 过滤、双引擎（Milvus+ES）AND 组合机制；不依赖其他 feature 的新增能力 |
 | F056-llm-guardrail | 无（v2.6.0 F036 sensitive_word 模块已上线） | 扩展既有策略基础设施到对话链路；复用 AC 自动机 / 策略表 / 管理 API；不依赖本版本其他 feature 的新增能力 |
+| F057-knowledge-department-ownership | 无（既有 department 模块与知识库权限体系已上线） | 复用既有部门树（`department.path` 物化路径）、`PermissionService` 五级短路的隐式回退位、知识库列表的游标分页链路；不依赖本版本其他 feature 的新增能力 |
 
 ---
 
@@ -82,6 +85,7 @@
 | —（F051 不新增错误码，复用 `common/errcode/flow.py` 10500 NotFoundVersionError） | — | — |
 | —（F052 不新增错误码：窗口/参数校验沿用 F046 call-logs 的 HTTP 400 口径） | — | — |
 | 112 | 敏感词 / 安全围栏（`common/errcode/sensitive_word.py` 新增：11201=输入命中拦截、11202=输出命中截断） | F056-llm-guardrail |
+| —（F057 不新增错误码：归属写入的拒绝路径复用既有 HTTP 错误信封 403） | — | — |
 
 ---
 
@@ -96,3 +100,4 @@
 | 2026-09-05 | 登记 F054-eval-form-workflows（评测执行链表单型分支 + 数据集 form_values 列语义） | — |
 | 2026-09-06 | 登记 F055-risk-compliance-knowledge（知识库/文档时效与权重/优先级字段 + 检索注入） | — |
 | 2026-09-07 | 登记 F056-llm-guardrail（敏感词策略 chat_input/chat_output 场景扩展 + 命中日志表 + 错误码模块 112） | — |
+| 2026-09-16 | 登记 F057-knowledge-department-ownership（knowledge.department_id 归属列 + 读时可见性求值 + 列表部门筛选参数 + 只读部门统计端点；不新增错误码） | — |

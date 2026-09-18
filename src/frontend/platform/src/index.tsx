@@ -1,7 +1,6 @@
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import ContextWrapper from "./contexts";
-import reportWebVitals from "./reportWebVitals";
 import './i18n';
 // @ts-ignore
 import "./style/index.css";
@@ -75,4 +74,3 @@ root.render(
     </ContextWrapper>
   </QueryClientProvider>
 );
-reportWebVitals();

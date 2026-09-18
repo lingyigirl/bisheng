@@ -1,5 +1,5 @@
 // Build-time switches keep the implementation available for a later rollout.
 export const knowledgeUploadCapabilities = {
-    media: false,
+    media: true,
     webLink: false,
 } as const;

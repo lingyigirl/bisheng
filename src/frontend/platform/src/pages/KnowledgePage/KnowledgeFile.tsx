@@ -30,6 +30,8 @@ import { userContext } from "../../contexts/userContext";
 import { copyLibDatabase, createFileLib, deleteFileLib, readFileLibDatabase, updateKnowledge } from "../../controllers/API";
 import { captureAndAlertRequestErrorHoc } from "../../controllers/request";
 import { useInfiniteCursorTable } from "../../util/hook";
+import type { KnowledgeDepartmentFilter } from "./useKnowledgeDepartmentFilter";
+import { tryAssignDepartment } from "./assignDepartment";
 import { useModel } from "../ModelPage/manage";
 import { ModelSelect } from "../ModelPage/manage/tabs/WorkbenchModel";
 
@@ -48,7 +50,7 @@ const KB_MANAGE_PERMISSION_IDS = [
     'manage_kb_viewer',
 ]
 
-function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create', currentLib = null }) {
+function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create', currentLib = null, departmentId = null }) {
     const { t } = useTranslation('knowledge')
     const navigate = useNavigate()
 
@@ -167,7 +169,25 @@ function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create',
                 description: desc,
                 model: modelId,
                 type: 0
-            }).then(res => {
+            }).then(async res => {
+                // F057: bind the new library to the department currently
+                // selected in the tree. Creating and assigning are two calls
+                // because `create` deliberately does not take an owner — the
+                // assignment is an AUTHORIZATION change with its own guards
+                // (`manage_kb_*` + subtree scope), and duplicating those inside
+                // the create path would give us two sets of rules to keep in
+                // sync.
+                if (departmentId != null) {
+                    const assigned = await tryAssignDepartment(res.id, departmentId, t('lib.assignDenied', { ns: 'bs' }));
+                    if (!assigned) {
+                        // No permission to put a library under that department
+                        // → honour "do not create there" by undoing the create,
+                        // so the user is not left with an orphan library they
+                        // did not ask for.
+                        await captureAndAlertRequestErrorHoc(deleteFileLib(res.id));
+                        return;
+                    }
+                }
                 window.libname = [name, desc]
                 navigate(isImport
                     ? `/filelib/upload/${res.id}`
@@ -324,7 +344,7 @@ function CreateModal({ datalist, open, onOpenChange, onLoadEnd, mode = 'create',
 }
 
 const doing = {} // Record knowledge bases being copied
-export default function KnowledgeFile() {
+export default function KnowledgeFile({ departmentFilter }: { departmentFilter?: KnowledgeDepartmentFilter }) {
     const [open, setOpen] = useState(false);
     const { user } = useContext(userContext);
     const { message } = useToast()
@@ -340,11 +360,29 @@ export default function KnowledgeFile() {
     const [permTarget, setPermTarget] = useState<{ id: string; name: string } | null>(null);
 
     // F027: cursor-based infinite scroll; no `total` / `page` anymore.
-    const { data: datalist, loading, hasMore, search, reload, loadMore } = useInfiniteCursorTable(
+    // F057: `departmentFilter.filterDataParams` is spread in so the department
+    // scope is part of the request rather than a client-side post-filter —
+    // pagination stays cursor-consistent only if the server does the narrowing.
+    const { data: datalist, loading, hasMore, search, reload, loadMore, filterData } = useInfiniteCursorTable(
         { cancelLoadingWhenReload: true },
         (param) =>
-            readFileLibDatabase({ cursor: param.cursor, pageSize: param.pageSize, name: param.keyword, permissionId: 'view_kb' }),
+            readFileLibDatabase({
+                cursor: param.cursor,
+                pageSize: param.pageSize,
+                name: param.keyword,
+                permissionId: 'view_kb',
+                ...(departmentFilter?.apiParams ?? {}),
+            }),
     )
+
+    // Re-query from page 1 whenever the department scope changes. `reload` alone
+    // would reuse the current cursor, whose keyset no longer matches the new WHERE.
+    const departmentKey = JSON.stringify(departmentFilter?.apiParams ?? {});
+    useEffect(() => {
+        if (!departmentFilter) return;
+        filterData(departmentFilter.apiParams);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [departmentKey]);
 
     // Permission levels for badge display
     // 列表已由后端 get_knowledge 按 ReBAC 过滤；勿再用批量 check 二次过滤，否则与 FGA/缓存短暂不同步时会出现「接口有数据但表格空白」。
@@ -707,6 +745,7 @@ export default function KnowledgeFile() {
                 onOpenChange={setOpen}
                 onLoadEnd={() => { }}
                 mode="create"
+                departmentId={departmentFilter?.selectedDepartmentId ?? null}
             />
 
             {/* Edit (Settings) modal - using key to force re-render */}

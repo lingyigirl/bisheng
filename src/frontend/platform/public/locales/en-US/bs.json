@@ -928,7 +928,9 @@
     "copying": "Copying",
     "searchPlaceholder": "Search Knowledge",
     "desc": "Description",
-    "embeddingModelSelection": "Knowledge base embedding model selection"
+    "embeddingModelSelection": "Knowledge base embedding model selection",
+    "allDepartments": "All",
+    "assignDenied": "You do not have permission to assign this library to the selected department. Creation was cancelled."
   },
   "evaluation": {
     "id": "Task ID",

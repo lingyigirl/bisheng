@@ -173,6 +173,11 @@ CREATE TABLE IF NOT EXISTS knowledge (
     metadata_fields JSON,
     weight FLOAT NOT NULL DEFAULT 1,
     priority INTEGER NOT NULL DEFAULT 0,
+    -- F057: department ownership; NULL = unclassified. Must mirror
+    -- KnowledgeBase.department_id — this DDL is hand-maintained, so a model
+    -- column added without a line here fails at INSERT with
+    -- "table knowledge has no column named ...".
+    department_id INTEGER,
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
 )"""
