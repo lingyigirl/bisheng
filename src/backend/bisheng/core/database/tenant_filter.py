@@ -71,6 +71,15 @@ _TENANT_AWARE_MODEL_MODULES = (
     # explicitly is what keeps them filtered if that import edge moves.
     "bisheng.doc_extract.domain.models.extract_template",
     "bisheng.doc_extract.domain.models.extract_run",
+    # F061: datasource + its table metadata, query log and failure trail. Same
+    # reasoning. The consequence here is worse than a cross-tenant read: an
+    # unregistered table misses the auto-filled tenant_id on insert too, so
+    # rows land in the ROOT tenant and every tenant's query audit trail would
+    # collect in one place.
+    "bisheng.datasource.domain.models.datasource",
+    "bisheng.datasource.domain.models.datasource_table",
+    "bisheng.datasource.domain.models.query_log",
+    "bisheng.datasource.domain.models.query_failure",
     # Previously *not* on any auto-imported chain — silent tenant-id leaks.
     "bisheng.database.models.failed_tuple",
     "bisheng.database.models.flow_version",
