@@ -28,9 +28,14 @@ class _InputGuard:
     def __init__(self, reply=None):
         self.reply = reply
         self.calls = []
+        # Recorded separately so tests can assert the endpoint passes a real
+        # chat_id -- it used to pass None, which filed every HTTP hit as
+        # `chat_id = NULL` and left a request's hits unlinkable (L2).
+        self.chat_ids = []
 
     async def __call__(self, chat_id, text):
         self.calls.append(text)
+        self.chat_ids.append(chat_id)
         return self.reply
 
 
@@ -38,9 +43,11 @@ class _OutputGuard:
     def __init__(self, results=None):
         self.results = results or {}
         self.calls = []
+        self.chat_ids = []
 
     async def __call__(self, chat_id, chunk):
         self.calls.append(chunk)
+        self.chat_ids.append(chat_id)
         return self.results.get(chunk, OutputGuardResult(safe_text=chunk))
 
     async def full_text(self):
@@ -138,3 +145,64 @@ async def test_streaming_output_guarded_per_chunk(monkeypatch):
             if 'content' in delta:
                 deltas.append(delta['content'])
     assert ''.join(deltas) == '***的内容'  # 逐分片守卫 (AC-14 接线口径)
+
+
+# --- L2: the HTTP path must carry a real chat_id -----------------------------
+
+
+async def test_http_path_passes_a_non_null_chat_id(monkeypatch):
+    """The OpenAI-compatible endpoint is stateless but still needs an identifier.
+
+    `chat_id` is what ties a request's INPUT check to its OUTPUT check in the
+    hit log. Passing None -- which this endpoint did -- filed every HTTP hit as
+    `chat_id = NULL`, so an admin reading the log could not tell which output
+    hit belonged to which input hit.
+    """
+    input_guard = _InputGuard(reply=None)
+    output_guard = _OutputGuard(results={'正常答案': OutputGuardResult(safe_text='正常答案')})
+    _setup(monkeypatch, input_guard=input_guard, output_guard=output_guard)
+    monkeypatch.setattr(f'{ENDPOINT_PATH}.AssistantAgent', lambda *a, **kw: _FakeAgent(answer='正常答案'))
+
+    await assistant_chat_completions(SimpleNamespace(), _req([{'role': 'user', 'content': '问题'}]))
+
+    assert input_guard.chat_ids, 'the input guard was never called'
+    assert all(cid for cid in input_guard.chat_ids), (
+        f'the endpoint passed a falsy chat_id: {input_guard.chat_ids}'
+    )
+    assert output_guard.chat_ids, 'the output guard was never called'
+    assert all(cid for cid in output_guard.chat_ids), (
+        f'the output guard got a falsy chat_id: {output_guard.chat_ids}'
+    )
+
+
+async def test_input_and_output_of_one_request_share_a_chat_id(monkeypatch):
+    """The point of generating one per request: its input hit and its output hit
+    must be linkable to each other."""
+    input_guard = _InputGuard(reply=None)
+    output_guard = _OutputGuard(results={'正常答案': OutputGuardResult(safe_text='正常答案')})
+    _setup(monkeypatch, input_guard=input_guard, output_guard=output_guard)
+    monkeypatch.setattr(f'{ENDPOINT_PATH}.AssistantAgent', lambda *a, **kw: _FakeAgent(answer='正常答案'))
+
+    await assistant_chat_completions(SimpleNamespace(), _req([{'role': 'user', 'content': '问题'}]))
+
+    assert len(set(input_guard.chat_ids)) == 1, f'input used several ids: {input_guard.chat_ids}'
+    assert len(set(output_guard.chat_ids)) == 1, f'output used several ids: {output_guard.chat_ids}'
+    assert input_guard.chat_ids[0] == output_guard.chat_ids[0], (
+        'input and output of the same request were logged under different ids'
+    )
+
+
+async def test_two_requests_do_not_share_a_chat_id(monkeypatch):
+    """Generated per request, so two calls must not collide -- otherwise the log
+    would merge two unrelated requests into one conversation."""
+    seen = []
+
+    for _ in range(2):
+        input_guard = _InputGuard(reply=None)
+        _setup(monkeypatch, input_guard=input_guard, output_guard=_OutputGuard())
+        monkeypatch.setattr(f'{ENDPOINT_PATH}.AssistantAgent', lambda *a, **kw: _FakeAgent(answer='正常答案'))
+
+        await assistant_chat_completions(SimpleNamespace(), _req([{'role': 'user', 'content': '问题'}]))
+        seen.append(input_guard.chat_ids[0])
+
+    assert seen[0] != seen[1], f'both requests used {seen[0]!r}'

@@ -82,8 +82,20 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
         input_guard = build_input_guard(login_user, assistant_id) if tenant_id is not None else None
         output_guard = build_output_guard(login_user, assistant_id) if tenant_id is not None else None
 
+        # This endpoint is stateless -- a caller sends the whole message list
+        # every time, so there is no conversation to name. It still needs an
+        # identifier: `chat_id` is what ties this request's input check and its
+        # output check together in the hit log, and passing None filed every
+        # HTTP hit as `chat_id = NULL`, making a single request's hits
+        # unlinkable to each other.
+        #
+        # Generated per request rather than invented from the payload: calling
+        # it a conversation id would be a lie, and the OpenAI-compatible API has
+        # no such concept to borrow.
+        http_chat_id = f'openapi-{generate_uuid()}'
+
         if input_guard is not None:
-            blocked_reply = await input_guard(None, question)
+            blocked_reply = await input_guard(http_chat_id, question)
             if blocked_reply:
                 # AC-08: HTTP 400 + 错误码 11201 + 话术
                 return JSONResponse(
@@ -109,7 +121,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
                 # Feed the whole answer, THEN read the guarded text. `full_text()`
                 # flushes the hold-back tail itself -- it has to, or mask mode
                 # silently drops the answer's last characters (see its docstring).
-                guarded = await output_guard(None, answer)
+                guarded = await output_guard(http_chat_id, answer)
                 guarded_full = await output_guard.full_text()
                 answer = guarded_full if guarded_full else guarded.safe_text
 
@@ -165,7 +177,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
                         if output_blocked:
                             continue  # F056: 命中后剩余分片不再外发 (AC-10)
                         if output_guard is not None and isinstance(content, str):
-                            guarded = await output_guard(None, content)
+                            guarded = await output_guard(http_chat_id, content)
                             content = guarded.safe_text
                             output_blocked = guarded.blocked
 
@@ -191,7 +203,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
 
                 # F056: 冲刷 mask 模式缓冲尾部, 作为最后一个内容分片外发
                 if output_guard is not None and not output_blocked:
-                    flushed = await output_guard(None, '')
+                    flushed = await output_guard(http_chat_id, '')
                     if flushed.safe_text:
                         tail_chunk = {
                             "id": openai_resp_id,

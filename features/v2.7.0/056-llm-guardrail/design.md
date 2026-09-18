@@ -29,7 +29,7 @@
 | # | 约束 | 对方案的影响 |
 |---|---|---|
 | K1 | **流式实时性**：输出以 SSE 分片流式回传，不能攒完整段再检测（首字延迟不可接受） | 输出检测必须**增量**匹配；AC 自动机需新增带状态 API |
-| K2 | **入口一致性**：对话入口 ≥5 处（v1/v2 的助手与工作流 WebSocket + `/api/v2/chat/completions` HTTP），任一入口漏埋点 = 围栏有洞 | 检测点必须选在**共享收口层**（ChatManager/ChatClient），不逐端点埋点 |
+| K2 | **入口一致性**：对话入口 ≥5 处（v1/v2 的助手与工作流 WebSocket + `/api/v2/assistant/chat/completions` HTTP），任一入口漏埋点 = 围栏有洞 | 检测点必须选在**共享收口层**（ChatManager/ChatClient），不逐端点埋点 |
 | K3 | **零回归**：未配置策略的租户，行为与发布前逐字一致（AC-02/AC-17）——**前提是平台级强制词库（F059 / INV-10）未启用**；启用后该层独立于租户策略无条件生效 | 租户层检测点必须「策略无效即直通」：策略读取失败、未启用、词表空 → 直接放行。平台层为**独立的先决判断**，不并入本直通逻辑（F059 实现时在其之前短路） |
 | K4 | **性能**：词表规模可达万级，输入检测 <10ms（AC-06）；输出检测为逐分片增量，单分片开销应亚毫秒级 | 复用既有 AC 自动机 + 策略级进程缓存，检测路径不查库 |
 | K5 | **双 DB（C2）**：新表与字段必须用 `dialect_helpers`（JsonType/LargeText），禁 MySQL 专有语法 | 命中日志表、extra_config 解析按此约束设计 |
@@ -52,7 +52,7 @@
 
 - **备选**：
   - A. 各 ws/HTTP 端点分别埋点（v1/v2 助手 + v1/v2 工作流 + chat/completions 共 5 处）。
-  - B. 埋点在两个 ws client 的 **`handle_message`** 消息分发收口（`common/chat/clients/base.py` 工作流侧 + `common/chat/client.py` 助手侧——**实现期事实校正：ws 有两个 client 实现**，助手走 `common/chat/client.py::ChatClient`，非初版假设的单一实现）+ `/api/v2/chat/completions` 端点单独埋点。
+  - B. 埋点在两个 ws client 的 **`handle_message`** 消息分发收口（`common/chat/clients/base.py` 工作流侧 + `common/chat/client.py` 助手侧——**实现期事实校正：ws 有两个 client 实现**，助手走 `common/chat/client.py::ChatClient`，非初版假设的单一实现）+ `/api/v2/assistant/chat/completions` 端点单独埋点。
   - C. 埋在工作流引擎层（graph 执行入口）。
 - **选定**：B
 - **原因**：B 是真实收口点——v1/v2 的助手/工作流 ws 都经 `ChatManager.dispatch_client`（`common/chat/manager.py:203`）落到这两个 client 实现，`handle_message` 是它们共同的入站分发口（先于线程池提交，拦截即零执行）；A 有五处埋点，新增入口（如工作站独立链路）会静默漏检；C 不覆盖不经过引擎的路径（且引擎层拿不到与租户隔离一致的用户上下文，违背 K6）。**注入方式（实现期确定）**：`common/` 禁止导入 domain 服务（C1 / RULE-1），检测逻辑不直连 `sensitive_word`——由 **api 层工厂 `api/services/guardrail.py::build_input_guard`** 构造闭包，经 `dispatch_client` 注入 client，4 个 ws 端点接线。
@@ -113,7 +113,7 @@
 `ws endpoint（api/v1/assistant.py:214 / api/v1/workflow.py:160 / open_endpoints 同构）→ ChatManager.dispatch_client（common/chat/manager.py:203）→ ChatClient._handle_message（common/chat/clients/base.py:62）→ workflow_client 提交执行（RedisCallback）→ 结果经 ChatClient.send_response（base.py:98）以 msg_type='stream'/'end' 分片回传 ws`
 
 **对话链路（HTTP 兼容接口）**：
-`POST /api/v2/chat/completions（open_endpoints/api/endpoints/assistant.py:31）→ 独立实现（不经 ChatManager）→ 同步/流式返回`
+`POST /api/v2/assistant/chat/completions（open_endpoints/api/endpoints/assistant.py:31）→ 独立实现（不经 ChatManager）→ 同步/流式返回`
 
 **敏感词检测现状（F036）**：
 `SensitiveWordPolicyService.check_texts（sensitive_word_policy_service.py:252）→ 读策略（SensitiveWordPolicyDao.get_policy，同步 session）→ 词表解析（builtin words.txt lru_cache + custom 文本）→ ACAutomaton.find_all（ac_automaton.py:46，整段从 root 开始匹配）`
@@ -137,7 +137,7 @@
 | `sensitive_word/domain/services/chat_guard.py` | 对话围栏门面：`check_chat_input` / `start_output_guard` / `check_output_chunk`（block/mask 语义、跨分片缓冲、命中日志触发）。**F059 起为两层**：`OutputGuardState` 同时持有租户层与平台层**两套** matcher / `tail_state` / `last_counted_pos`（字段见 `chat_guard.py:72-78`），两层各自扫描、各自计数、各自写一行命中日志（靠 `source` 区分），判定时平台层优先 | 不做 ws/HTTP 埋点（埋点在调用方，Wave 2） |
 | `sensitive_word/domain/services/ac_automaton.py` | AC 多模式匹配（新增带状态增量匹配 `find_all_matches` + `in_progress` 中间态判定） | 不读库、不管策略 |
 | `common/chat/clients/base.py` | 消息分发（输入检测埋点）、流式发射（输出检测埋点） | 不定义策略语义 |
-| `open_endpoints/api/endpoints/assistant.py` | `/api/v2/chat/completions` 输入检测埋点 + 400/11201 返回；同步/流式输出检测埋点（决策 3） | 不改 ws 链路 |
+| `open_endpoints/api/endpoints/assistant.py` | `/api/v2/assistant/chat/completions` 输入检测埋点 + 400/11201 返回；同步/流式输出检测埋点（决策 3） | 不改 ws 链路 |
 | `sensitive_word/api/endpoints/policies.py` | 策略 GET/PUT（既有端点，枚举自然扩展） | 不新增端点 |
 | 命中日志 DAO（新增，domain/repositories 或 Dao 类） | 异步 best-effort 写 hit_log | 不参与检测判定 |
 
@@ -148,7 +148,7 @@
 | # | 反直觉事实 | 如果不知道会怎样 | 在哪处理 |
 |---|---|---|---|
 | 1 | `ACAutomaton.find_all` 每次从 root 开始匹配，**没有跨调用状态** | 流式逐分片调用会漏掉跨分片截断的敏感词（如「敏感」+「词」两个分片） | 新增 `find_all_matches(state, text, capture_at)`（状态自携带全局位置 + emit 边界中间态捕获），检测点按 chat 会话持状态（会话结束时丢弃） |
-| 2 | **ChatManager 只收口 ws 对话**；`/api/v2/chat/completions` 是独立实现、不走 ChatManager | 只埋 ws 点会漏掉整个 OpenAI 兼容接口（输入、输出两条链路都会漏）——围栏有洞 | 该端点输入（决策 2）与输出（决策 3）均单独埋点，共用同一检测门面 |
+| 2 | **ChatManager 只收口 ws 对话**；`/api/v2/assistant/chat/completions` 是独立实现、不走 ChatManager | 只埋 ws 点会漏掉整个 OpenAI 兼容接口（输入、输出两条链路都会漏）——围栏有洞 | 该端点输入（决策 2）与输出（决策 3）均单独埋点，共用同一检测门面 |
 | 3 | 策略修改的即时生效依赖 `clear_cache()`（`sensitive_word_policy_service.py:75`）：自动机缓存 key 含词表摘要，但**策略记录本身**（enabled/词表类型）也进了 key，改策略必须清缓存 | 漏清缓存 → AC-03 失败，管理员改了词表不生效 | 复用既有 aupsert 后的 clear_cache；检测点绝不自行缓存策略行 |
 | 4 | `words.txt`（`domain/data/words.txt`）是**单行大文件**，靠 `load_builtin_words` lru_cache 加载 | 按行读会读到一行几十 KB；重复读文件拖慢检测 | 沿用既有 normalize_words + lru_cache，不另写读取逻辑 |
 | 5 | mask（打码）时命中词可能跨分片：当前分片只有词的前半段 | 过早输出前半段 → 打码失败泄漏词头 | `OutputGuardState.tail` + `tail_state`：仅当自动机处于「可延展成更长模式」的中间态时缓冲尾部（≤ 最长词-1 字符，经 `capture_at` 捕获 emit 边界状态续扫），且命中词永不跨 emit 边界被拆开发出；跨分片重叠词按各自完成位置计数一次，与 F036 全量 `find_all` 语义一致（随机分片一致性用例锁定） |
@@ -175,7 +175,7 @@
 | `GET/PUT /api/v1/sensitive-word-policies/{business_type}`（既有端点，枚举扩展） | HTTP API | platform 前端「大模型安全围栏」设置页（复用 `controllers/API/sensitiveWordPolicy.ts` 模式） |
 | `GET /api/v1/sensitive-word-hit-logs`（新增，方向/应用/时间筛选 + `PageData` 分页，租户管理员）。**F059 起返回值含 `source` 字段**，且 `source=platform` 的行其 `hits` 在**服务端**置空（`_to_hit_log_item(redact_platform_hits=True)`）——`hit_count` 保留，故租户能区分「围栏生效」与「系统故障」，但拿不到平台词库内容（INV-10） | HTTP API | platform 前端「命中日志」页 |
 | `GET /api/v1/sensitive-word-hit-logs/all`（**F059 新增**，跨租户 + 可选 `tenant_id` 筛选，`require_global_super_admin`，**不脱敏**——平台管理员拥有词库本身，无遮蔽对象） | HTTP API | platform 前端平台级命中日志视图 |
-| 错误码 11201 / 11202（`common/errcode/sensitive_word.py` 新增） | HTTP/ws 错误契约 | `/api/v2/chat/completions` 调用方、前端错误码文案（`api_errors` 域，三语） |
+| 错误码 11201 / 11202（`common/errcode/sensitive_word.py` 新增） | HTTP/ws 错误契约 | `/api/v2/assistant/chat/completions` 调用方、前端错误码文案（`api_errors` 域，三语） |
 | `sensitive_word_hit_log` 表 | DB 表 | 平台日志页（只读）、审计 |
 | `ACAutomaton.find_all_incremental` | 内部 Python API | 流式输出检测点（二期语义 provider 可复用） |
 
@@ -193,12 +193,12 @@
 ## 7. 测试与可观测
 
 - **单元**：AC 增量匹配（跨分片词、最长词边界、多词命中）、词表解析边界（空/重复/大小写）、action 语义（block 截断点 / mask 等长打码）、策略「无效即直通」矩阵（未启用/空词表/读策略异常）。
-- **集成**：ws 输入拦截（不调模型、返回话术、日志落库）；`/api/v2/chat/completions` 输入拦截（400 + 11201）；流式输出截断（伪造流分片，验证命中分片即停、话术收尾、历史入库为截断后文本）。
+- **集成**：ws 输入拦截（不调模型、返回话术、日志落库）；`/api/v2/assistant/chat/completions` 输入拦截（400 + 11201）；流式输出截断（伪造流分片，验证命中分片即停、话术收尾、历史入库为截断后文本）。
 - **e2e**：`/e2e-test features/v2.7.0/056-llm-guardrail`——配置策略 → 助手/工作流对话输入命中 → 验证话术回复与日志；未配置租户全入口回归（AC-17）。**注意**：AC-02/AC-17 的回归用例需在**平台级强制词库未启用**的前提下运行（F059 上线后，平台层启用会使「未配置租户行为不变」不成立）。
 - **手动验证**（本地环境 172.19.70.141：平台 :3001 / 客户端 :4001 / 后端 :7860，以租户管理员账号登录平台）：
   - 平台 `http://172.19.70.141:3001` → 安全围栏设置页：开关 / 词表（内置+自定义）/ 动作（block/mask）/ 话术 CRUD；改词表后立即生效（AC-03）
   - 客户端 `http://172.19.70.141:4001/workspace` → 发起对话：输入命中验证话术回复且无模型调用（AC-05）；输出命中验证截断（AC-10）/ 打码（AC-11）
-  - `POST http://172.19.70.141:7860/api/v2/chat/completions`：输入命中返回 400 + 11201（AC-08）；`stream=true` 验证输出实时截断（AC-14）
+  - `POST http://172.19.70.141:7860/api/v2/assistant/chat/completions`：输入命中返回 400 + 11201（AC-08）；`stream=true` 验证输出实时截断（AC-14）
   - 平台日志页按时间 / 方向 / 应用筛选命中记录（AC-15）
 - **可观测**：命中事件 `logger.info`（含方向、flow_id、命中词数，不含原文）；检测耗时 debug 日志（性能回归用）；日志写失败 `logger.warning`；平台日志页兜底展示。
 
@@ -227,3 +227,5 @@
 | 2026-09-08 | Wave 3 实现落库：命中日志查询端点补充（§6.1，tasks 拆解遗漏）；平台「安全围栏」tab（策略配置 + 命中日志页，`DialogueWork` 新 tab）；i18n 三语（bs.json guardrail 组 + api_errors 11201/11202） | T013-T017 实现期：前端控制器按拦截器解包语义类型化（勿二次 .data 解包，F055 T-19 口径） |
 | 2026-09-18 | **code-review 执行**（报告：[code-review-report.md](./code-review-report.md)）。代码维度全通过（跨分片匹配与 mask 泄漏经穷举实测）；HIGH 两条均在测试覆盖与文档同步：① AC-05/10/11/12/14 的真实链路验证依赖**从未执行**的手动清单；② design 未同步 F059 两层现状 | 本次审查发现 F059 落地后本 design 已滞后：检测链路变为两层，但 §4.2/§4.3/§6.1 仍按单层描述 |
 | 2026-09-18 | **回写 F059 两层现状**：§4.2 补 `source` 字段与「每层各写一行」的行粒度；§4.3 补双 matcher/双 tail_state；§5 新增坑 13（mask 必须用未过滤列表，否则泄漏词）、坑 14（block 取两层最早命中）、坑 15（auto_reply 按胜出层重写）；§6.1 补 `/all` 跨租户端点与平台词服务端脱敏口径 | 上条 code-review 的 H2/M3 文档漂移 |
+| 2026-09-18 | **订正 API 路径**：本文与 spec 中的 `POST /api/v2/chat/completions` 共 9 处改为 `/api/v2/assistant/chat/completions`。原路径**不存在**，按它写集成代码会 404 | code-review 发现。已用程序化方式复核（遍历 `api.router` + `router_rpc.routes`）：`/api/v2/assistant/chat/completions` 存在，`/api/v2/chat/completions` 不存在 |
+| 2026-09-18 | **补记 workstation 入口**：`POST /api/v1/workstation/chat/completions` 是第 4 个对话入口，原 K2 的清单未列、实现也未接入。第一步（输入拦截 + 历史过滤）已落地；**输出流式检测未做**，见 code-review 报告的 H8 | code-review 发现；其 SSE 事件形状与 ws 侧不同，需单独埋点 |

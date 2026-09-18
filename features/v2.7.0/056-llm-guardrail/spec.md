@@ -61,7 +61,7 @@
 
 ### 2.2 输入检测与拦截
 
-- **AC-05** — WHEN 用户在任一对话入口（助手 / 工作流 WebSocket 聊天、OpenAI 兼容接口 `POST /api/v2/chat/completions`）发送的消息命中输入策略敏感词, THE SYSTEM SHALL 不执行该轮对话（不调用模型），并立即以配置话术作为该轮回复返回给用户。
+- **AC-05** — WHEN 用户在任一对话入口（助手 / 工作流 WebSocket 聊天、OpenAI 兼容接口 `POST /api/v2/assistant/chat/completions`）发送的消息命中输入策略敏感词, THE SYSTEM SHALL 不执行该轮对话（不调用模型），并立即以配置话术作为该轮回复返回给用户。
 - **AC-06** — IF 输入未命中, THEN THE SYSTEM SHALL 正常执行该轮对话并返回模型结果，回复内容与未开启策略时一致。
 - **AC-07** — IF 输入命中, THEN THE SYSTEM SHALL 写入一条输入方向命中日志（时间、租户、应用、用户、命中词与次数、动作）。
 - **AC-08** — IF OpenAI 兼容接口的输入命中, THEN THE SYSTEM SHALL 返回 HTTP 400 与错误码 11201，响应体携带配置话术。
