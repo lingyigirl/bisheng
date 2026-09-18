@@ -40,6 +40,7 @@ from bisheng.database.models.session import MessageSession, MessageSessionDao
 from bisheng.database.models.workflow_node_run import NodeRunDao
 from bisheng.llm.domain import LLMService
 from bisheng.utils.threadpool import thread_pool
+from bisheng.worker.workflow.output_filter import filter_chat_response_message
 from bisheng.workflow.callback.base_callback import BaseCallback
 from bisheng.workflow.callback.event import (
     GuideQuestionData,
@@ -508,6 +509,19 @@ class RedisCallback(BaseCallback):
         """save chat message to database
         return message id
         """
+        # Filter BEFORE anything reads the text. The websocket guard runs in the
+        # API process and only rewrites the frame, so without this the history
+        # kept the unfiltered answer -- see `output_filter` for why this is a
+        # separate implementation, and for what it does and does not cover.
+        #
+        # Filtering here rather than at the call sites means it also applies to
+        # the citation extraction below, which would otherwise resolve offsets
+        # against text the user never saw.
+        if chat_response.category != WorkflowEventType.UserInput.value:
+            chat_response.message = filter_chat_response_message(
+                chat_response.message, self.tenant_id
+            )
+
         if not self.chat_id:
             answer_text = self._extract_message_text(chat_response.message)
             items = self._resolve_citation_items(
