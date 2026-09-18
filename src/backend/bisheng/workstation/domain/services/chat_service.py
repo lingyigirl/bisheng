@@ -41,6 +41,7 @@ from bisheng.database.models.message import ChatMessage, ChatMessageDao
 from bisheng.database.models.session import MessageSession, MessageSessionDao
 from bisheng.department.domain.services.department_flow_service import DepartmentFlowService
 from bisheng.llm.domain import LLMService
+from bisheng.sensitive_word.domain.services.answer_filter import filter_answer_text
 from bisheng.tool.domain.models.gpts_tools import GptsToolsDao
 from bisheng.tool.domain.services.executor import ToolExecutor
 
@@ -1926,6 +1927,23 @@ async def _agent_stream_chat_completion(
         # mid-reasoning or mid-tool).
         finalise_dangling_events()
 
+        # Apply the output policy BEFORE anything downstream reads the answer.
+        # This entry point has no API-layer guard on its stream (see H8 in the
+        # F056 review — output guarding here is a separate, not-yet-done step),
+        # so without this the history would keep whatever the model produced.
+        #
+        # Filtering `final_msg` itself, not just the persisted copy, so the
+        # citation extraction below resolves against the text the user can
+        # actually see.
+        filtered_msg = filter_answer_text(final_msg, _tenant_id_for(login_user))
+        if filtered_msg != final_msg:
+            logger.info(
+                'workstation answer filtered before persistence (len {} -> {})',
+                len(final_msg),
+                len(filtered_msg),
+            )
+        final_msg = filtered_msg
+
         # Persist agent_answer — new unified shape is `{msg, events}`.
         db_content: dict = {"msg": final_msg, "events": events}
 
@@ -2020,10 +2038,84 @@ async def stream_chat_completion(
     F035 Track J: a single entry now serves both modes. ``data.task_mode`` routes
     this turn to the linsight task kernel (the turn still belongs to the same
     conversation/chat_id); otherwise the daily agent flow runs unchanged.
+
+    Input guarding happens here, before either branch, for the same reason the
+    ws path guards before dispatching: a blocked turn must not run at all --
+    including not creating a conversation row, which the agent branch does
+    during its own initialisation.
     """
+    blocked_reply = await _check_input_policy(data, login_user)
+    if blocked_reply is not None:
+        return _blocked_input_stream(blocked_reply, data.conversationId)
+
     if data.task_mode:
         return await _task_mode_stream_completion(request, data, login_user)
     return await _agent_stream_chat_completion(request, data, login_user)
+
+
+def _tenant_id_for(login_user: UserPayload) -> int | None:
+    """The tenant whose policy applies, resolved the same way the guards do.
+
+    Mirroring `build_input_guard`'s resolution rather than inventing one: the
+    input guard and this filter must agree on which word list they apply, or a
+    tenant would see one policy enforced on input and another on what gets
+    stored.
+    """
+    from bisheng.core.context.tenant import get_current_tenant_id
+
+    return get_current_tenant_id() or getattr(login_user, 'tenant_id', None)
+
+
+async def _check_input_policy(data: APIChatCompletion, login_user: UserPayload) -> str | None:
+    """The policy auto_reply when the turn's input hits the tenant policy.
+
+    Returns None when the input is allowed, when no policy is configured, or
+    when anything about the check fails. Those last two collapse on purpose:
+    the input guard is a filter in front of a chat, and a broken filter must
+    not cost the user their conversation.
+
+    Reuses ``build_input_guard`` -- the same factory the four ws endpoints use --
+    rather than calling the service directly, so the wording, the tenant
+    resolution and the "not enabled means allow" rule have one implementation.
+    A second copy here is how the two paths would quietly diverge.
+
+    ``flow_id`` is None: this entry point spans conversations rather than one
+    bound application, and the guard already treats it as optional.
+    """
+    text = (data.text or '').strip()
+    if not text:
+        return None
+
+    try:
+        from bisheng.api.services.guardrail import build_input_guard
+
+        guard = build_input_guard(login_user, None)
+        return await guard(data.conversationId, text)
+    except Exception:
+        logger.opt(exception=True).warning(
+            'workstation input guard failed for user={}; allowing the turn',
+            getattr(login_user, 'user_id', None),
+        )
+        return None
+
+
+def _blocked_input_stream(reply: str, conversation_id: str | None) -> StreamingResponse:
+    """Stream a blocked-input turn back as the close-out phrase.
+
+    Uses the same ``agent_answer`` / ``over`` frame the agent branch emits for a
+    finished answer, so the client renders it as an ordinary reply with no
+    client-side change -- the same choice the ws path made, where a blocked turn
+    comes back as a normal message rather than a new frame type.
+
+    ``conversation_id`` may be absent: this runs BEFORE the conversation row is
+    created, which is deliberate (a blocked turn must not leave an empty
+    conversation behind), so the frame carries a placeholder the client
+    replaces with the real id on its next turn.
+    """
+    return StreamingResponse(
+        iter([_sse_resp('agent_answer', 'over', {'msg': reply}, conversation_id or '')]),
+        media_type='text/event-stream',
+    )
 
 
 # Upper bound for in-stream title generation (task mode). Matches the gen_title

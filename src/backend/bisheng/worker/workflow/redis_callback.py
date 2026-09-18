@@ -40,7 +40,7 @@ from bisheng.database.models.session import MessageSession, MessageSessionDao
 from bisheng.database.models.workflow_node_run import NodeRunDao
 from bisheng.llm.domain import LLMService
 from bisheng.utils.threadpool import thread_pool
-from bisheng.worker.workflow.output_filter import filter_chat_response_message
+from bisheng.sensitive_word.domain.services.answer_filter import filter_chat_response_message
 from bisheng.workflow.callback.base_callback import BaseCallback
 from bisheng.workflow.callback.event import (
     GuideQuestionData,
@@ -511,7 +511,7 @@ class RedisCallback(BaseCallback):
         """
         # Filter BEFORE anything reads the text. The websocket guard runs in the
         # API process and only rewrites the frame, so without this the history
-        # kept the unfiltered answer -- see `output_filter` for why this is a
+        # kept the unfiltered answer -- see `answer_filter` for why this is a
         # separate implementation, and for what it does and does not cover.
         #
         # Filtering here rather than at the call sites means it also applies to
