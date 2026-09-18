@@ -26,6 +26,9 @@ from bisheng.permission.domain.application_permission_template import (
 from bisheng.permission.domain.channel_permission_template import (
     CHANNEL_PERMISSION_TEMPLATE,
 )
+from bisheng.permission.domain.datasource_permission_template import (
+    DATASOURCE_PERMISSION_TEMPLATE,
+)
 from bisheng.permission.domain.knowledge_library_permission_template import (
     KNOWLEDGE_LIBRARY_PERMISSION_TEMPLATE,
 )
@@ -158,6 +161,16 @@ _MANAGE_PERMISSION_BY_RESOURCE_TIER = {
         "manager": "manage_channel_manager",
         "usage": "manage_channel_user",
     },
+    # F061 AC-44: datasource management is independent of knowledge-library
+    # management — these ids must never be shared with manage_kb_*.
+    # NOTE: this map is duplicated in
+    # permission/domain/services/resource_authorization_service.py; keep both in
+    # sync (test/datasource/test_datasource_permission.py asserts they agree).
+    "db_datasource": {
+        "owner": "manage_datasource_owner",
+        "manager": "manage_datasource_manager",
+        "usage": "manage_datasource_viewer",
+    },
 }
 _MANAGE_PERMISSION_BY_RESOURCE = {
     "knowledge_space": "manage_space_relation",
@@ -176,6 +189,7 @@ _PERMISSION_TEMPLATES = (
     KNOWLEDGE_LIBRARY_PERMISSION_TEMPLATE,
     TOOL_PERMISSION_TEMPLATE,
     CHANNEL_PERMISSION_TEMPLATE,
+    DATASOURCE_PERMISSION_TEMPLATE,
 )
 _RELATION_MODEL_NAME_PREFIX_PAIRS = tuple(
     (template.get("title") or "", item.get("label") or "")
@@ -1436,3 +1450,13 @@ async def get_channel_permission_template(
     if not login_user.is_admin():
         return PermissionDeniedError.return_resp()
     return resp_200(CHANNEL_PERMISSION_TEMPLATE)
+
+
+@router.get("/permission-templates/datasource")
+async def get_datasource_permission_template(
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """Return the canonical backend template for datasource permissions (F061)."""
+    if not login_user.is_admin():
+        return PermissionDeniedError.return_resp()
+    return resp_200(DATASOURCE_PERMISSION_TEMPLATE)

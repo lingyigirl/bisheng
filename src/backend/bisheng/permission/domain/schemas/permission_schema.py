@@ -15,6 +15,9 @@ VALID_RESOURCE_TYPES = {
     "tool",
     "channel",
     "dashboard",
+    # F061: registered database Q&A source. A peer of knowledge_library, not a
+    # subtype — it has its own permission points (spec AC-43 / AC-44).
+    "db_datasource",
 }
 
 # Valid OpenFGA relations

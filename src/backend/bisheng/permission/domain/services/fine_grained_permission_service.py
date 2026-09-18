@@ -14,6 +14,9 @@ from bisheng.permission.domain.application_permission_template import (
 from bisheng.permission.domain.channel_permission_template import (
     default_permission_ids_for_relation as default_channel_permissions,
 )
+from bisheng.permission.domain.datasource_permission_template import (
+    default_permission_ids_for_relation as default_datasource_permissions,
+)
 from bisheng.permission.domain.knowledge_library_permission_template import (
     default_permission_ids_for_relation as default_knowledge_library_permissions,
 )
@@ -62,6 +65,8 @@ class FineGrainedPermissionService:
             return default_channel_permissions(relation)
         if object_type == "knowledge_library":
             return default_knowledge_library_permissions(relation)
+        if object_type == "db_datasource":
+            return default_datasource_permissions(relation)
         if object_type in {"knowledge_space", "folder", "knowledge_file"}:
             return default_knowledge_space_permissions(relation)
         return set()

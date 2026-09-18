@@ -21,6 +21,11 @@ from bisheng.citation.domain.services.citation_prompt_helper import (
     prompt_has_citation_rules,
 )
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
+from bisheng.datasource.domain.services.engine_registry import (
+    build_url,
+    connect_uri,
+    split_host_port,
+)
 from bisheng.knowledge.domain.knowledge_rag import KnowledgeRag
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
 from bisheng.knowledge.domain.services.knowledge_utils import KnowledgeUtils
@@ -398,41 +403,37 @@ class AgentNode(BaseNode):
         )
 
     def _init_sql_address(self) -> str:
-        """Inisialisasi SQL Database Address"""
+        """Initialize SQL Database Address.
+
+        Delegates to `engine_registry`, which is now the single source of truth
+        for engine URI assembly (this method used to inline it). For the five
+        engines that had a branch here the emitted string is unchanged -- see
+        `test_engine_registry.py::test_legacy_five_engine_uris_are_byte_identical`
+        -- so existing inline-configured flows are unaffected (spec AC-54).
+
+        Three things do change, all of them fixes to cases that were broken:
+
+        * DaMeng works instead of falling through to `raise ValueError`
+          (spec AC-02 lists six engines, this covered five).
+        * A password containing `@`, `/`, `:` or `%` no longer produces a
+          malformed or silently altered URI.
+        * An unsupported engine raises error code 11702 rather than a bare
+          `ValueError`, so the failure is branchable.
+        """
         if not self._sql_agent:
             return ""
-        if self._sql_agent.database_engine == "mysql":
-            try:
-                pass
-            except ImportError:
-                raise ImportError("Please install pymysql and sqlalchemy to use mysql database")
-            return f"mysql+pymysql://{self._sql_agent.db_username}:{self._sql_agent.db_password}@{self._sql_agent.db_address}/{self._sql_agent.db_name}?charset=utf8mb4"
-        elif self._sql_agent.database_engine == "db2":
-            try:
-                pass
-            except ImportError:
-                raise ImportError("Please install ibm_db and ibm_db_sa to use db2 database")
-            return f"db2+ibm_db://{self._sql_agent.db_username}:{self._sql_agent.db_password}@{self._sql_agent.db_address}/{self._sql_agent.db_name}"
-        elif self._sql_agent.database_engine in ["postgres", "postgresql"]:
-            try:
-                pass
-            except ImportError:
-                raise ImportError("Please install psycopg2 and sqlalchemy to use postgresql database")
-            return f"postgresql+psycopg2://{self._sql_agent.db_username}:{self._sql_agent.db_password}@{self._sql_agent.db_address}/{self._sql_agent.db_name}"
-        elif self._sql_agent.database_engine == "gaussdb":
-            try:
-                pass
-            except ImportError:
-                raise ImportError("Please install psycopg2 and opengauss_sqlalchemy to use gaussdb database")
-            return f"opengauss+psycopg2://{self._sql_agent.db_username}:{self._sql_agent.db_password}@{self._sql_agent.db_address}/{self._sql_agent.db_name}"
-        elif self._sql_agent.database_engine == "oracle":
-            try:
-                pass
-            except ImportError:
-                raise ImportError("Please install oracledb and sqlalchemy to use oracle database")
-            return f"oracle+oracledb://{self._sql_agent.db_username}:{self._sql_agent.db_password}@{self._sql_agent.db_address}?service_name={self._sql_agent.db_name}"
-        else:
-            raise ValueError(f"Unsupported database engine: {self._sql_agent.database_engine}")
+        host, port = split_host_port(self._sql_agent.db_address)
+        url = build_url(
+            engine=self._sql_agent.database_engine,
+            host=host,
+            port=port,
+            database=self._sql_agent.db_name,
+            username=self._sql_agent.db_username,
+            password=self._sql_agent.db_password,
+        )
+        # `sql_address` is a pydantic `str` field on SqlAgentAPIWrapper, which
+        # rejects a URL object -- hence the one render that keeps the password.
+        return connect_uri(url)
 
     def _run(self, unique_id: str):
         ret = {}

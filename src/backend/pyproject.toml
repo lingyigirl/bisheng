@@ -24,8 +24,32 @@ dependencies = [
     "easyofd>=0.4.0",
     "emoji>=2.15.0",
     "fastapi>=0.120.4",
-    "ibm-db>=3.2.7; platform_machine == 'x86_64'",
-    "ibm-db-sa>=0.4.2; platform_machine == 'x86_64'",
+    # DB2 driver + its SQLAlchemy dialect (registers db2+ibm_db://), required
+    # by the datasource engine list (F061 spec AC-02).
+    #
+    # The marker is PyPI's limitation, not a preference: ibm-db ships manylinux
+    # x86_64/i686, macosx and win wheels, but NO aarch64 wheel. On an aarch64
+    # host (the common 信创 target) resolution would fall back to the sdist,
+    # which needs a separate IBM CLI-driver install and fails the build. The
+    # marker keeps that host installable at the cost of dropping DB2 there.
+    #
+    # Both x86_64 spellings are allowed DELIBERATELY: `platform_machine` is
+    # 'x86_64' on Linux and 'AMD64' on Windows, and both have wheels. Spelling
+    # out only 'x86_64' would have silently dropped DB2 from every Windows dev
+    # machine -- i.e. from the environment this dependency was added to be
+    # testable in. An allow-list is used rather than `!= 'aarch64'` because that
+    # form would also admit ppc64le / s390x / musl, none of which have a wheel
+    # (macOS arm64 does have one, so it is not the reason).
+    #
+    # Windows caveat, measured: the pinned 3.2.7 win_amd64 wheel installs but
+    # `import ibm_db` fails with a DLL-load error, because the extension needs
+    # its bundled clidriver/bin on the DLL search path and Python 3.8+ no longer
+    # searches PATH for a module's dependencies. `os.add_dll_directory(...)`
+    # before the import fixes it. 3.3.0 imports cleanly but ships only
+    # manylinux_2_34 (glibc >= 2.34), i.e. not the older 信创 targets, which is
+    # why the pin has not been raised here.
+    "ibm-db>=3.2.7; platform_machine == 'x86_64' or platform_machine == 'AMD64'",
+    "ibm-db-sa>=0.4.2; platform_machine == 'x86_64' or platform_machine == 'AMD64'",
     "jieba>=0.42.1",
     "langchain>=1.3,<2.0",
     "langchain-core>=1.4,<2.0",

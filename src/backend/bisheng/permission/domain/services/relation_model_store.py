@@ -9,6 +9,9 @@ from bisheng.permission.domain.application_permission_template import (
     APPLICATION_PERMISSION_TEMPLATE,
 )
 from bisheng.permission.domain.channel_permission_template import CHANNEL_PERMISSION_TEMPLATE
+from bisheng.permission.domain.datasource_permission_template import (
+    DATASOURCE_PERMISSION_TEMPLATE,
+)
 from bisheng.permission.domain.knowledge_library_permission_template import (
     KNOWLEDGE_LIBRARY_PERMISSION_TEMPLATE,
 )
@@ -28,6 +31,7 @@ _PERMISSION_TEMPLATES = (
     KNOWLEDGE_LIBRARY_PERMISSION_TEMPLATE,
     TOOL_PERMISSION_TEMPLATE,
     CHANNEL_PERMISSION_TEMPLATE,
+    DATASOURCE_PERMISSION_TEMPLATE,
 )
 _RELATION_MODEL_NAME_PREFIX_PAIRS = tuple(
     (template.get("title") or "", item.get("label") or "")

@@ -257,6 +257,32 @@ class FGAClient:
             raise FGAModelError("write_authorization_model returned empty model_id")
         return model_id
 
+    async def read_authorization_model(self, model_id: str) -> dict:
+        """Read one authorization model back from the store.
+
+        Used by the model-upgrade runbook (``scripts/migrate_fga_add_*``) to
+        decide whether the model a deployment is pinned to already carries a
+        type, which is what makes that script idempotent. Reads by explicit
+        ``model_id`` rather than "latest" on purpose: ``model_id`` is resolved
+        at startup (config, else newest) and that resolved value is the model
+        the running service checks against.
+        """
+        data = await self._get(f"/stores/{self._store_id}/authorization-models/{model_id}")
+        model = data.get("authorization_model") or {}
+        if not model:
+            raise FGAModelError(f"read_authorization_model returned no model for id={model_id}")
+        return model
+
+    @staticmethod
+    def model_type_names(model: dict) -> list[str]:
+        """The type names an authorization model declares.
+
+        Shape-agnostic on purpose: only the ``type`` keys are read, so it works
+        on both the write-shaped model (``authorization_model.py``) and the
+        server's read-shaped response, whose relation metadata differs.
+        """
+        return [td.get("type") for td in (model.get("type_definitions") or []) if td.get("type")]
+
     # ── Health ───────────────────────────────────────────────────
 
     async def health(self) -> bool:

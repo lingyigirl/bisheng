@@ -1,8 +1,8 @@
 """Static OpenFGA authorization model for BiSheng v2.5.1.
 
-Defines 16 types: user, system, tenant, department, user_group,
+Defines 17 types: user, system, tenant, department, user_group,
 knowledge_space, knowledge_library, folder, knowledge_file, channel, workflow,
-assistant, tool, dashboard, llm_server, llm_model.
+assistant, tool, dashboard, llm_server, llm_model, db_datasource.
 
 Permission pyramid: owner > manager(can_manage) > editor(can_edit) > viewer(can_read)
 can_delete: owner (top-level) or owner|can_manage from parent (hierarchical)
@@ -24,13 +24,21 @@ v2.5.1 F013 changes:
   user_group#member, user_group#admin) — resource grants stay bounded
   (Round 3 narrowing plus legacy groupresource migration compatibility).
 - New types llm_server / llm_model preallocated for F020 LLM multi-tenant.
+- v2.0.3 (F061) adds db_datasource: databases registered as a Q&A knowledge
+  source. It is a PEER of knowledge_library, not a child of it — the two are
+  governed by independent permission points (spec AC-43 / AC-44), so the type
+  carries no parent relation (HAS_PARENT stays False).
 """
 
 import copy
 
 # v2.0.2 — user_group#admin now implies user_group#member and can manage
 # legacy groupresource-managed resources.
-MODEL_VERSION = 'v2.0.2'
+# v2.0.3 — db_datasource resource type added (F061).
+# The version MUST change whenever the DSL below changes: a running instance
+# keys its reload decision on this string, so an unchanged version would leave
+# every existing deployment on the old model (F061 T-06).
+MODEL_VERSION = 'v2.0.3'
 
 
 def _user_types():
@@ -277,7 +285,7 @@ AUTHORIZATION_MODEL: dict = {
             },
         },
 
-        # === Resource types (11) ===
+        # === Resource types (12) ===
         _standard_resource_type('knowledge_space'),
         _standard_resource_type('knowledge_library'),
         _standard_resource_type('folder', has_parent=True,
@@ -294,6 +302,11 @@ AUTHORIZATION_MODEL: dict = {
         # tenant:{root}#shared_to#member tuples to enable Root → Child sharing.
         _standard_resource_type('llm_server'),
         _standard_resource_type('llm_model'),
+        # F061 (v2.7.0): a registered external database is a controlled resource
+        # in its own right, a PEER of knowledge_library — never a subtype of it
+        # (spec AC-43). No parent: datasources are not nested under knowledge
+        # spaces and carry no department-ownership semantics (spec AC-47).
+        _standard_resource_type('db_datasource'),
     ],
 }
 

@@ -315,6 +315,30 @@ The 3rd argument can be omitted if one of these environment variables is set:
 - `OPENFGA_DATASTORE_URL`
 - `OPENFGA_DATASTORE_URI`
 
+### `migrate_fga_add_datasource_type.py`（F061）
+
+把已存在的 OpenFGA store 升级到带 `db_datasource` 资源类型的模型。
+
+F061 在静态授权模型里新增了 `db_datasource` 类型（与知识库同级的一类受控资源）。OpenFGA 的模型在 store 内不可变且分版本，进程启动时解析出的 `model_id` 才决定实际生效的模型——所以**仅发新代码不会让既有 store 获得新类型**，必须按 store 写一次新模型。
+
+为什么是脚本而不是迁移：① `alembic/AGENTS.md §5` 禁止在 revision 里做数据操作（F029 属祖父条款）；② `openfga.force_write_model=true` 不可用——`FGAManager` 解析出的 `model_id` 是局部变量、不回写配置，每次进程启动都会再写一个模型并无限堆积。故走本目录既有的 `backfill_*` 运维作业模式。
+
+幂等：模型里已有 `db_datasource` 则跳过、不写。只增不改：OpenFGA 保留历史模型，回滚只需把 `openfga.model_id` 指回旧 id。
+
+运行时机：在 F061 代码**部署之后**运行（写入的是当前代码树里的模型，运行时打印的 `MODEL_VERSION` 供核对），并在任何数据源被创建**之前**运行——store 的模型尚未声明 `db_datasource` 时，创建数据源会卡在 owner 元组写入上（`DatasourceService.create_datasource` 传 `enforce_fga_success=True`，写 FGA 失败会中断创建）。不依赖其它脚本的执行顺序。
+
+Usage (from `src/backend/`):
+
+```bash
+bash scripts/migrate_fga_add_datasource_type.sh --dry-run   # 只报告（默认行为）
+bash scripts/migrate_fga_add_datasource_type.sh --apply     # 写入新模型
+bash scripts/migrate_fga_add_datasource_type.sh apply       # 同 --apply
+```
+
+写入成功后：若部署在配置里固定了 `openfga.model_id`，把脚本打印的新 id 填进 `config.yaml` 并重启；若未固定（manager 取 store 内最新模型），重启即可生效。
+
+Exit codes: `0` 成功（含「已存在」与 dry-run）/ `2` OpenFGA 不可达 / `3` 模型读取或写入失败。
+
 ## Linsight Scripts (F035)
 
 ### `migrate_sop_to_skill.sh` / `migrate_sop_to_skill.py`

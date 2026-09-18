@@ -1673,6 +1673,16 @@ class PermissionService:
                         channel = result.first()
                     return channel.user_id if channel else None
 
+                if object_type == "db_datasource":
+                    # F061: the row carries the creator directly. Registered
+                    # here so the owner-less fallback works like every other
+                    # top-level resource — a datasource whose owner tuple write
+                    # was lost must still be reachable by its creator.
+                    from bisheng.datasource.domain.models.dao import DbDatasourceDao
+
+                    datasource = await DbDatasourceDao.aget_by_id(int(object_id))
+                    return datasource.user_id if datasource else None
+
             # For other types (dashboard, folder), no direct
             # user_id field — owner fallback not applicable, return None.
             return None
@@ -1820,6 +1830,14 @@ class PermissionService:
                     if obj and obj.type in (KnowledgeTypeEnum.NORMAL.value, KnowledgeTypeEnum.QA.value):
                         return obj.tenant_id
                     return None
+                if object_type == "db_datasource":
+                    # F061: datasources are strictly tenant-scoped (AC-50) and
+                    # never cross-tenant shared (AC-47), so the owning tenant is
+                    # always resolvable from the row itself.
+                    from bisheng.datasource.domain.models.dao import DbDatasourceDao
+
+                    obj = await DbDatasourceDao.aget_by_id(int(object_id))
+                    return obj.tenant_id if obj else None
         except Exception as e:
             logger.warning(
                 "_resolve_resource_tenant failed for %s:%s: %s",

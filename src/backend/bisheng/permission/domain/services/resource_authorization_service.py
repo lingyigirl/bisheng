@@ -18,6 +18,9 @@ from bisheng.permission.domain.application_permission_template import (
 from bisheng.permission.domain.channel_permission_template import (
     default_permission_ids_for_relation as default_channel_permissions,
 )
+from bisheng.permission.domain.datasource_permission_template import (
+    default_permission_ids_for_relation as default_datasource_permissions,
+)
 from bisheng.permission.domain.knowledge_library_permission_template import (
     default_permission_ids_for_relation as default_knowledge_library_permissions,
 )
@@ -46,6 +49,16 @@ _MANAGE_PERMISSION_BY_RESOURCE_TIER = {
     "tool": {"owner": "manage_tool_owner", "manager": "manage_tool_manager", "usage": "manage_tool_viewer"},
     "knowledge_library": {"owner": "manage_kb_owner", "manager": "manage_kb_manager", "usage": "manage_kb_viewer"},
     "channel": {"owner": "manage_channel_owner", "manager": "manage_channel_manager", "usage": "manage_channel_user"},
+    # F061 AC-44: datasource management is independent of knowledge-library
+    # management — these ids must never be shared with manage_kb_*.
+    # NOTE: this map is duplicated in
+    # permission/api/endpoints/resource_permission.py; keep both in sync
+    # (test/datasource/test_datasource_permission.py asserts they agree).
+    "db_datasource": {
+        "owner": "manage_datasource_owner",
+        "manager": "manage_datasource_manager",
+        "usage": "manage_datasource_viewer",
+    },
 }
 _MANAGE_PERMISSION_BY_RESOURCE = {
     "knowledge_space": "manage_space_relation",
@@ -76,6 +89,8 @@ def _default_permission_ids(resource_type: str, relation: str) -> set[str]:
         return set(default_channel_permissions(relation))
     if resource_type == "knowledge_library":
         return set(default_knowledge_library_permissions(relation))
+    if resource_type == "db_datasource":
+        return set(default_datasource_permissions(relation))
     if resource_type in {"knowledge_space", "folder", "knowledge_file"}:
         return set(default_knowledge_space_permissions(relation))
     return set()

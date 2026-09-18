@@ -1,13 +1,15 @@
 """Unit tests for OpenFGA authorization model DSL (F013 T02).
 
 Verifies:
-- v2.0.2 model version bump (user_group admin/member compatibility)
+- model version tracks the DSL (v2.0.2 user_group admin/member, v2.0.3 F061
+  db_datasource)
 - tenant type carries shared_to relation; no parent relation
 - Every resource gets shared_with: [tenant] + viewer tupleToUserset(shared_with, member)
 - viewer's directly_related_user_types stays at bounded canonical sources (no #-nesting,
   which OpenFGA protobuf rejects)
 - manager/editor stay at bounded direct subject sources
 - llm_server / llm_model types preallocated for F020
+- db_datasource is a top-level peer of knowledge_library (F061)
 """
 
 import pytest
@@ -28,9 +30,14 @@ def types_by_name() -> dict:
 # ── Model version & top-level invariants ─────────────────────────
 
 
-def test_model_version_bumped_to_v2():
-    """MODEL_VERSION must change when the static OpenFGA DSL changes."""
-    assert MODEL_VERSION == 'v2.0.2'
+def test_model_version_matches_the_shipped_dsl():
+    """MODEL_VERSION must change when the static OpenFGA DSL changes.
+
+    Bumped to v2.0.3 by F061 (db_datasource). A model change that leaves this
+    string alone never reaches a running deployment: instances key their reload
+    decision on it, so the store would keep serving the old model.
+    """
+    assert MODEL_VERSION == 'v2.0.3'
 
 
 def test_get_authorization_model_returns_deep_copy():
@@ -83,7 +90,7 @@ def test_tenant_admin_does_not_inherit(types_by_name):
 @pytest.mark.parametrize('resource_type', [
     'knowledge_space', 'knowledge_library', 'folder', 'knowledge_file', 'channel',
     'workflow', 'assistant', 'tool', 'dashboard',
-    'llm_server', 'llm_model',
+    'llm_server', 'llm_model', 'db_datasource',
 ])
 def test_resource_has_shared_with_relation(types_by_name, resource_type):
     """2026-04-19 redesign: each resource carries shared_with: [tenant]."""
@@ -96,7 +103,7 @@ def test_resource_has_shared_with_relation(types_by_name, resource_type):
 @pytest.mark.parametrize('resource_type', [
     'knowledge_space', 'knowledge_library', 'folder', 'knowledge_file', 'channel',
     'workflow', 'assistant', 'tool', 'dashboard',
-    'llm_server', 'llm_model',
+    'llm_server', 'llm_model', 'db_datasource',
 ])
 def test_resource_viewer_chains_shared_with_member(types_by_name, resource_type):
     """viewer relation includes tupleToUserset(shared_with, member)."""
@@ -113,7 +120,7 @@ def test_resource_viewer_chains_shared_with_member(types_by_name, resource_type)
 @pytest.mark.parametrize('resource_type', [
     'knowledge_space', 'knowledge_library', 'folder', 'knowledge_file', 'channel',
     'workflow', 'assistant', 'tool', 'dashboard',
-    'llm_server', 'llm_model',
+    'llm_server', 'llm_model', 'db_datasource',
 ])
 def test_resource_viewer_drut_uses_only_valid_relations(types_by_name, resource_type):
     """directly_related_user_types must not carry nested-relation strings (e.g. 'shared_to#member'):
@@ -130,7 +137,7 @@ def test_resource_viewer_drut_uses_only_valid_relations(types_by_name, resource_
 @pytest.mark.parametrize('resource_type', [
     'knowledge_space', 'knowledge_library', 'folder', 'knowledge_file', 'channel',
     'workflow', 'assistant', 'tool', 'dashboard',
-    'llm_server', 'llm_model',
+    'llm_server', 'llm_model', 'db_datasource',
 ])
 def test_resource_manager_excludes_tenant(types_by_name, resource_type):
     """Round 3 narrowing: manager must NOT contain any tenant# relation."""
@@ -143,7 +150,7 @@ def test_resource_manager_excludes_tenant(types_by_name, resource_type):
 @pytest.mark.parametrize('resource_type', [
     'knowledge_space', 'knowledge_library', 'folder', 'knowledge_file', 'channel',
     'workflow', 'assistant', 'tool', 'dashboard',
-    'llm_server', 'llm_model',
+    'llm_server', 'llm_model', 'db_datasource',
 ])
 def test_resource_editor_excludes_tenant(types_by_name, resource_type):
     """Round 3 narrowing: editor must NOT contain any tenant# relation."""
@@ -216,6 +223,6 @@ def test_llm_model_has_full_pyramid(types_by_name):
 # ── Type count ───────────────────────────────────────────────────
 
 
-def test_total_type_count_is_16():
-    """v2.5.1 model: user + system + tenant + department + user_group + 11 resources = 16."""
-    assert len(AUTHORIZATION_MODEL['type_definitions']) == 16
+def test_total_type_count_is_17():
+    """v2.7.0 model: user + system + tenant + department + user_group + 12 resources = 17."""
+    assert len(AUTHORIZATION_MODEL['type_definitions']) == 17
