@@ -64,6 +64,11 @@ class FakeWebSocket:
         self.sent.append(payload if isinstance(payload, dict) else payload.model_dump())
 
 
+async def _noop_log(**kwargs):
+    """Stand-in for the best-effort hit-log write; these tests are not about it."""
+    return None
+
+
 def _workflow_client(guard):
     client = WorkflowClient(
         request=SimpleNamespace(),
@@ -245,3 +250,83 @@ async def test_output_guard_factory_reset_starts_fresh_round(monkeypatch):
     assert result.blocked is False
     assert result.safe_text == '正常内容'
     assert await guard.full_text() == '正常内容'
+
+
+# --- H6: whole-message frames must be guarded too ----------------------------
+
+
+def _whole_message_event(category, msg):
+    """An `on_output_msg`-style frame: one COMPLETE answer string, type='over'.
+
+    Mirrors what the worker emits (`redis_callback.py` on_output_msg /
+    on_output_input / on_output_choose). Note it matches neither of the two
+    conditions the guard used to require: the category is not `stream_msg` and
+    the type is not stream/end/end_cover.
+    """
+    return ChatResponse(type='over', category=category, message={'unique_id': 'u', 'node_id': 'n', 'msg': msg})
+
+
+@pytest.mark.parametrize(
+    'category',
+    ['output_msg', 'output_with_input_msg', 'output_with_choose_msg'],
+)
+async def test_whole_message_frames_are_masked(monkeypatch, category):
+    """These frames carry user-visible text and used to bypass the guard entirely.
+
+    Measured before the fix: a cached or non-streaming LLM node's output reached
+    the client verbatim, and was persisted verbatim (`redis_callback` saves the
+    same frame). The category check admitted only `stream_msg` and the type
+    check only stream/end/end_cover, so BOTH had to be relaxed for text to get
+    through unchecked -- which is why a fix to either one alone would not have
+    helped.
+    """
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
+    monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
+
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    client = _workflow_client(guard)
+
+    result = await client._guard_output_event(_whole_message_event(category, '这是敏感词内容'))
+
+    assert result is not None
+    assert '敏感词' not in result.message['msg'], f'{category} bypassed the guard: {result.message["msg"]!r}'
+    # '敏感词' is three characters, so the mask is three asterisks.
+    assert result.message['msg'] == '这是***内容'
+
+
+@pytest.mark.parametrize(
+    'category',
+    ['output_msg', 'output_with_input_msg', 'output_with_choose_msg'],
+)
+async def test_whole_message_frames_are_blocked_when_action_is_block(monkeypatch, category):
+    """A block-mode hit on a whole-message frame must drop the offending text,
+    not just mask it."""
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'block'}))
+    monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
+
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    client = _workflow_client(guard)
+
+    result = await client._guard_output_event(_whole_message_event(category, '这是敏感词内容'))
+
+    assert result is not None
+    # Assert on the SURROUNDING text, not on the word itself: the close-out
+    # phrase is '命中敏感词', which legitimately contains it. What must not
+    # survive is the answer's own text after the cut.
+    assert '内容' not in result.message['msg'], f'{category} leaked through block mode: {result.message["msg"]!r}'
+
+
+async def test_control_frames_are_not_rewritten(monkeypatch):
+    """The guard must stay off frames that carry no answer text. Running it over
+    control frames would waste work and risk rewriting a `msg` that is not an
+    answer."""
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
+    monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
+
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    client = _workflow_client(guard)
+
+    event = ChatResponse(type='over', category='node_run', message={'unique_id': 'u', 'node_id': 'n', 'msg': '这是敏感词'})
+    result = await client._guard_output_event(event)
+
+    assert result.message['msg'] == '这是敏感词', 'a control frame was rewritten'

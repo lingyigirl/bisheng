@@ -17,6 +17,23 @@ from bisheng.worker.workflow.redis_callback import RedisCallback
 from bisheng.worker.workflow.tasks import continue_workflow, execute_workflow, workflow_stateful_worker
 from bisheng.workflow.common.workflow import WorkflowStatus
 
+# Event categories that carry user-visible text as ONE complete string rather
+# than as a stream of deltas. The worker emits all three from `on_output_msg` /
+# `on_output_input` / `on_output_choose` with `type='over'`.
+#
+# Listed explicitly rather than "anything that is not stream_msg" on purpose:
+# the workflow event enum also contains node_run, guide_word, user_input,
+# close and error, which carry no guardable answer text, and running the
+# guard over control frames would both waste work and risk re-writing a frame
+# whose `msg` is not an answer.
+WHOLE_MESSAGE_CATEGORIES = frozenset(
+    {
+        WorkflowEventType.OutputMsg.value,
+        WorkflowEventType.OutputWithInput.value,
+        WorkflowEventType.OutputWithChoose.value,
+    }
+)
+
 
 class WorkflowClient(BaseClient):
     def __init__(
@@ -195,13 +212,35 @@ class WorkflowClient(BaseClient):
         guard = self.output_guard
         if guard is None:
             return event
-        event_type = getattr(event, 'type', None)
-        if event_type not in ('stream', 'end', 'end_cover'):
-            return event
-        if getattr(event, 'category', None) != WorkflowEventType.StreamMsg.value:
-            return event
+
         message = getattr(event, 'message', None)
         if not isinstance(message, dict) or not isinstance(message.get('msg'), str):
+            return event
+
+        category = getattr(event, 'category', None)
+        event_type = getattr(event, 'type', None)
+
+        # Whole-message frames. Three node types emit user-visible text as ONE
+        # complete string rather than a stream of deltas (`on_output_msg` /
+        # `on_output_input` / `on_output_choose` in the worker callback, all with
+        # type='over'), and they used to be dropped here unguarded: the category
+        # check admitted only `stream_msg` and the type check only
+        # stream/end/end_cover, so BOTH had to be relaxed for text to reach the
+        # user unchecked. Measured before the fix: a cached or non-streaming LLM
+        # node's output arrived at the client verbatim.
+        #
+        # They are not deltas, so they get the non-streaming treatment (feed the
+        # whole string, then read back the guarded text) rather than the
+        # per-chunk one.
+        if category in WHOLE_MESSAGE_CATEGORIES and event_type not in ('stream',):
+            result = await guard(self.chat_id, message['msg'])
+            guarded = await guard.full_text()
+            new_message = {**message, 'msg': guarded if guarded else result.safe_text}
+            return self._rewrite(event, new_message)
+
+        if event_type not in ('stream', 'end', 'end_cover'):
+            return event
+        if category != WorkflowEventType.StreamMsg.value:
             return event
         if event_type == 'stream':
             if self._output_blocked:
@@ -211,8 +250,17 @@ class WorkflowClient(BaseClient):
                 self._output_blocked = True
             new_message = {**message, 'msg': result.safe_text}
         else:
-            await guard(self.chat_id, '')  # flush the mask-mode hold-back tail
             new_message = {**message, 'msg': await guard.full_text()}
+        return self._rewrite(event, new_message)
+
+    @staticmethod
+    def _rewrite(event, new_message: dict):
+        """Return a copy of ``event`` carrying ``new_message``.
+
+        Handles both call shapes this method is reached with (a pydantic
+        ``ChatResponse`` and a plain dict), and returns the event unchanged when
+        it is neither -- better an unguarded frame than a crash on the chat path.
+        """
         if hasattr(event, 'model_copy'):
             return event.model_copy(update={'message': new_message})
         if isinstance(event, dict):
