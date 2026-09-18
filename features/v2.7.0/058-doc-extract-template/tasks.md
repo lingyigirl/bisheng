@@ -12,9 +12,9 @@
 | spec.md | ✅ 已评审 | 2026-09-17 编写，经 7 轮 /sdd-review spec（46 条 AC）；第 5 轮做过结构重构（§2 调用模式 + §3.1 前置校验表） |
 | design.md | ✅ 已评审 | 2026-09-17 编写，经 3 轮 /sdd-review design（Constitution Check C1–C7 通过）；14 决策 + 15 坑 |
 | tasks.md | ✅ 已拆解 | 2026-09-17 拆解完成：37 个任务 / 9 个 Wave。**拆解期声称的「46 条 AC 全覆盖」经 code review 核实不属实** —— 至少 AC-08、AC-13、AC-18、AC-20、AC-24、AC-30、AC-35 当时无测试（其中 AC-24 是**实现本身不可达**，已修）。缺口见下「已知缺口」 |
-| 实现 | ✅ 完成 | **37 / 37**。Wave 0~F（后端全部）+ Wave G（前端全部）。T-35 经实测确认**无需写代码**（见下）。**158 单测**。code review 发现的两条 HIGH + 4 条 MEDIUM 已修并各有回归测试 |
+| 实现 | ✅ 完成 | **37 / 37**。Wave 0~F（后端全部）+ Wave G（前端全部）。T-35 经实测确认**无需写代码**（见下）。**174 单测**（2026-09-18 由 158 补至 174，闭合本条 e2e/test-coverage 缺口）。code review 发现的两条 HIGH + 6 条 MEDIUM 已修并各有回归测试 |
 | e2e-test | ⚠️ 部分执行 | `test/e2e/test_e2e_f058_doc_extract.py`：**5 passed / 3 skipped / 0 failed**。3 条跳过需要租户配置 `doc_extract_llm` 槽位（见「已知缺口」）—— 这是设计内行为，配置后自动生效，无需改测试 |
-| code-review | 🔲 待执行 | — |
+| code-review | ✅ 已执行 | 7 维度全量评审，初判 NEEDS_FIX；2 HIGH + 6 MEDIUM 已修。报告：[code-review-report.md](./code-review-report.md)（含 2026-09-18 收口更新） |
 
 ---
 
@@ -30,8 +30,8 @@
 ### 已知缺口
 
 - **`doc_extract_llm` 槽位在本环境未配置** —— e2e 的 3 条抽取用例因此跳过，且任何真实抽取请求会按 spec §3.1 序号 3 返回 **11608**。这是设计内行为（非缺陷）；配置后 3 条用例自动生效，无需改测试。**槽位无写入端点**，需由租户模型配置流程或按 `{"model_id": N}` 的 JSON 写入 `tenant_system_model_config`。
-- **M-2b 自动判定编排路径（AC-18/AC-20）无测试** —— 分类服务本身有测试，但「分类后如何接着抽取」这一编排无覆盖。
-- **记录列表的过滤与翻页无测试**（template_id / status / 时间范围 / cursor）—— DAO、API、e2e 三层皆缺。
+- ~~**M-2b 自动判定编排路径（AC-18/AC-20）无测试**~~ —— **2026-09-18 已闭合**：3 条用例（分类命中即用该模板 / 显式 `doc_type` 不触发分类 / 分类失败按前置校验拒绝且不落记录），落在 `test_extraction_service.py`。
+- ~~**记录列表的过滤与翻页无测试**（template_id / status / 时间范围 / cursor）~~ —— **2026-09-18 已闭合**：11 条用例，落在新增的 `test_record_query.py`。语句对着**真实模型编译**（只伪造 session），故被测的 SQL 即会跑的 SQL；重点覆盖游标排他性（写成 `<=` 会每页重发同一行、翻页永不终止）与 limit+1 探测行。
 - **并发建同标识模板可产生双活** —— 库层无唯一约束（设计使然，见决策 9），service 层校验存在 TOCTOU 窗口。修它需要在「软删后标识可复用」与「库层唯一」之间做取舍，属独立决策项。
 - **design 仍有少量失真未清**（`docs/architecture/` 引用、部分 §6 条目），不影响实现。
 

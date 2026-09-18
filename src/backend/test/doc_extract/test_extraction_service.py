@@ -82,13 +82,17 @@ class _ModelPatches:
     def __enter__(self):
         self._factory.start()
         self._slot.start()
-        # `.start()` returns the mock itself; keep that, not the _patch handle,
-        # so tests can assert on `await_count`.
+        # Keep BOTH: the mock for assertions (`await_count`), and the _patch
+        # handle because that is the only object whose .stop() actually
+        # restores the original. Calling .stop() on the mock itself is a silent
+        # no-op, which leaked this patch into every later test in the file --
+        # tests passed alone and failed in a full run.
+        self._invoke_patch = self.invoke
         self.invoke = self.invoke.start()
         return self
 
     def __exit__(self, *exc):
-        self.invoke.stop()
+        self._invoke_patch.stop()
         self._slot.stop()
         self._factory.stop()
         return False
@@ -482,3 +486,92 @@ async def test_invalid_trial_definition_rejected(tmp_path):
                 'render_template': '{{not_a_field}}',
                 'description': 'd',
             })
+
+
+# --- M-2b: auto-classification orchestration (AC-18 / AC-20) ----------------
+#
+# This path had no coverage at all: the classifier has its own tests, but
+# nothing exercised "classify, then extract with the template the classifier
+# picked". That is where AC-18 ("a confident match uses the matched template")
+# actually lives.
+
+
+async def test_auto_classification_uses_the_matched_template(tmp_path):
+    """AC-18: with no doc_type given, the template the classifier returns is the
+    one extraction runs against."""
+    doc = tmp_path / 'x.pdf'
+    doc.write_bytes(b'x' * 10)
+
+    matched = type('T', (), {
+        'id': 77, 'doc_type': 'business_license', 'name': '营业执照',
+        'description': 'd', 'field_schema': SCHEMA,
+        'render_template': '名称：{{company_name}}', 'enabled': 1,
+        'is_deleted': 0, 'tenant_id': 1,
+    })()
+    classified = type('C', (), {'doc_type': 'business_license', 'confidence': 0.93, 'template': matched})()
+
+    model = _patch_model('{"company_name": "广西某某有限公司"}')
+    with (
+        _patch_ok_parse(), model,
+        patch(f'{SERVICE}.ClassifierService.aclassify', new_callable=AsyncMock,
+              return_value=classified) as classify,
+        patch(f'{SERVICE}.DocExtractRunDao.acreate', new_callable=AsyncMock) as record,
+    ):
+        # No doc_type -> M-2b.
+        result = await _run(file_path=str(doc))
+
+    classify.assert_awaited_once()
+    assert result.ok is True
+    assert result.determined_by == 'auto', 'the run must record that it was classified'
+    assert result.confidence == pytest.approx(0.93), 'the classifier confidence must survive'
+    assert result.template['id'] == 77, 'must use the matched template, not another'
+
+    payload = record.await_args.args[0]
+    assert payload['determined_by'] == 'auto'
+    assert payload['confidence'] == pytest.approx(0.93)
+    assert payload['template_id'] == 77
+
+
+async def test_explicit_type_skips_classification(tmp_path):
+    """AC-20: an explicit doc_type must NOT trigger a classifier call -- that is
+    the whole point of the explicit path."""
+    doc = tmp_path / 'x.pdf'
+    doc.write_bytes(b'x' * 10)
+
+    model = _patch_model('{"company_name": "A"}')
+    with (
+        _patch_ok_parse(), model,
+        patch(f'{SERVICE}.ClassifierService.aclassify', new_callable=AsyncMock) as classify,
+        patch(f'{SERVICE}.DocExtractTemplateDao.aget_by_doc_type', new_callable=AsyncMock,
+              return_value=type('T', (), TEMPLATE)()),
+        patch(f'{SERVICE}.DocExtractRunDao.acreate', new_callable=AsyncMock) as record,
+    ):
+        result = await _run(file_path=str(doc), doc_type='business_license')
+
+    classify.assert_not_awaited()
+    assert result.determined_by == 'explicit'
+    assert result.confidence is None
+    assert record.await_args.args[0]['determined_by'] == 'explicit'
+
+
+async def test_classifier_failure_propagates_before_extraction(tmp_path):
+    """A classification failure is a precheck rejection (spec §3.1 row 7), so it
+    must not be recorded as an extraction failure, and the model must never be
+    asked to extract."""
+    from bisheng.common.errcode.doc_extract import DocExtractContentFetchError
+
+    doc = tmp_path / 'x.pdf'
+    doc.write_bytes(b'x' * 10)
+
+    model = _patch_model()
+    with (
+        _patch_ok_parse(), model,
+        patch(f'{SERVICE}.ClassifierService.aclassify', new_callable=AsyncMock,
+              side_effect=DocExtractContentFetchError(msg='classify boom')),
+        patch(f'{SERVICE}.DocExtractRunDao.acreate', new_callable=AsyncMock) as record,
+    ):
+        with pytest.raises(DocExtractContentFetchError):
+            await _run(file_path=str(doc))
+
+    record.assert_not_awaited()
+    model.invoke.assert_not_awaited()
