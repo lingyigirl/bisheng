@@ -86,6 +86,28 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
             if out_token:
                 self.stream_queue.put({'type': 'answer', 'content': out_token})
 
+    async def flush_output_guard(self) -> str:
+        """Release the hold-back tail; return ONLY the part not yet emitted.
+
+        Called when the stream ends early (a user hitting stop) so the withheld
+        suffix is not lost. Returns the tail rather than the guard's whole
+        accumulated text, because the already-emitted deltas have gone into
+        `stream_queue` and would otherwise be persisted twice.
+
+        Empty string when there is no guard, nothing is held, or the round was
+        blocked -- a blocked round has already closed out with its phrase and
+        holds nothing back.
+        """
+        guard = self._output_guard
+        if guard is None or self._output_guard_blocked:
+            return ''
+        try:
+            flushed = await guard(self.chat_id, '')
+        except Exception:
+            logger.opt(exception=True).warning('output guard flush failed; tail dropped')
+            return ''
+        return getattr(flushed, 'safe_text', '') or ''
+
     def _ensure_output_guard(self):
         """Lazily build the per-conversation output guard (F056).
 

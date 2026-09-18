@@ -381,3 +381,148 @@ async def test_close_out_phrase_is_emitted_again_after_reset(monkeypatch):
 
     text = await guard.full_text()
     assert text.count('命中敏感词') == 1, f'a fresh round did not close out correctly: {text!r}'
+
+
+# --- M-新6: each streaming node's answer is its own ---------------------------
+
+
+async def _drive_node(client, node_id, deltas, final):
+    """Stream one node's deltas then its `end` frame; return the end frame's msg."""
+    for delta in deltas:
+        await client._guard_output_event(
+            ChatResponse(type='stream', category='stream_msg',
+                         message={'msg': delta, 'node_id': node_id, 'unique_id': 'u'})
+        )
+    end = await client._guard_output_event(
+        ChatResponse(type='end', category='stream_msg',
+                     message={'msg': final, 'node_id': node_id, 'unique_id': 'u'})
+    )
+    return end.message['msg']
+
+
+async def test_two_streaming_nodes_do_not_share_an_answer(monkeypatch):
+    """A flow with two streaming LLM nodes must produce two separate answers.
+
+    Measured before the fix: node B's `end` frame came out as '[A1][A2][B1][B2]',
+    so the second bubble showed the first node's answer prepended to its own.
+    The guard accumulates deltas into one answer and only reset per RUN, not per
+    node.
+    """
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
+    monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
+
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    client = _workflow_client(guard)
+
+    first = await _drive_node(client, 'nodeA', ['甲一', '甲二'], '甲final')
+    second = await _drive_node(client, 'nodeB', ['乙一', '乙二'], '乙final')
+
+    assert first == '甲一甲二', f'node A frame wrong: {first!r}'
+    assert second == '乙一乙二', f'node B frame carried node A: {second!r}'
+
+
+async def test_a_single_streaming_node_still_accumulates(monkeypatch):
+    """The per-node reset must not break the ordinary case it sits in front of:
+    one node, several deltas, one answer."""
+    monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
+    monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
+
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    client = _workflow_client(guard)
+
+    assert await _drive_node(client, 'nodeA', ['一', '二', '三'], 'final') == '一二三'
+
+
+# --- M-新7: an interrupted stream must not lose the hold-back tail ------------
+
+
+async def test_flush_output_guard_releases_only_the_tail():
+    """Returns the withheld suffix, NOT the guard's whole accumulated text.
+
+    The already-emitted deltas have gone into `stream_queue` and the stop path
+    persists that queue; returning everything here would persist them twice.
+    """
+    guard = _OutputGuard(results={'': OutputGuardResult(safe_text='参考')})
+    handler = AsyncStreamingLLMCallbackHandler(
+        websocket=FakeWebSocket(), flow_id='a', chat_id='c', user_id=7, stream_queue=None
+    )
+    handler._output_guard = guard
+
+    assert await handler.flush_output_guard() == '参考'
+
+
+async def test_flush_output_guard_is_empty_without_a_guard():
+    """No guard means nothing was withheld; the caller must not append junk."""
+    handler = AsyncStreamingLLMCallbackHandler(
+        websocket=FakeWebSocket(), flow_id='a', chat_id='c', user_id=7, stream_queue=None
+    )
+    handler._output_guard = None
+
+    assert await handler.flush_output_guard() == ''
+
+
+async def test_flush_output_guard_is_empty_after_a_block():
+    """A blocked round has already closed out with its phrase. Releasing a tail
+    there would append text after the close-out."""
+    guard = _OutputGuard(results={'': OutputGuardResult(safe_text='不该出现')})
+    handler = AsyncStreamingLLMCallbackHandler(
+        websocket=FakeWebSocket(), flow_id='a', chat_id='c', user_id=7, stream_queue=None
+    )
+    handler._output_guard = guard
+    handler._output_guard_blocked = True
+
+    assert await handler.flush_output_guard() == ''
+
+
+def test_stop_path_flushes_the_guard_and_queues_the_tail():
+    """The stop path must flush the guard and persist what it releases.
+
+    Asserted on the source rather than by driving `stop_handle_message`: building
+    a real `ChatClient` needs a Request, a websocket and a login user, and the
+    property being protected is the WIRING -- that the call exists at all. A
+    behavioural test would still pass if the call were removed and its result
+    discarded, which is the failure this guards.
+
+    Measured before the fix: an interrupted answer lost its last characters,
+    and in mask mode the withheld suffix is exactly where a matched word hides.
+    """
+    import ast
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / 'bisheng/common/chat/client.py'
+    ).read_text(encoding='utf-8')
+
+    stop_fn = None
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == 'stop_handle_message':
+            stop_fn = node
+            break
+    assert stop_fn is not None, 'stop_handle_message not found in common/chat/client.py'
+
+    # The call is `getattr(callback, 'flush_output_guard', None)`, so the name
+    # is a string constant rather than an Attribute. Match both spellings so a
+    # future refactor to a direct call does not silently defeat this check.
+    called = any(
+        (isinstance(n, ast.Attribute) and n.attr == 'flush_output_guard')
+        or (isinstance(n, ast.Constant) and n.value == 'flush_output_guard')
+        for n in ast.walk(stop_fn)
+    )
+    assert called, (
+        'stop_handle_message does not call flush_output_guard: the output guard\'s '
+        'hold-back tail is dropped when a user stops the stream'
+    )
+
+    # `<something>.stream_queue.put(...)` -- the receiver is n.func.value.
+    queued = any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == 'put'
+        and isinstance(n.func.value, ast.Attribute)
+        and n.func.value.attr == 'stream_queue'
+        for n in ast.walk(stop_fn)
+    )
+    assert queued, (
+        'the flushed tail is not put back on the queue, so it never reaches the '
+        'persistence step below it'
+    )

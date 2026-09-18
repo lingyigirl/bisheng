@@ -328,6 +328,34 @@ class ChatClient:
         # Processing function before abort
         thread_pool.cancel_task(self.task_ids[:-1])
 
+        # Flush the OUTPUT GUARD's hold-back tail before draining the queue.
+        #
+        # Mask mode withholds the last few characters while they could still
+        # extend into a pattern, and a user who hits stop ends the stream before
+        # anything flushes them. Measured: an answer that streamed as
+        # '这是正常内容最后' should have persisted '这是正常内容最后参考' -- the
+        # held characters were dropped, and in mask mode they take any matched
+        # word inside them with them.
+        #
+        # Note which guard: the streaming callback owns its OWN guard instance
+        # (`_ensure_output_guard` in api/v1/callback.py), and that is the one
+        # holding the tail. `self.output_guard` is a different object that this
+        # path never feeds, so flushing it here would be a no-op that looks
+        # like a fix.
+        flusher = getattr(self.gpts_async_callback, 'flush_output_guard', None)
+        if flusher is not None:
+            try:
+                flushed = await flusher()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    'output guard flush failed on stop; persisting what was streamed'
+                )
+                flushed = ''
+            if flushed:
+                # The withheld suffix belongs at the END of what was streamed,
+                # which is where queueing it last puts it.
+                self.stream_queue.put({'type': 'answer', 'content': flushed})
+
         # Write streaming output to database
         answer = ""
         reasoning_answer = ""

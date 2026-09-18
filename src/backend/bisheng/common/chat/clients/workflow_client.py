@@ -58,6 +58,10 @@ class WorkflowClient(BaseClient):
         # F056: once the output policy blocks, remaining stream frames are dropped
         # until the next run resets the guard.
         self._output_blocked = False
+        # F056: which node's deltas are currently accumulating. A flow can have
+        # several streaming LLM nodes, and each one's answer must start from an
+        # empty accumulation -- see `_guard_output_event`.
+        self._node_stream_id: str | None = None
 
     async def close(self, force_stop=False):
         # If the user is not actively stopping, setwsTurn the flag off, but there is no need to abortworkflowExecution
@@ -195,6 +199,7 @@ class WorkflowClient(BaseClient):
     async def _reset_output_guard(self):
         """Start a fresh guard round before each new run."""
         self._output_blocked = False
+        self._node_stream_id = None
         if self.output_guard is not None and hasattr(self.output_guard, 'reset'):
             await self.output_guard.reset()
 
@@ -242,14 +247,40 @@ class WorkflowClient(BaseClient):
             return event
         if category != WorkflowEventType.StreamMsg.value:
             return event
+
+        node_id = message.get('node_id')
+
         if event_type == 'stream':
             if self._output_blocked:
                 return None
+            # A node's deltas accumulate into ONE answer, so the first delta of
+            # a new node must start from an empty accumulation. Without this,
+            # a flow with two streaming LLM nodes rewrote node B's final frame
+            # as A+B -- measured, node B's `end` frame came out
+            # '[A1][A2][B1][B2]' -- so the second bubble showed the first
+            # node's answer prepended to its own.
+            #
+            # Keyed on the node id because that is what the frame carries and
+            # what "a different answer" means here. `self._node_stream_id`
+            # survives across deltas; the run-level reset in
+            # `_reset_output_guard` still handles a fresh run.
+            if node_id is not None and node_id != self._node_stream_id:
+                if self._node_stream_id is not None and hasattr(guard, 'reset'):
+                    await guard.reset()
+                self._node_stream_id = node_id
             result = await guard(self.chat_id, message['msg'])
             if result.blocked:
                 self._output_blocked = True
             new_message = {**message, 'msg': result.safe_text}
         else:
+            # `full_text()` flushes the hold-back tail (H4); the frame becomes
+            # this node's guarded answer, not the whole run's.
+            #
+            # `_node_stream_id` deliberately keeps its value here. Clearing it
+            # would make the NEXT node's first delta compare against None, and
+            # the reset is guarded on having a previous id -- so the second
+            # node would inherit the first one's accumulation, which is the bug
+            # this tracking exists to prevent.
             new_message = {**message, 'msg': await guard.full_text()}
         return self._rewrite(event, new_message)
 
