@@ -5,6 +5,13 @@
 **方法**: 4 个并行审查 agent，覆盖 skill 定义的 7 个维度
 **日期**: 2026-09-16
 
+> **2026-09-18 补审说明（必读）**
+>
+> 本报告写于 2026-09-16 15:25，但此后**三个文件在 15:49–15:51 被继续修改**，并随 `ed68ccfdf`（16:45 起）一并提交：
+> `knowledge_department_service.py`、`test_f057_my_departments.py`、`useKnowledgeDepartmentFilter.ts`。
+> 因此本报告**未覆盖这三个文件的最终状态**，其「49 passed」也已过期（现为 **52**）。
+> 补审结论见文末 §补审（2026-09-18）——**结论：无新增 HIGH/MEDIUM，三个文件通过**。
+
 ---
 
 ## Summary
@@ -120,3 +127,68 @@
 范围选择上，`--base feat/2.7.0/045-minimax-tts-adapter` 会包含 448 个已提交文件（整个 v2.7.0 累积），无法定位 F057；F057 全部改动未提交，故用 `HEAD` 作 base。
 
 4 个 agent 并行覆盖 7 维度。**审查确实抓出了实质缺陷**——尤其作用域方向反转（会扩大授权面）与 E2E 类型常量错位（导致 AC-21 台账失实），这两类都是单测/自查难以发现的。
+
+---
+
+## 补审（2026-09-18）
+
+### 范围
+
+三个在报告之后（15:49–15:51）被修改、并随 `ed68ccfdf` 提交的文件：
+
+| 文件 | 修改时间 |
+|---|---|
+| `src/backend/bisheng/knowledge/domain/services/knowledge_department_service.py` | 15:50 |
+| `src/backend/test/knowledge/test_f057_my_departments.py` | 15:51 |
+| `src/frontend/platform/src/pages/KnowledgePage/useKnowledgeDepartmentFilter.ts` | 15:49 |
+
+### 前置核验：原报告的 6 项修复**均已在最终代码中确认**
+
+| 修复 | 核验方式 | 结果 |
+|---|---|---|
+| 作用域方向 | `knowledge_department_service.py:113` → `any(target_path.startswith(path) for path in actor_paths)` | ✅ 且注释完整解释了方向反转为何会扩大授权面 |
+| E2E 类型常量 | `test_e2e_f057_knowledge_department.py:40-41` → `TYPE_PRIVATE=2` / `TYPE_SPACE=3` | ✅ |
+| `department_stats` 丢弃零值 | 返回处 `if count` 过滤，注释说明「存在性 + 至少一个库」双重泄漏 | ✅ |
+| 缓存失效 | `_invalidate_department_members` 在指派（`:129`）与清空（`:298`）两路径均调用 | ✅ |
+| 清理移至提交后 | `apurge_department` 中 `_clear_knowledge_ownership` 位于 `session.commit()` 之后，注释解释否则会出现「部门存活但库已清空」 | ✅ |
+| 死代码消除 | `department_chain_for_paths` 现有调用方 `knowledge_service.py:341` | ✅ |
+
+### 新增发现：无
+
+**维度 1 边界条件 / 维度 2 权限 / 维度 3 并发 —— 补审后维持 PASS。**
+
+重点复核了三处高风险逻辑，均**无缺陷**：
+
+**① 跨租户指派是否可被绕过** —— 这是我本次最担心的口子。`assign_department` 中 `DepartmentDao.aget_by_id()` 无显式租户谓词，看似可指向他租户部门。**核实为安全**：`bisheng.database.models.department` 在 `tenant_filter.py:48` 的 `_TENANT_AWARE_MODEL_MODULES` 列表内，SELECT 由 `do_orm_execute` 自动注入租户条件，`aget_by_id` 走的是普通 ORM SELECT。
+
+**② `clear_department_ownership` 不做租户作用域** —— 代码注释（`:300-302`）给出的理由是「`department.id` 是全局唯一主键，按它匹配已天然租户精确；且依赖租户过滤器反而不安全，因为 `do_orm_execute` 只拦 SELECT，UPDATE 会被静默放过」。**该论证成立**，且记录了一个真实的反直觉坑（过滤器不覆盖 UPDATE），与 design 坑一致。
+
+**③ 权限路径 fail-closed** —— `assign_department` 的拒绝分支全部 `return (False, ...)`；`_has_manage_permission` 走 `KnowledgePermissionService.get_effective_permission_ids_async`（细粒度求值，尊重绑定的关系模型）。未见 fail-open 路径。
+
+**④ 路径前缀逻辑** —— 尾斜杠约定（`/1/2/` 不会误配 `/1/20/`）在 `department_stats` 的上卷与 `assign_department` 的作用域判断中**均成立**。
+
+### 3 条新增测试的成色 —— 有效，非空壳
+
+`test_f057_my_departments.py` 由原报告的 8 条增至 11 条。其中 `test_node_shape_matches_the_children_endpoint`（`:144`）是关键护栏：它锁定树节点字段集与 `GET /departments/children` 一致，防止两处节点形状漂移。
+
+**实测其有效性**（本项目 F058 报告确立的方法：不看测试是否绿，看破坏实现后它是否变红）：
+
+```
+临时将 department_service.py 的 _dept_node_dict 中 "has_children" 改名
+→ test_node_shape_matches_the_children_endpoint  FAILED ✅
+（改动已完整还原，git status 干净，11 passed 复核）
+```
+
+护栏真实有效。另两条为 `search_departments` 相关（`test_matches_below_a_collapsed_node_are_found` / `test_truncation_is_reported`），断言具体行为而非存在性。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| F057 单测（6 个文件） | **52 passed**（原报告 49） |
+| 文件还原后复核 | `git status` 干净，11 passed |
+| 全目录混合跑 | 106 failed 属需中间件的无关模块（space service / openfga / f006），F057 子集全绿 |
+
+### 补审结论
+
+**PASS。** 原报告结论（PASS_WITH_WARNINGS）维持不变，无需升级。报告写就后的三个文件改动均为**加固性质**（补测试护栏、补注释），未引入新缺陷。原报告「保留未修」的 6 项仍按 design §8 处置，本次补审未新增。

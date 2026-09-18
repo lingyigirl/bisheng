@@ -12,7 +12,9 @@
 | spec.md | ✅ 已评审 | 2026-09-07 /sdd-review spec 通过（两处 low 已修复后复审） |
 | design.md | ✅ 已评审 | 2026-09-07 /sdd-review design 通过（决策 3 HTTP 流式输出锚点 + §7 验证入口已补） |
 | tasks.md | ✅ 已拆解 | 2026-09-07 拆解完成：19 个任务 / 5 个 Wave，18 条 AC 全覆盖 |
-| 实现 | ✅ 完成 | 20 / 20 完成。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
+| 实现 | ✅ 完成 | 20 / 20 完成。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
+| e2e-test | ⚠️ 部分执行 | 自动化 e2e 覆盖 AC-01/02/03/06/07/08/15/17（需活后端，CI 跑）。**AC-05/10/11/12/14 的真实 ws/流式链路验证落在 [e2e-checklist.md](./e2e-checklist.md) 的 7 项手动清单，状态仍为「待执行」** —— 见 code review 的 H1 |
+| code-review | ✅ 已执行 | 2026-09-18。代码维度（边界/权限/并发/泄漏/风格）**全通过**；跨分片匹配与 mask 泄漏经穷举实测无误。**H1**：核心 AC 的真实链路验证依赖未执行的手动清单；**H2**：design 未同步 F059 两层现状（**已回写**）。报告：[code-review-report.md](./code-review-report.md) |
 
 ---
 

@@ -8,7 +8,7 @@
 
 **关联**: [spec.md](./spec.md) · [tasks.md](./tasks.md)（待设计评审后编写）
 **版本**: v2.7.0
-**最后更新**: 2026-09-07（初稿，待 /sdd-review design 评审）
+**最后更新**: 2026-09-18（**同步 F059 两层检测现状**：§4.2 `source` 字段与行粒度、§4.3 双 matcher、§5 坑 13-15、§6.1 双端点与脱敏口径；见修订历史）
 
 ---
 
@@ -126,14 +126,15 @@
 | `SensitiveWordBusinessType` | Enum（`schemas.py:9`）：`knowledge_space_file_parse` / `channel_article` → 新增 `chat_input` / `chat_output` | 策略按业务场景分表（同一张表不同行） | 策略 API、检测点 |
 | `extra_config`（chat 场景新增语义） | JSON：`{"action": "block"|"mask", "case_sensitive": bool, "max_hits": int}` | 一期动作语义放此，避免迁移（决策 4）；输出方向默认 `mask`，输入方向固定拦截 | 检测点、设置页 |
 | 流式分片 | `send_response(category, msg_type, message, ...)` 中 `msg_type='stream'` 的文本 payload；最终回复 `msg_type='end'` | 输出检测的增量输入单元 | ChatClient 各调用方 |
-| `sensitive_word_hit_log`（新表） | tenant_id / business_type / direction(input|output) / flow_id / chat_id / user_id / hits(JsonType) / action / create_time | 命中监测日志，仅摘要不存原文 | 平台日志页、审计 |
+| `sensitive_word_hit_log`（新表） | tenant_id / business_type / direction(input\|output) / flow_id / chat_id / user_id / hits(JsonType) / action / create_time / **source（F059 新增，String(16)，`tenant`\|`platform`，server_default `'tenant'`；NULL 按 `tenant` 处理——只可能来自发版中途的旧进程，反向兜底会抹掉租户有权看到的词）** | 命中监测日志，仅摘要不存原文（INV-11） | 平台日志页、审计 |
+| 命中日志的**行粒度** | **F059 起每层各写一行**：同一分片同时命中两层时产生**两行**（各自 `source`），而不是合并成一行归给「胜出层」——合并会把另一个层的词从该层的视图里抹掉 | 检测点、日志页 |
 
 ### 4.3 关键模块职责
 
 | 模块 / 文件 | 职责 | 不做什么 |
 |---|---|---|
 | `sensitive_word/domain/services/sensitive_word_policy_service.py` | 策略读写、词表解析、自动机缓存、检测（新增 `build_matcher`/`WordMatcher` 门面，`check_texts` 重构复用同一构建链） | 不做对话链路感知（只认 tenant+business_type） |
-| `sensitive_word/domain/services/chat_guard.py` | 对话围栏门面：`check_chat_input` / `start_output_guard` / `check_output_chunk`（block/mask 语义、跨分片缓冲、命中日志触发） | 不做 ws/HTTP 埋点（埋点在调用方，Wave 2） |
+| `sensitive_word/domain/services/chat_guard.py` | 对话围栏门面：`check_chat_input` / `start_output_guard` / `check_output_chunk`（block/mask 语义、跨分片缓冲、命中日志触发）。**F059 起为两层**：`OutputGuardState` 同时持有租户层与平台层**两套** matcher / `tail_state` / `last_counted_pos`（字段见 `chat_guard.py:72-78`），两层各自扫描、各自计数、各自写一行命中日志（靠 `source` 区分），判定时平台层优先 | 不做 ws/HTTP 埋点（埋点在调用方，Wave 2） |
 | `sensitive_word/domain/services/ac_automaton.py` | AC 多模式匹配（新增带状态增量匹配 `find_all_matches` + `in_progress` 中间态判定） | 不读库、不管策略 |
 | `common/chat/clients/base.py` | 消息分发（输入检测埋点）、流式发射（输出检测埋点） | 不定义策略语义 |
 | `open_endpoints/api/endpoints/assistant.py` | `/api/v2/chat/completions` 输入检测埋点 + 400/11201 返回；同步/流式输出检测埋点（决策 3） | 不改 ws 链路 |
@@ -158,6 +159,9 @@
 | 10 | ws 消息分发里 `action` 有多种（init_data / check_status / input / stop），用户文本只出现在部分动作的 data 里 | 对控制帧做检测会误拦正常连接流程 | 只对用户文本消息 payload 检测（input 动作的 data 与首次消息），控制帧直通 |
 | 11 | 租户自动过滤器的 `do_orm_execute` 会把 SELECT 包装成 **Row 元组**（字段名为实体名），`session.exec(select(Model))` 返回的不是实体 | 直接访问 `row.id` 抛 KeyError 'id'（e2e 实测 500），行取数全线崩溃 | `hit_log.py` alist 用 `row[0]` 解包实体（e2e 验证） |
 | 12 | `api/v1/callback.py` 顶层导入 `api/services/guardrail.py` 会形成 import 环：guardrail → common/chat/__init__ → client.py → callback → guardrail | 应用启动即 ImportError（实测后端起不来） | callback 在 `_ensure_output_guard` 内惰性导入工厂打断环 |
+| 13 | **mask 的打码与计数必须用两份不同的匹配列表**（F059 两层重构引入）：`*_all` = 本缓冲区**全部**匹配（供打码与 emit 边界判定）、`*_matches` = 仅水位线**之后**的匹配（供计数/写日志）。一个词可能上一分片已计数、被扣在 `tail` 里，本分片重扫时**又**被找到——它已过水位线故不在计数列表里，但**仍必须出现在打码列表里** | 用计数列表去打码 → 该词**原样吐出**（实测：F056 原本传的是未过滤列表，F059 重构时误传过滤后列表，成为静默泄漏回归） | `chat_guard.py:311` 起注释写明「conflating them is a leak」，两列表在 `:323`（平台层）与 `:333`（租户层）分别构造 |
+| 14 | **block 截断点取两层中最早的命中**：若平台层命中但租户层同分片也命中，只截到平台词位置会把**租户敏感内容原样吐出**（租户策略在该路径上静默失效） | 平台层启用后租户围栏出现漏洞 | `chat_guard.py:365` 的 `first_start = min(... for pos, word, _ in all_seen)`，注释指明跨两层的取最早 |
+| 15 | `state.auto_reply` 在 block 时被**重写**为胜出层的话术（平台命中则用平台话术），因为 API 层守卫读的是 `state.auto_reply` | 平台拦截却用租户话术收尾，话术与判定来源不符 | `chat_guard.py:375-377` |
 
 ---
 
@@ -169,7 +173,8 @@
 |---|---|---|
 | `SensitiveWordBusinessType.chat_input / chat_output` 枚举扩展 + `extra_config.action` 语义 | Python API / 配置口径 | 平台设置页、检测点、二期语义 provider |
 | `GET/PUT /api/v1/sensitive-word-policies/{business_type}`（既有端点，枚举扩展） | HTTP API | platform 前端「大模型安全围栏」设置页（复用 `controllers/API/sensitiveWordPolicy.ts` 模式） |
-| `GET /api/v1/sensitive-word-hit-logs`（新增，方向/应用/时间筛选 + `PageData` 分页，租户管理员） | HTTP API | platform 前端「命中日志」页 |
+| `GET /api/v1/sensitive-word-hit-logs`（新增，方向/应用/时间筛选 + `PageData` 分页，租户管理员）。**F059 起返回值含 `source` 字段**，且 `source=platform` 的行其 `hits` 在**服务端**置空（`_to_hit_log_item(redact_platform_hits=True)`）——`hit_count` 保留，故租户能区分「围栏生效」与「系统故障」，但拿不到平台词库内容（INV-10） | HTTP API | platform 前端「命中日志」页 |
+| `GET /api/v1/sensitive-word-hit-logs/all`（**F059 新增**，跨租户 + 可选 `tenant_id` 筛选，`require_global_super_admin`，**不脱敏**——平台管理员拥有词库本身，无遮蔽对象） | HTTP API | platform 前端平台级命中日志视图 |
 | 错误码 11201 / 11202（`common/errcode/sensitive_word.py` 新增） | HTTP/ws 错误契约 | `/api/v2/chat/completions` 调用方、前端错误码文案（`api_errors` 域，三语） |
 | `sensitive_word_hit_log` 表 | DB 表 | 平台日志页（只读）、审计 |
 | `ACAutomaton.find_all_incremental` | 内部 Python API | 流式输出检测点（二期语义 provider 可复用） |
@@ -220,3 +225,5 @@
 | 2026-09-08 | Wave 2 实现落库：ws 双 client 事实校正 + RULE-1 注入方案（决策 2 更新）；输出埋点按真实帧流向三链路落点（决策 3 更新：`_workflow_run` 事件 / 助手回调 / HTTP 端点，共享守卫闭包）；输入拦截返回帧定稿为 `over`/`end`（决策 6B 落地） | T007-T012 实现期发现：助手存在独立 ChatClient 实现；`send_response` 非流式收口；回调与 client 双重守卫风险 |
 | 2026-09-08 | Wave 4 实现落库：e2e 6/6（真实链路：策略 round-trip / HTTP 400+11201 / 命中日志无原文）；/code-review 修复 2 项（block 分支 emit_len 防御性下限；workflow_client 鸭子类型消除新增 RULE-1 违规）+ 坑 11/12 落档（Row 元组解包 / 循环导入惰性导入） | e2e 与 code-review 暴露：租户过滤 Row 包装、guardrail↔callback 循环导入、workflow_client 类型导入违宪 |
 | 2026-09-08 | Wave 3 实现落库：命中日志查询端点补充（§6.1，tasks 拆解遗漏）；平台「安全围栏」tab（策略配置 + 命中日志页，`DialogueWork` 新 tab）；i18n 三语（bs.json guardrail 组 + api_errors 11201/11202） | T013-T017 实现期：前端控制器按拦截器解包语义类型化（勿二次 .data 解包，F055 T-19 口径） |
+| 2026-09-18 | **code-review 执行**（报告：[code-review-report.md](./code-review-report.md)）。代码维度全通过（跨分片匹配与 mask 泄漏经穷举实测）；HIGH 两条均在测试覆盖与文档同步：① AC-05/10/11/12/14 的真实链路验证依赖**从未执行**的手动清单；② design 未同步 F059 两层现状 | 本次审查发现 F059 落地后本 design 已滞后：检测链路变为两层，但 §4.2/§4.3/§6.1 仍按单层描述 |
+| 2026-09-18 | **回写 F059 两层现状**：§4.2 补 `source` 字段与「每层各写一行」的行粒度；§4.3 补双 matcher/双 tail_state；§5 新增坑 13（mask 必须用未过滤列表，否则泄漏词）、坑 14（block 取两层最早命中）、坑 15（auto_reply 按胜出层重写）；§6.1 补 `/all` 跨租户端点与平台词服务端脱敏口径 | 上条 code-review 的 H2/M3 文档漂移 |
