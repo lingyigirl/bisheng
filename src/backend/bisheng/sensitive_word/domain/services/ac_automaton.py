@@ -52,11 +52,34 @@ class ACAutomaton:
                 queue.append(child)
 
     def in_progress(self, state: _ScanState | None) -> bool:
-        """True when the scan position is mid-pattern, i.e. some longer pattern
-        could continue from here — callers must hold back the suffix to avoid
-        emitting a partial word (mask mode) before the pattern resolves."""
+        """True when some suffix of the consumed text is still a live prefix of a
+        longer pattern — callers must hold that suffix back (mask mode) instead
+        of emitting it, or the completed word goes out in the clear.
+
+        Walks the FAIL CHAIN, not just the current node. A node is a leaf exactly
+        when a word ends there, so ``bool(node.children)`` answers "can THIS node
+        extend" — but the text suffix can still be a live prefix through a
+        SHORTER suffix. Measured, with the shipped word list:
+
+            words  'jb' (a leaf) and 'bbc中文网'
+            stream 'jbbc中文网' one character at a time
+
+        After consuming 'jb' the scan sits on the 'jb' node, which has no
+        children; its fail link points at the 'b' node, which does extend into
+        'bbc中文网'. Checking only the current node returned False, the 'b' was
+        emitted, and 5 of the 6 characters of the later match went out unmasked
+        (1530 of the 2809 builtin words end at such a node).
+
+        The fail chain from a node enumerates every suffix of the consumed text
+        that is a prefix of some pattern, which is exactly the set that must be
+        held back, so walking it is sufficient — not merely a heuristic.
+        """
         node = state.node if state is not None else self.root
-        return node is not self.root and bool(node.children)
+        while node is not None and node is not self.root:
+            if node.children:
+                return True
+            node = node.fail
+        return False
 
     def find_all(self, text: str) -> Counter[str]:
         _, matches, _ = self.find_all_matches(None, text)
