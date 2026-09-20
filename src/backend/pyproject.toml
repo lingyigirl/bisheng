@@ -166,6 +166,8 @@ asyncio_mode = "auto"
 markers = [
     "e2e: end-to-end tests requiring a running backend (deselect with '-m not e2e')",
     "slow: tests that take more than 5 seconds",
+    "no_llm: e2e cases that need no model (API contracts only)",
+    "needs_llm: e2e cases that need a configured LLM slot and therefore skip without one",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:sqlalchemy.*",
