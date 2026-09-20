@@ -5,6 +5,8 @@ from typing import Any, Optional, Union
 
 from pydantic import BaseModel, field_validator
 from sqlalchemy import Boolean, Float, Integer, String
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.functions import FunctionElement
 from sqlmodel import Column, DateTime, Field, case, delete, func, or_, select, text, update
 from sqlmodel.sql.expression import Select, SelectOfScalar, col
 
@@ -145,6 +147,28 @@ class KnowledgeBase(SQLModelSerializable):
 
 class Knowledge(KnowledgeBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
+
+
+class _KnowledgeIdTextExpression(FunctionElement):
+    """将 knowledge.id 转成字符串表达式并按数据库方言处理 collation。"""
+
+    type = String()
+    inherit_cache = True
+
+
+@compiles(_KnowledgeIdTextExpression, "mysql")
+def _compile_knowledge_id_text_mysql(element, compiler, **kw):
+    # MySQL 连接的 collation 可能是 0900_ai_ci 而 business_id 是 unicode_ci。
+    # 仅给 CAST 结果对齐字段 collation 避免影响连接配置和 business_id 索引。
+    inner = compiler.process(element.clauses.clauses[0], **kw)
+    return f"CAST({inner} AS CHAR) COLLATE utf8mb4_unicode_ci"
+
+
+@compiles(_KnowledgeIdTextExpression)
+def _compile_knowledge_id_text_default(element, compiler, **kw):
+    # DM8 等数据库不支持 MySQL 字符集名 保留原始 CAST 行为。
+    inner = compiler.process(element.clauses.clauses[0], **kw)
+    return f"CAST({inner} AS CHAR)"
 
 
 class KnowledgeRead(KnowledgeBase):
@@ -952,7 +976,7 @@ class KnowledgeDao(KnowledgeBase):
 
         rejection_cutoff = datetime.now() - REJECTED_STATUS_DISPLAY_WINDOW
 
-        kid_str = col(Knowledge.id).cast(String)
+        kid_str = _KnowledgeIdTextExpression(Knowledge.id)
 
         # Subquery: count unique active subscribers per space
         subscriber_subq = (
