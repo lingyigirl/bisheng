@@ -1,3 +1,10 @@
+# 系统依赖（非 Python 包，无法在此声明；源码部署需单独安装，Docker 镜像已内置）：
+#   ffmpeg       知识库音视频转码（转 16kHz 单声道 wav 后送 ASR）
+#   chromium     Playwright 浏览器，会话/消息导出 PDF：playwright install chromium
+#   pandoc       导出 DOCX（pypandoc 调用系统 pandoc）
+#   libreoffice  知识库解析 .doc/.ppt/.xls 等 Office 格式（soffice）
+# 详细清单与安装命令见 docs/architecture/09-development-guide.md「后端环境」。
+
 [project]
 name = "backend"
 version = "2.6.0"
