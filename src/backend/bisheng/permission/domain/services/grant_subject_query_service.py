@@ -15,6 +15,18 @@ from bisheng.permission.domain.repositories.grant_subject_query_repository impor
 
 _CREATION_RESOURCE_TYPES = frozenset({"knowledge_space", "channel"})
 _VALID_SUBJECT_TYPES = frozenset({"user", "department", "user_group"})
+
+# Resource types that may NOT be granted to a department.
+#
+# F061 spec AC-45 lists the grantees for a datasource as "指定用户与用户组" and
+# AC-47 forbids introducing department-ownership semantics at all. Every other
+# resource type keeps departments, which are a first-class subject for them —
+# so this is a per-type narrowing, not a general rule.
+#
+# Enforced HERE rather than at the endpoint: the authz endpoint is not the only
+# writer, and hiding the department tab in the UI (which the datasource page
+# already does) is presentation, not a rule.
+_NO_DEPARTMENT_SUBJECT_TYPES = frozenset({"db_datasource"})
 _VALID_OPERATIONS = {
     "user": frozenset({"list"}),
     "user_group": frozenset({"list"}),
@@ -196,6 +208,14 @@ class GrantSubjectQueryService:
         if not items:
             return
         if any(item.subject_type not in _VALID_SUBJECT_TYPES for item in items):
+            raise PermissionDeniedError()
+        if resource_type in _NO_DEPARTMENT_SUBJECT_TYPES and any(
+            item.subject_type == 'department' for item in items
+        ):
+            # AC-47: a datasource carries no department-ownership semantics, and
+            # AC-45 scopes its grantees to users and user groups. The UI already
+            # omits the department tab; this is the enforcement behind it, so a
+            # direct API call cannot write what the form will not offer.
             raise PermissionDeniedError()
 
         from bisheng.permission.domain.services.permission_service import PermissionService
