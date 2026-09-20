@@ -113,3 +113,94 @@ def test_the_agent_wraps_and_collects_a_datasource_tool():
     assert [item.citationId for item in agent.collect_citation_registry_items()] == [
         'datasource_7_0'
     ]
+
+
+def test_datasource_anchors_survive_the_text_marker_filter():
+    """The tool renders a plain markdown table and emits no citation marker, so
+    a turn that ALSO cited a document -- and therefore has real markers -- would
+    drop the datasource anchor. AC-31/34 require it to persist."""
+    from bisheng.citation.domain.schemas.citation_schema import (
+        CitationRegistryItemSchema,
+        CitationType,
+    )
+    from bisheng.citation.domain.services.citation_prompt_helper import (
+        CITATION_END_MARKER,
+        CITATION_START_MARKER,
+        extract_citation_ids_from_text,
+        select_registry_items_for_persistence,
+    )
+
+    def _marker(citation_id: str) -> str:
+        return f'{CITATION_START_MARKER}{citation_id}:1{CITATION_END_MARKER}'
+
+    rag = CitationRegistryItemSchema(
+        citationId='rag1', type=CitationType.RAG, sourcePayload={'fileId': 1}
+    )
+    datasource = CitationRegistryItemSchema(
+        citationId='ds1',
+        type=CitationType.DATASOURCE,
+        sourcePayload={'datasourceId': 7, 'statement': 'SELECT 1'},
+    )
+    answer = f'按文档回答{_marker("rag1")}'
+
+    # Guard the guard: a malformed marker makes extract_citation_ids_from_text
+    # return empty, the function returns EVERYTHING, and this test would pass
+    # without the exemption existing.
+    assert extract_citation_ids_from_text(answer) == {'rag1'}
+
+    kept = select_registry_items_for_persistence([rag, datasource], answer)
+
+    assert datasource in kept, 'the datasource anchor was dropped by the marker filter'
+    assert rag in kept
+
+
+def test_unreferenced_rag_items_are_still_filtered():
+    """The exemption is for datasources only -- do not loosen RAG behaviour."""
+    from bisheng.citation.domain.schemas.citation_schema import (
+        CitationRegistryItemSchema,
+        CitationType,
+    )
+    from bisheng.citation.domain.services.citation_prompt_helper import (
+        CITATION_END_MARKER,
+        CITATION_START_MARKER,
+        select_registry_items_for_persistence,
+    )
+
+    cited = CitationRegistryItemSchema(
+        citationId='rag1', type=CitationType.RAG, sourcePayload={'fileId': 1}
+    )
+    uncited = CitationRegistryItemSchema(
+        citationId='rag2', type=CitationType.RAG, sourcePayload={'fileId': 2}
+    )
+    answer = f'{CITATION_START_MARKER}rag1:1{CITATION_END_MARKER}'
+
+    kept = select_registry_items_for_persistence([cited, uncited], answer)
+
+    assert kept == [cited]
+
+
+def test_a_second_turn_does_not_recite_the_first_turns_query():
+    """The agent is REUSED across turns in a chat, so anything accumulated on a
+    tool survives into the next answer unless the per-run reset clears it. The
+    datasource exemption makes that visible: turn 2 would otherwise list turn
+    1's query as a source it never ran."""
+    from bisheng.citation.domain.services.citation_prompt_helper import (
+        CitationRegistryCollector,
+    )
+
+    from bisheng.api.services.assistant_agent import AssistantAgent
+
+    agent = AssistantAgent.__new__(AssistantAgent)
+    agent.citation_registry_collector = CitationRegistryCollector()
+    agent.tools = [AssistantCitationToolWrapper.wrap(_tool_with_outcomes('SELECT 1 FROM t1'), agent.citation_registry_collector)]
+
+    # Turn 1: the model queried once.
+    assert len(agent.collect_citation_registry_items()) == 1
+
+    # Turn boundary.
+    agent.reset_citation_registry_items()
+
+    # Turn 2: no query this turn, so there is nothing to cite.
+    assert agent.collect_citation_registry_items() == [], (
+        'turn 1 anchors leaked into turn 2 -- reset did not clear the tool outcomes'
+    )

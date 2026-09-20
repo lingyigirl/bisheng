@@ -399,11 +399,22 @@ class AssistantAgent(AssistantUtils):
         return any(isinstance(tool, AssistantCitationToolWrapper) for tool in self.tools)
 
     def reset_citation_registry_items(self) -> None:
-        """Clear citation items before one assistant run."""
+        """Clear per-run state before one assistant run.
+
+        Both halves must be cleared, not just the collector. The agent is
+        REUSED across turns in one chat (`common/chat/client.py:253`), and a
+        datasource tool accumulates its own `outcomes` (one per execution), so
+        leaving them in place would make turn N cite every query turns 1..N-1
+        ran. The citation-markdown filter used to mask that; the DATASOURCE
+        exemption in `select_registry_items_for_persistence` does not.
+        """
         self.citation_registry_collector.clear()
         for tool in self.tools:
             if isinstance(tool, AssistantCitationToolWrapper):
                 tool.citation_registry_items = []
+                inner = getattr(tool, "tool", None)
+                if isinstance(inner, DatasourceQueryTool):
+                    inner.outcomes = []
 
     def collect_citation_registry_items(self) -> list[CitationRegistryItemSchema]:
         """Collect citation items emitted by wrapped tools."""

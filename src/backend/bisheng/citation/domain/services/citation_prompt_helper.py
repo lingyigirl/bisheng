@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 from bisheng.citation.domain.repositories.implementations.message_citation_repository_impl import (
     MessageCitationRepositoryImpl,
 )
-from bisheng.citation.domain.schemas.citation_schema import CitationRegistryItemSchema
+from bisheng.citation.domain.schemas.citation_schema import CitationRegistryItemSchema, CitationType
 from bisheng.citation.domain.services.citation_registry_service import CitationRegistryService
 from bisheng.citation.domain.services.citation_runtime_cache_service import (
     CitationRuntimeCacheService,
@@ -291,7 +291,11 @@ def select_registry_items_for_persistence(
     if not citation_ids:
         return items
 
-    return [item for item in items if item.citationId in citation_ids]
+    # Datasource anchors are exempt (F061 T-31). The datasource tool renders a
+    # plain markdown table and emits no citation marker, so an answer that also
+    # cited a document -- and therefore HAS markers -- would drop the anchor
+    # even though the query really ran. RAG and web items keep the old rule.
+    return [item for item in items if item.citationId in citation_ids or item.type == CitationType.DATASOURCE]
 
 
 async def cache_citation_registry_items(
