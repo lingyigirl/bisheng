@@ -107,17 +107,25 @@ def test_the_detail_buckets_datasource_links_before_the_else():
 def test_every_assistant_info_response_reports_datasource_bindings():
     """All AssistantInfo construction sites that can carry bindings must pass
     datasource_list. The update response is the easy one to miss: omitting it
-    reports [] right after a save, so the UI clears the selection just made."""
+    reports [] right after a save, so the UI clears the selection just made.
+
+    Each chunk from splitting on `AssistantInfo(` proves the site exists; the
+    `datasource_list=` count proves most sites pass one. The behavioural test
+    below pins the load-bearing site (the update response) by value.
+    """
     import inspect
 
     from bisheng.api.services import assistant as assistant_service
 
     source = inspect.getsource(assistant_service)
-    constructors = source.count('AssistantInfo(')
-    passing = source.count('datasource_list=')
-    # create_assistant is the one site that legitimately omits it.
-    assert passing >= constructors - 1, (
-        f'{constructors} AssistantInfo sites but only {passing} pass datasource_list'
+    chunks = source.split('AssistantInfo(')[1:]
+    assert len(chunks) == 3, f'expected 3 AssistantInfo sites, found {len(chunks)}'
+
+    passing = sum('datasource_list=' in chunk.split('can_share')[0] for chunk in chunks)
+    # create_assistant is the one site that legitimately omits it -- a new
+    # assistant cannot have bindings yet, so the schema default [] is correct.
+    assert passing >= len(chunks) - 1, (
+        f'{len(chunks)} AssistantInfo sites but only {passing} pass datasource_list'
     )
 
 
@@ -240,7 +248,12 @@ async def test_init_tools_wires_the_datasource_tools():
     from bisheng.api.services import assistant_agent
 
     source = inspect.getsource(assistant_agent.AssistantAgent.init_tools)
-    assert 'build_tools_for_assistant' in source, 'init_tools never asks for datasource tools'
+    # Assert the CALL, not just the name: the import line alone contains
+    # 'build_tools_for_assistant', so a refactor that dropped the call but kept
+    # the import would still satisfy a bare substring check.
+    assert 'await build_tools_for_assistant(' in source, (
+        'init_tools never calls build_tools_for_assistant -- a bound datasource would never reach the model'
+    )
     assert 'UserPayload(' in source, (
         'init_tools must pass a UserPayload -- a bare user id would skip the tenant gate'
     )
