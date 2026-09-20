@@ -205,6 +205,25 @@ class DbDatasourceTableDao:
                 await session.commit()
 
     @classmethod
+    async def aset_enabled(cls, table_id: int, enabled: int) -> None:
+        """Expose or hide one table, leaving its description alone.
+
+        Unticking a table sets `enabled=0` rather than deleting the row: the
+        description an admin wrote is what makes unticking cheap to undo, and
+        deleting would take it with the row.
+        """
+        from sqlalchemy import update as sa_update
+
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                await session.exec(
+                    sa_update(DbDatasourceTable)
+                    .where(DbDatasourceTable.id == table_id)
+                    .values(enabled=enabled)
+                )
+                await session.commit()
+
+    @classmethod
     async def adelete_by_datasource(cls, datasource_id: int) -> None:
         from sqlalchemy import delete as sa_delete
 
