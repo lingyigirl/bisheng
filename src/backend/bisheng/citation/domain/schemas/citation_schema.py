@@ -3,6 +3,8 @@ from typing import Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from bisheng.datasource.domain.schemas.citation import DatasourceCitationPayloadSchema
+
 
 class CitationSchemaBase(BaseModel):
     """Base schema for citation protocol models."""
@@ -19,6 +21,21 @@ class CitationType(str, Enum):
 
     RAG = "rag"
     WEB = "web"
+    # F061: an answer produced by querying a datasource. Carries the tables and
+    # the statement that ran, so it is subject to the same authorization
+    # question as RAG -- see AUTHORIZED_TYPES below.
+    DATASOURCE = "datasource"
+
+
+#: Types whose payload names a platform resource and must therefore be filtered
+#: against the viewer's permissions before being served.
+#:
+#: Exists so the checks below stop asking "is this RAG?" and start asking the
+#: question they actually mean. When a new type landed with the old form, the
+#: `else` branch treated it as WEB -- i.e. as anonymous content to pass through
+#: unfiltered. For a datasource citation, which carries table names and SQL,
+#: that would have shown an unauthorized viewer another tenant's schema.
+AUTHORIZED_TYPES = frozenset({CitationType.RAG, CitationType.DATASOURCE})
 
 
 class RagCitationItemSchema(CitationSchemaBase):
@@ -73,7 +90,13 @@ class WebCitationPayloadSchema(CitationSchemaBase):
     )
 
 
-CitationSourcePayload = Union[RagCitationPayloadSchema, WebCitationPayloadSchema]
+# F061: a datasource-backed answer carries its own payload shape. Added to the
+# union rather than widened to `dict`, so every existing `model_validate` call
+# keeps validating -- a permissive union would let a malformed payload reach the
+# frontend unchecked.
+CitationSourcePayload = Union[
+    RagCitationPayloadSchema, WebCitationPayloadSchema, DatasourceCitationPayloadSchema
+]
 
 
 class CitationRegistryItemSchema(CitationSchemaBase):

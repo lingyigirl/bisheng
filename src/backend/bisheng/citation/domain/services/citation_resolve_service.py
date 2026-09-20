@@ -2,6 +2,8 @@ import asyncio
 import json
 from collections import defaultdict
 
+from loguru import logger
+
 from bisheng.citation.domain.repositories.interfaces.message_citation_repository import MessageCitationRepository
 from bisheng.citation.domain.schemas.citation_schema import (
     CitationRegistryItemSchema,
@@ -13,6 +15,7 @@ from bisheng.citation.domain.services.citation_registry_service import CitationR
 from bisheng.citation.domain.services.citation_runtime_cache_service import CitationRuntimeCacheService
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.http_error import NotFoundError
+from bisheng.datasource.domain.schemas.citation import DatasourceCitationPayloadSchema
 from bisheng.knowledge.domain.models.knowledge_file import KnowledgeFileDao
 from bisheng.knowledge.domain.services.knowledge_service import KnowledgeService
 
@@ -131,6 +134,64 @@ class CitationResolveService:
                 filtered.append(item)
         return filtered
 
+    async def _drop_invisible_datasource_items(
+        self,
+        items: list[CitationRegistryItemSchema],
+        login_user: UserPayload | None,
+    ) -> list[CitationRegistryItemSchema]:
+        """Drop datasource anchors the viewer may not see.
+
+        The security half of `CitationType.DATASOURCE`, and the reason that type
+        exists rather than letting these ride the web branch: an anchor names
+        the datasource, its tables and the SQL that ran, so serving one to a
+        user who has no access leaks another department's schema.
+
+        Separated from `_apply_tier_filter` because it needs an async
+        permission check per datasource, while that method works off a
+        pre-fetched id set. `login_user is None` (anonymous) drops them all --
+        unlike RAG, where anonymous means "no filter", there is no anonymous
+        caller who should see a database's structure.
+        """
+        if not any(item.type == CitationType.DATASOURCE for item in items):
+            return items
+        if login_user is None:
+            return [item for item in items if item.type != CitationType.DATASOURCE]
+
+        from bisheng.permission.domain.services.permission_service import PermissionService
+
+        allowed_cache: dict[int, bool] = {}
+        kept: list[CitationRegistryItemSchema] = []
+        for item in items:
+            if item.type != CitationType.DATASOURCE:
+                kept.append(item)
+                continue
+            try:
+                payload = DatasourceCitationPayloadSchema.model_validate(item.sourcePayload)
+            except Exception:
+                # An unreadable payload cannot be attributed to a datasource, so
+                # it cannot be authorized. Drop it rather than show it.
+                continue
+
+            datasource_id = payload.datasourceId
+            if datasource_id not in allowed_cache:
+                try:
+                    allowed_cache[datasource_id] = await PermissionService.check(
+                        user_id=login_user.user_id,
+                        relation='viewer',
+                        object_type='db_datasource',
+                        object_id=str(datasource_id),
+                        login_user=login_user,
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        'datasource citation permission check failed for id={}; dropping',
+                        datasource_id,
+                    )
+                    allowed_cache[datasource_id] = False
+            if allowed_cache[datasource_id]:
+                kept.append(item)
+        return kept
+
     async def _filter_visible_rag_items(
         self,
         items: list[CitationRegistryItemSchema],
@@ -143,7 +204,8 @@ class CitationResolveService:
         for both filtering and enrichment URL gating.
         """
         permitted = await self._permitted_file_ids(items, login_user)
-        return self._apply_tier_filter(items, permitted)
+        filtered = self._apply_tier_filter(items, permitted)
+        return await self._drop_invisible_datasource_items(filtered, login_user)
 
     # ------------------------------------------------------------------
     # Enrichment
@@ -229,7 +291,31 @@ class CitationResolveService:
         """Enrich a citation item based on its type."""
         if item.type == CitationType.RAG:
             return await self._enrich_rag_item(item, login_user, url_allowed=url_allowed)
+        if item.type == CitationType.DATASOURCE:
+            # Explicit branch, because the fallthrough is `_enrich_web_item` --
+            # i.e. "anonymous content, nothing to check". A datasource anchor
+            # carries table names and SQL and must not be treated that way.
+            # Visibility was decided by `_drop_invisible_datasource_items`
+            # before enrichment; here the payload is only re-validated.
+            return self._enrich_datasource_item(item)
         return self._enrich_web_item(item)
+
+    @staticmethod
+    def _enrich_datasource_item(item: CitationRegistryItemSchema) -> CitationRegistryItemSchema:
+        """Validate a datasource anchor's persisted payload.
+
+        No URL work: the anchor's content (statement, tables, result table) is
+        already in the payload, written by the turn that produced it. This
+        re-validates through the schema the way `_enrich_web_item` normalizes
+        its URL, so a payload written by an older process cannot reach the
+        frontend unchecked.
+        """
+        from bisheng.datasource.domain.schemas.citation import (
+            DatasourceCitationPayloadSchema,
+        )
+
+        payload = DatasourceCitationPayloadSchema.model_validate(item.sourcePayload)
+        return item.model_copy(update={'sourcePayload': payload})
 
     # ------------------------------------------------------------------
     # Public API
@@ -283,6 +369,10 @@ class CitationResolveService:
 
         permitted = await self._permitted_file_ids(items, login_user)
         items = self._apply_tier_filter(items, permitted)
+        # Datasource anchors are filtered separately: their authorization is a
+        # per-resource check rather than a pre-fetched file-id set, and they
+        # must not ride the web branch's "no filter" path.
+        items = await self._drop_invisible_datasource_items(items, login_user)
 
         enriched_items = await asyncio.gather(
             *(self._enrich_item(item, login_user, url_allowed=self._rag_url_allowed(item, permitted)) for item in items)
