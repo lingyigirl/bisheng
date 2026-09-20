@@ -434,3 +434,25 @@ class AssistantLinkDao(AssistantLink):
                     continue
                 session.add(AssistantLink(assistant_id=assistant_id, knowledge_id=one, flow_id=flow_id))
             session.commit()
+
+    @classmethod
+    def update_assistant_datasource(cls, assistant_id: str, datasource_list: list[int]):
+        """Replace this assistant's datasource bindings with `datasource_list`.
+
+        The filter is `IS NOT NULL`, NOT `!= 0` like its three siblings. That is
+        not a stylistic difference: `datasource_id` is the only one of the four
+        columns whose default is NULL (`F061` added it nullable with no
+        server_default), and SQL evaluates `NULL != 0` to NULL rather than TRUE.
+        A copied `!= 0` filter would delete nothing, so each save would append
+        another set of rows and the assistant would accumulate duplicates.
+        """
+        with get_sync_db_session() as session:
+            session.query(AssistantLink).filter(
+                AssistantLink.assistant_id == assistant_id,
+                AssistantLink.datasource_id.isnot(None),
+            ).delete()
+            for one in datasource_list:
+                if not one:
+                    continue
+                session.add(AssistantLink(assistant_id=assistant_id, datasource_id=one))
+            session.commit()
