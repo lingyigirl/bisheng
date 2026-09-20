@@ -1023,6 +1023,29 @@ cd src/frontend && pnpm typecheck && pnpm lint
 
 **覆盖 AC**: AC-53, AC-54, AC-55, AC-56
 
+**2026-09-20 完成（AC-54/55/56 全部 + AC-53 的节点侧；AC-53 的编辑器下拉未做，原因见下）**
+
+| 项 | 状态 |
+|---|---|
+| AC-54 兼容读取 | ✅ `test_workflow_compat.py`（内联流程行为不变，含 `postgres` 旧拼写、`open:false`、无 sql 块） |
+| AC-55 不新增节点类型 | ✅ 枚举扫描断言 |
+| AC-56 关闭内联新建 | ✅ `SqlConfigItem` 五个字段全部 `readOnly` + 只读提示（三语） |
+| AC-53 节点读 `datasource_id` | ✅ `SqlAgentParams.datasource_id` + 节点注入 `DatasourceQueryTool`（`test_workflow_datasource_binding.py`，9 条） |
+| AC-53 编辑器「选数据源」下拉 | ❌ **未做，见下** |
+
+**R4 经实测推翻**（详见「实现前置」R4 段落）：既有 `sql_agent` **不阻塞事件循环**，两条独立卸载（langchain 的 `BaseTool._arun` 线程池 + LangGraph 对同步节点的 `run_in_executor`）。R4 要求的改动是空操作，未做。
+
+**AC-53 的授权口径（用户 2026-09-20 确认）**：工作流里的数据源按**流程配置者**（`flow_user_id`）判权，与本节点知识检索的既有口径一致。**已知后果**：流程发布即等于把该数据源借给所有能运行该流程的人——与助手把知识库借给能对话的人同理；不扩大「谁能控制数据」，因为能编辑流程的人本就能改它查什么。
+
+**AC-53 编辑器下拉未做的原因（需决策，不是遗漏）**：`GET /api/v1/datasource` 由 `get_tenant_admin_user` 把关，而 `/flow/:id` 路由**没有任何权限门**——即「能打开流程编辑器」的人群**大于**「能调数据源列表」的人群。直接接下拉会让普通流程作者 403。两条路：
+- 加一个 `get_login_user` 把关的「当前用户可见数据源（id + name）」端点（与 T-40 当时弃用的方案同形）；
+- 或接受「只有管理员能配数据源绑定」。
+
+**执行期由测试抓出的三处我自己的问题**（均已修）：
+1. 写错模块路径 `bisheng.database.models.user` —— 该模块不存在，正确为 `bisheng.user.domain.models.user`。
+2. **顺手把 `SqlAgentParams` 的引擎校验放宽到接受 `dm`** —— 超出本任务范围，且**静默破坏了已记录的 AC-54 保证**（`test_engine_registry.py` 明确记录内联节点仍不接受达梦）。已回退并加注释说明为何窄集合是刻意的。
+3. **两条断言是空的**：身份断言在「配置者查找被改成运行时调用者」时**仍然通过**——原因是 mock 忽略 `uid` 参数、且 `captured['user_id'] == 22` 是调用点的字面量（无论查出谁都恒为 22）。已改为断言「被查询的 id」。四条变异现已全部被抓。
+
 ---
 
 #### T-43 对话合规约束复用
