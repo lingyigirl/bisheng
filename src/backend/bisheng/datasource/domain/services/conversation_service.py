@@ -109,6 +109,12 @@ async def build_tools_for_assistant(
 ) -> list:
     """Tools for the datasources an assistant is linked to, minus unauthorized.
 
+    `login_user` MUST be a `UserPayload` (callable `get_visible_tenants`), not
+    a bare `LoginUser` and not `None`. `PermissionService.check` skips its
+    tenant gate for both of those (`permission_service.py:1018-1020`), so a
+    caller that passes one silently drops tenant isolation instead of failing.
+    Build one the way `ToolExecutor._build_permission_user` does.
+
     `assistant_links` are `AssistantLink` rows; only the ones carrying a
     `datasource_id` are considered. The authorization filter runs HERE rather
     than at the link level because a link is the admin's intent and the check is
@@ -118,6 +124,12 @@ async def build_tools_for_assistant(
     Returns [] when nothing survives, which is the normal state for every
     existing assistant (AC-60).
     """
+    if login_user is None or not callable(getattr(login_user, 'get_visible_tenants', None)):
+        raise ValueError(
+            'build_tools_for_assistant requires a UserPayload with get_visible_tenants; '
+            'passing None or a bare LoginUser would skip the tenant gate silently'
+        )
+
     from bisheng.datasource.domain.models.dao import DbDatasourceDao
 
     wanted = [link.datasource_id for link in assistant_links if getattr(link, 'datasource_id', None)]
