@@ -13,8 +13,8 @@
 | spec.md | ✅ 已评审 | 2026-09-17 用户确认。首轮审查 2 CONFLICT 已消除（契约登记完成 + AC-41 收窄遵守 INV-11）；3 条 low ISSUE 经用户确认保留原样（AC-01/AC-10/AC-22 字段枚举、AC-39 意图声明、AC-21 并发约束） |
 | design.md | ✅ 已评审 | 2026-09-17 用户确认。首轮 `/sdd-review design` 0 high / 3 medium / 3 low，**全部 6 条已修订**：① §9 补平台管理端 UI 步骤（spec AC-57，原缺失整块）；② 决策 6 补 AC-28 的「可观测口径」（注入形态标记三处共用）；③ §7 补可操作验证路径（uvicorn / pnpm start / :4001 等真实命令）；④ §4.2 补结果表快照与下载（AC-33）；⑤ §4.2 绑定行改为定稿表述 + §8 推荐项；⑥ §8 补 F058 既有文档漂移记录。**Constitution Check PASS**（C1–C7 无违反） |
 | tasks.md | ✅ 已拆解 | 2026-09-18 拆解完成：**45 个任务 / 10 个 Wave**，66 条 AC 全覆盖（追溯矩阵见文末）。5 条实现前置已全部调研闭环（见下）；拆解前又发现 2 处引擎侧实现缺口（见「拆解期新发现」） |
-| 实现 | 🔲 未开始 | 0 / 45 完成。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
-| e2e-test | 🔲 未开始 | — |
+| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30 的 API / SQL 校验 / 执行 / 生成链路，共 9 个 commit）。本行原先写「0 / 45」与事实不符，2026-09-20 订正。**余下**：T-31 对话侧接线（方案见 design.md 决策 15）、T-35~T-41 平台与客户端 UI、T-42 工作流节点收敛、T-43 合规复用（无测试锚定）、T-44 不变量验证。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
+| e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——需先完成 T-31 接线与助手绑定数据源 |
 | code-review | 🔲 未开始 | — |
 
 ---
@@ -676,20 +676,25 @@ uv run python -m pytest test/datasource/test_credential.py -q
 
 ---
 
-#### T-31 助手 / 工作台绑定数据源
+#### T-31 助手绑定数据源（**对话侧接线**）
 
 **依赖**: T-04, T-30
 
+> **2026-09-20 重述**：本任务原描述只写了「绑定 API + 对话链路读取」，实现期只落了前半边——`build_tools_for_assistant` / `resolve_bound_datasource` 全仓零调用方，管理员也无从写入绑定。**方案以 design.md 决策 15 为准**，下列为其可执行分解。
+
 **改动**：
-- 助手绑定走**新增的 `AssistantLink.datasource_id` 列**（§8-2 定案）
-- 绑定 API + 对话链路读取该列构造可用工具集
+- **写入侧**：`AssistantLinkDao.update_assistant_datasource`（`database/models/assistant.py:376+`，照 `update_assistant_tool` 形状）；`AssistantUpdateReq.datasource_list`（`api/v1/schemas.py:273+`）；调用分支加进 `api/services/assistant.py:536-541` 那组；读取侧分桶 `assistant.py:307-312` 的 `elif` 链加一支，**必须在 `else: logger.error` 之前**；`AssistantInfo.datasource_list` 返回 id 列表
+- **注入侧**：`AssistantAgent.init_tools`（`api/services/assistant_agent.py:254-320`）调用 `build_tools_for_assistant` 并把工具并入 `tools`——五个对话入口全部经过此处
+- **锚点侧**：`AssistantCitationToolWrapper` 加数据源分支（`assistant_agent.py:51`）+ `wrap_citation_tool`（`:335`）放行 `DatasourceQueryTool`；`DatasourceQueryTool.last_outcome` 单槽位**改累积列表**（`datasource/domain/langchain/tool.py:73`）；`select_registry_items_for_persistence`（`citation/domain/services/citation_prompt_helper.py:282-294`）对 `CitationType.DATASOURCE` **豁免文本标记过滤**
 - **已选择数据源的会话中，模型自主判断是否查询**；**不做强制前置路由判定**（AC-25）
 
-**为什么**：§8-2 用户定案；AC-24 / AC-25。
+**两个必须盯住的坑**：① 删除条件用 `IS NOT NULL`，**不能用 `datasource_id != 0`**（该列默认 `None`，SQL 中 `NULL != 0` 求值为 NULL，一行都删不掉 → 每次保存追加重复行）；② `elif` 链顺序，漏加会让每行数据源绑定刷一条 error 日志。
 
-**验证**：`uv run python -m pytest test/datasource/test_assistant_binding.py -q`；须有「未绑定时不出现数据源工具」「绑定后出现」两个用例。
+**为什么**：design 决策 15（含 A/B/C 三个桥接点的取舍）；AC-24（收窄后仅助手）/ AC-25 / AC-29 / AC-31 / AC-34。
 
-**覆盖 AC**: AC-24, AC-25
+**验证**：`uv run python -m pytest test/datasource/test_assistant_binding.py -q`，须含：未绑定不出现工具 / 绑定后出现 / **重复保存不产生重复行** / outcome→锚点 payload 字段正确 / DATASOURCE 项 survive 标记过滤且 RAG 项仍被过滤。
+
+**覆盖 AC**: AC-24（仅助手，工作台半边见 spec 缺口登记）, AC-25, AC-29, AC-31, AC-34
 
 ---
 
@@ -982,17 +987,17 @@ AC-61 / AC-64 建议用静态断言（扫描 `KnowledgeTypeEnum` 无数据源成
 | AC-21 | 查询不阻塞对话主链路 | T-21 |
 | AC-22 | 留存执行记录（操作人 / 租户 / 数据源 / 表 / 语句 / 状态 / 时间） | T-02, T-05, T-24 |
 | AC-23 | 执行记录不含结果集数据 | T-02, T-05, T-24 |
-| AC-24 | 数据源可配置为助手 / 工作台的可用来源 | T-31, T-40 |
+| AC-24 | 数据源可配置为助手的可用来源（工作台半边已收窄，见 spec 缺口登记） | T-31, T-40 |
 | AC-25 | 模型自主判断是否查询，无强制前置路由 | T-27, T-31 |
 | AC-26 | 以工具形态与知识库检索同层 | T-27, T-30 |
 | AC-27 | SQL 生成用独立模型槽位，未配置则回退不报错 | T-25 |
 | AC-28 | 表描述超限退化检索，两形态可区分观测 | T-26 |
-| AC-29 | 回答明示数据来源 | T-33 |
+| AC-29 | 回答明示数据来源 | T-31（锚点落库）, T-33 |
 | AC-30 | 一轮内两类来源并存并分别标注 | T-33, T-41 |
-| AC-31 | 引用锚点含表名与本次语句 | T-34, T-41 |
+| AC-31 | 引用锚点含表名与本次语句 | T-31（构造 payload）, T-34, T-41 |
 | AC-32 | 展开展示语句与结果表，默认收起 | T-41 |
 | AC-33 | 结果表支持下载 | T-41 |
-| AC-34 | 历史重载 / 换端仍可展开 | T-34, T-41 |
+| AC-34 | 历史重载 / 换端仍可展开 | T-31（落库不丢）, T-34, T-41 |
 | AC-35 | 结果表落库复用执行期行数上限 | T-05, T-23 |
 | AC-36 | 未查询数据源时不展示相关区域 | T-33 |
 | AC-37 | 失败回喂模型允许修正重试 | T-28 |

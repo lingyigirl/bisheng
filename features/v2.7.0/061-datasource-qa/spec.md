@@ -130,7 +130,8 @@
 
 ### 2.4 对话侧接入与模型选路
 
-- **AC-24** — 管理员 SHALL 能将数据源配置为助手 / 工作台的可用知识来源。
+- **AC-24** — 管理员 SHALL 能将数据源配置为**助手**的可用知识来源。
+  > **2026-09-20 范围收窄（缺口登记）**：原文为「助手 / 工作台」。工作台是另一个 agent（`workstation/domain/services/chat_service.py:1685` 的 `create_react_agent`，不经过 `AssistantAgent`），且**没有任何 per-app 资源绑定存储**——其工具与知识库逐轮来自前端请求，唯一持久化是租户级 JSON blob（`TenantWorkstationConfig`）。给它加绑定等于新增一套机制，属独立决策，本特性不做。**该半边为已知缺口**，后续如需补应作为独立 Feature 走 spec 评审（见 design.md 决策 15 末段）。
 - **AC-25** — WHEN 用户在一个已选择数据源的会话中提问, THE SYSTEM SHALL 由模型**自主判断**是否需要查询该数据源；系统 SHALL NOT 在对话链路上做强制的前置路由判定。
 - **AC-26** — 数据源 THE SYSTEM SHALL 以**可被模型调用的工具**形态呈现，与文档知识库检索处于**同一调用层**（同一轮内模型可自由选择其一或两者）。
 - **AC-27** — 生成查询语句所用的模型 THE SYSTEM SHALL 来自一个**独立的模型槽位**；该槽位的取值 SHALL 满足 INV-8（本租户内可见，且其模型类型与该槽位匹配）。IF 该槽位未配置, THEN THE SYSTEM SHALL 回退使用该轮对话的模型，且**不报错**。

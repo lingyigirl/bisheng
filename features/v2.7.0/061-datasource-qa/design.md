@@ -253,6 +253,32 @@
   - B 真正独有的价值只有一个：在流程里**确定性地**执行一次「问题 → SQL → 数据」，不依赖模型决定要不要调工具。该价值真实但场景少，**可晚一轮加**。
 - **何时该重新考虑**：编排者对结果确定性有硬要求时。
 
+### 决策 15：对话侧接线落在 `AssistantAgent` + citation wrapper；**工作台本特性不做**
+
+> 2026-09-20 补。Wave 0~7 实现期发现 T-31 只落地了「读」的半边（`build_tools_for_assistant` / `resolve_bound_datasource` 全仓零调用方），对话链路实际未接通。本节是接通方案，替代/细化 T-31 的「改动」栏，**不改变任何 spec AC 的语义**（工作台除外，见末段）。
+
+- **备选**（锚点桥接点）：
+  - A. 扩 `AssistantCitationToolWrapper`，加数据源分支
+  - B. 运行结束后在收集点统一扫工具列表
+  - C. `DatasourceQueryTool` 自己注册 citation item
+- **选定**：**A**
+- **原因**：
+  - **A 是唯一一次覆盖全部入口的做法。** 助手的全部进入点（HTTP `completions`、两个 websocket、评测执行、发布预检构建）**全部收敛到 `AssistantAgent`**，而 `init_tools` 已经对全部工具跑 `wrap_citation_tool`（`api/services/assistant_agent.py:316`）——扩这个既有扩展点，各入口自动生效。
+  - **B 只覆盖 websocket。** `collect_citation_registry_items()` 的调用点在 `common/chat/client.py:457`，评测与 HTTP 入口不经过它，锚点会只在一种入口下出现。
+  - **C 破坏模块边界。** citation 是展示载荷，`datasource/domain/langchain/tool.py` 的职责声明是「不绕过权限与安全检查」，不该承担它；且工作流 Agent 节点复用同一个工具，会跟着产出助手口径的引用项。
+- **绑定写入不校验权限，与兄弟列一致。** `update_assistant_tool/flow/knowledge` 都不校验，数据源沿用：赋予 ≠ 使用，运行期 `build_tools_for_assistant` 按**调用者**逐轮判权（AC-52）。写入不存在的 id 只会落成悬空链接，读取侧按既有语义跳过（`conversation_service.py:136-140`）——所以既无越权，也不构成 id 存在性探测。
+
+**两个实现期必须盯住的坑**：
+
+1. **删除条件不能用 `datasource_id != 0`。** 三个兄弟列的默认值是 `0` / `""` / `0`，而 `datasource_id` 是 `default=None`（`database/models/assistant.py:89`）。SQL 中 `NULL != 0` 求值为 NULL，**一行都删不掉** → 每次保存追加一批重复绑定。必须用 `IS NOT NULL`（或 `isnot(None)`）。
+2. **读取侧分桶的 `elif` 链要插在 `else` 之前。** `api/services/assistant.py:307-312` 是一串 `elif`，末尾 `else: logger.error("not expect link info")`。数据源分支若漏加，每行数据源绑定都会走进那个 else 并刷错误日志（功能不坏，日志被污染）。
+
+**锚点不被静默丢弃**：`select_registry_items_for_persistence`（`citation/domain/services/citation_prompt_helper.py:282-294`）只保留 citationId 出现在回答文本中的项——**但数据源工具的输出是裸 markdown 表、没有引用标记**。若同一轮回答还引用了文档（有标记），数据源锚点会被整体丢掉。故：**`CitationType.DATASOURCE` 的项豁免文本标记过滤，无条件保留**。对既有 RAG / web 行为零影响（该类型是本特性新引入的），用测试钉住两个方向。
+
+**一轮多次查询**：`DatasourceQueryTool.last_outcome` 是单槽位（`tool.py:73`），模型一轮内查两次库只留得下最后一次。改为**累积列表**，每次查询各产一个锚点——否则正是本决策要消灭的那类静默丢弃。
+
+**工作台本特性不做（spec 缺口，需回写）**：AC-24 措辞为「配置为**助手 / 工作台**的可用知识来源」，但工作台是**另一个 agent**（`workstation/domain/services/chat_service.py:1685` 的 `create_react_agent`，不经过 `AssistantAgent`），且**没有任何 per-app 资源绑定存储**——其工具与知识库逐轮来自前端请求（`data.tools` / `data.use_knowledge_base`），唯一持久化是租户级 JSON blob（`TenantWorkstationConfig`）。给它加绑定等于新增一套机制，属独立决策。**本次只接助手**；AC-24 的工作台半边记为已知缺口回写 spec/tasks。
+
 ---
 
 ## 4. 系统现状（接手必读）
@@ -270,7 +296,8 @@
 #### 问答侧（终端用户）
 
 ```
-用户提问（已选数据源）
+用户提问（助手已绑定数据源；未绑定则不出现该工具）
+  → AssistantAgent.init_tools 读 AssistantLink.datasource_id → 逐轮按调用者判权 → 注入 DatasourceQueryTool
   → 表描述注入（全量；超阈值退检索）
   → 模型决定调用数据源工具
   → 生成 SQL → sqlglot AST 校验 / 窄校验兜底
@@ -296,12 +323,12 @@
 
 | 字段 / 结构 | 类型 / 格式 | 说明 | 谁会消费 |
 |---|---|---|---|
-| 助手 → 数据源的绑定 | 关联列（形态取决于 §8 待定项 2：新增 `datasource_id` 或复用 `tool_id`） | 现有列是 `tool_id` / `flow_id` / `knowledge_id`（`database/models/assistant.py:73-75`）；**本特性推荐新增 `datasource_id`**，理由是复用 `tool_id` 会让数据源继承 `tool` 的授权口径，与 spec AC-43/44 冲突 | 助手 / 工作台对话链路 |
+| 助手 → 数据源的绑定 | 关联列 `AssistantLink.datasource_id`（**NULL = 未绑定**） | 与 `tool_id` / `flow_id` / `knowledge_id` 并列（`database/models/assistant.py:73-75`）。**不复用 `tool_id`**：那会让数据源继承 `tool` 的授权与管理页口径，与 AC-43/44 冲突（§8-2 已定案）。删除条件是 `IS NOT NULL` 而非 `!= 0`，理由见决策 15 | **仅助手**对话链路；工作台不在本特性范围（决策 15 末段） |
 | `db_datasource.password` | Fernet 密文 | 复用 `core/config/settings.py:25-29` 的 `encrypt()`/`decrypt()`；**任何响应不回显** | 仅连接建立时解密 |
 | `db_datasource_table.structure_snapshot` | JSON（`dialect_helpers.JsonType`） | 表名/字段名/类型/库内注释；**重采集只刷它** | schema 注入、模型生成 SQL |
 | `db_datasource_table.business_desc` | text | **人工维护**，重采集不覆盖 | schema 注入 |
 | `db_query_log` / `db_query_failure` | 表 | 只存语句与状态摘要；**不存结果集、不存提问原文** | 审计、失败清单 |
-| 引用锚点 | `{datasource, tables[], sql}` | 随回答消息持久化（AC-31/34） | 前端展开区 |
+| 引用锚点 | `DatasourceCitationPayloadSchema`（`{datasourceId, datasourceName, tables[], statement, columns[], rows[][], truncated}`） | 随回答消息持久化（AC-31/34）。由 `AssistantCitationToolWrapper` 的数据源分支从 `QueryOutcome` 构造（决策 15）；**豁免 `select_registry_items_for_persistence` 的文本标记过滤**，否则无标记的数据源锚点会被静默丢弃 | 前端展开区 |
 | 结果表快照 | 结构化载荷（随回答消息持久化） | 供展开区展示 + **下载**（AC-33）；量受执行期行数上限约束，**不二次裁剪**（AC-35） | 两个 SPA 的展开区 |
 | 注入形态标记 | `full` / `retrieved` | 三处共用同一枚举（执行记录 / 日志 / 响应），落地 AC-28 的可区分观测 | 排障、e2e 断言 |
 
@@ -449,3 +476,4 @@
 | 2026-09-17 | 初版（14 条决策 + 8 条坑 + 4 项待定） | 设计阶段；基于 grilling 的 22 条决策与全链路代码盘点 |
 | 2026-09-18 | **决策 7 的前提被实测推翻并订正（决策方向不变）**：① 初稿「达梦语法会大量解析失败」不成立——27 种 DM/Oracle 语法在 oracle/mysql/默认方言下 27/27 解析成功。② 补「AST 档三个必堵绕过面」表（多语句 / CTE 内藏写 / 加锁读取被剥离）。③ 订正「B 单独用太松」的理由——原表述方向写反了，窄校验挡不住的正是结构层面绕法。④ 补 `sql_agent` 阻塞、达梦注释可采、FGA 落点三条前置结论。**用户 2026-09-18 确认维持方案 A（订正理由、不改决策实质）** | implementation 前置调研：实际安装 sqlglot 30.18.0 并驱动 27 种语法 + 3 类绕过手法的探测，结论与设计期的推断不符 |
 | 2026-09-18 | **订正一处错误测量**：`FOR UPDATE SKIP LOCKED` 此前被记为「解析失败的典型」——实际是探测语句里的 `...` 占位符导致，真实语句可正常解析。改举 Oracle/DM `MODEL` 子句为不可解析的真实例子；窄校验档的加锁关键字**仍然必需**（用于「不可解析 + 加锁」的组合）。新增坑 8 记录该类错误 | T-10 实现期：Test-First 写测试时用真实语句复跑，发现与 design 记录不符 |
+| 2026-09-20 | **新增决策 15**（对话侧接线落点）：Wave 0~7 实现期发现 T-31 只落了「读」的半边，`build_tools_for_assistant` / `resolve_bound_datasource` 全仓零调用方，对话链路未接通。本节定下接线方案——绑定写入在 `AssistantLinkDao` / `AssistantUpdateReq` / `AssistantInfo`，工具注入在 `AssistantAgent.init_tools`，锚点桥接在 `AssistantCitationToolWrapper`（覆盖全部五个对话入口）。**同时收窄范围**：工作台无 per-app 绑定存储，本特性不接，AC-24 工作台半边已在 spec.md 登记为缺口、tasks.md 状态行同步订正。附两个实现坑（`NULL != 0` 删不掉、`elif` 链顺序）+ 一条豁免（数据源锚点不过文本标记过滤） | 实现期回填：T-31 只完成了一半，Wave 9 对话侧未开工 |
