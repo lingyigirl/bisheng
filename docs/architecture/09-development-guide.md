@@ -6,6 +6,14 @@
 
 ### 后端环境
 
+> **系统依赖**：`ffmpeg`（含 `ffprobe`）。知识库音视频解析在送 ASR 前会用 ffmpeg 将音频转成 16kHz 单声道 wav，
+> 缺失时上传音视频会直接报 `ffmpeg is not installed`。Docker 镜像已内置，源码部署需自行安装：
+
+```bash
+sudo apt install -y ffmpeg
+which ffmpeg ffprobe   # 确认安装成功
+```
+
 ```bash
 # 1. 创建 Python 3.11 虚拟环境（pyproject 要求 requires-python >=3.11）
 conda create --name BiShengVENV python==3.11

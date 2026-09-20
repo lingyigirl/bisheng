@@ -122,7 +122,14 @@ Vite Dev Server  :3001                Milvus 2.5       :19530
 
 ### 启动步骤
 
+> 源码运行后端前，先确认系统依赖 `ffmpeg`（含 `ffprobe`）已安装——知识库音视频解析依赖它做转码，
+> 缺失时上传音视频会报 `ffmpeg is not installed`。Docker 部署无需此步（镜像已内置）。
+
 ```bash
+# 0. 安装系统依赖（源码部署后端时必装）
+sudo apt install -y ffmpeg
+which ffmpeg ffprobe
+
 # 1. 启动全部 Docker 容器
 cd docker && docker compose -p bisheng up -d
 

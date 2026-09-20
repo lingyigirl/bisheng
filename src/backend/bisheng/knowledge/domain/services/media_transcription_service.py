@@ -6,6 +6,7 @@ from typing import Any
 
 from dashscope.audio.asr import Recognition, RecognitionResult
 from loguru import logger
+from openai import OpenAI
 
 from bisheng.common.errcode.knowledge import (
     KnowledgeMediaNoRecognizableAudioError,
@@ -62,12 +63,21 @@ class KnowledgeMediaTranscriptionService:
         duration_ms = cls._probe_media_duration_ms(media_path)
         wav_path = cls._convert_to_wav(media_path)
         try:
-            segments = cls._call_aliyun_asr(
-                wav_path,
-                api_key=api_key,
-                model_name=model_info.model_name,
-                media_duration_ms=duration_ms,
-            )
+            if server_info.type == LLMServerType.QWEN.value:
+                segments = cls._call_aliyun_asr(
+                    wav_path,
+                    api_key=api_key,
+                    model_name=model_info.model_name,
+                    media_duration_ms=duration_ms,
+                )
+            else:
+                segments = cls._call_openai_asr(
+                    wav_path,
+                    api_key=api_key,
+                    base_url=cls._resolve_openai_base_url(server_info, model_info),
+                    model_name=model_info.model_name,
+                    media_duration_ms=duration_ms,
+                )
         finally:
             if os.path.exists(wav_path):
                 os.remove(wav_path)
@@ -106,9 +116,16 @@ class KnowledgeMediaTranscriptionService:
             raise AsrProviderDeletedError()
         if not model_info.online:
             raise AsrModelOfflineError(server_name=server_info.name, model_name=model_info.model_name)
-        if server_info.type != LLMServerType.QWEN.value:
+        if server_info.type not in (
+            LLMServerType.QWEN.value,
+            LLMServerType.OPENAI.value,
+            LLMServerType.VLLM.value,
+        ):
             raise KnowledgeMediaTranscriptionError(
-                msg=f"Knowledge media transcription only supports Aliyun/Qwen ASR, got {server_info.type}"
+                msg=(
+                    "Knowledge media transcription only supports Aliyun/Qwen or "
+                    f"OpenAI-compatible ASR, got {server_info.type}"
+                )
             )
         return model_info, server_info
 
@@ -213,6 +230,107 @@ class KnowledgeMediaTranscriptionService:
             if fallback_text:
                 return [TranscriptSegment(text=fallback_text)]
         return []
+
+    @classmethod
+    def _resolve_openai_base_url(
+        cls,
+        server_info: LLMServer,
+        model_info: LLMModel,
+    ) -> str | None:
+        """读取 OpenAI 兼容服务的 base_url（与工作台 ASR 使用同一配置键）。"""
+        params: dict[str, Any] = {}
+        if server_info.config:
+            params.update(server_info.config)
+        if model_info.config:
+            params.update(model_info.config)
+        base_url = params.get("openai_api_base")
+        return str(base_url).rstrip("/") if base_url else None
+
+    @classmethod
+    def _call_openai_asr(
+        cls,
+        wav_path: str,
+        *,
+        api_key: str,
+        model_name: str,
+        base_url: str | None = None,
+        media_duration_ms: int | None = None,
+    ) -> list[TranscriptSegment]:
+        """调用 OpenAI 兼容的 /v1/audio/transcriptions 接口。
+
+        优先请求 verbose_json 以获得分段时间戳；部分兼容实现不支持该参数时，
+        自动降级为纯文本转写。
+        """
+        client = OpenAI(api_key=api_key, base_url=base_url) if base_url else OpenAI(api_key=api_key)
+        segments: list[TranscriptSegment] = []
+        try:
+            with open(wav_path, "rb") as audio_file:
+                result = client.audio.transcriptions.create(
+                    model=model_name,
+                    file=audio_file,
+                    response_format="verbose_json",
+                )
+            segments = cls._parse_openai_segments(result)
+        except Exception as exc:
+            logger.warning(
+                "OpenAI-compatible ASR verbose_json request failed, retrying plain text: {}",
+                exc,
+            )
+
+        if not segments:
+            with open(wav_path, "rb") as audio_file:
+                result = client.audio.transcriptions.create(
+                    model=model_name,
+                    file=audio_file,
+                )
+            segments = cls._parse_openai_segments(result)
+
+        if not segments:
+            return []
+        return cls._normalize_segments(segments, media_duration_ms=media_duration_ms)
+
+    @staticmethod
+    def _parse_openai_segments(result: Any) -> list[TranscriptSegment]:
+        """把 OpenAI 兼容转写结果解析为统一段落结构（时间戳统一成毫秒）。"""
+        if isinstance(result, dict):
+            data: dict[str, Any] = result
+        else:
+            model_dump = getattr(result, "model_dump", None)
+            data = model_dump() if callable(model_dump) else {}
+
+        segments: list[TranscriptSegment] = []
+        for item in data.get("segments") or []:
+            if isinstance(item, dict):
+                segment = item
+            else:
+                item_dump = getattr(item, "model_dump", None)
+                segment = item_dump() if callable(item_dump) else {}
+            text = str(segment.get("text") or "").strip()
+            if not text:
+                continue
+            segments.append(
+                TranscriptSegment(
+                    text=text,
+                    begin_time=KnowledgeMediaTranscriptionService._seconds_to_ms(segment.get("start")),
+                    end_time=KnowledgeMediaTranscriptionService._seconds_to_ms(segment.get("end")),
+                )
+            )
+        if segments:
+            return segments
+
+        fallback_text = str(data.get("text") or "").strip()
+        if fallback_text:
+            return [TranscriptSegment(text=fallback_text)]
+        return []
+
+    @staticmethod
+    def _seconds_to_ms(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return max(0.0, float(value) * 1000)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _coerce_time_value(value: Any) -> float | None:

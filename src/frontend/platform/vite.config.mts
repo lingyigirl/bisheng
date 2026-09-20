@@ -84,8 +84,8 @@ export default defineConfig(({ command, mode }) => {
   // 必须从 .env.development.local 等文件加载；仅用 process.env 时配置阶段读不到 VITE_ 变量，会回落到 7860，
   // 导致 /api/department-limit/*（仅 Gateway 提供）打到 bisheng 出现 404。
   const env = loadEnv(mode, path.resolve(__dirname), "");
-  const target = env.VITE_PROXY_TARGET || "http://192.168.106.120:3002/";
-  const fileServiceTarget = env.VITE_MINIO_PROXY_TARGET || "http://192.168.106.120:3002/";
+  const target = env.VITE_PROXY_TARGET || "http://172.19.70.189:7860/";
+  const fileServiceTarget = env.VITE_MINIO_PROXY_TARGET || "http://172.19.70.189:7860/";
   // MinIO presigned URLs sign the Host header; this proxy's host MUST equal the
   // backend config.yaml object_storage.minio.sharepoint or every object 403s.
   if (command === 'serve') {
@@ -111,10 +111,12 @@ export default defineConfig(({ command, mode }) => {
   // 同源化（2026-09-07）：工作台 client SPA 经平台单一入口反代 —— 外网只需映射
   // 3001 一个端口；登录跳转跟随浏览器当前 origin（VITE_WORKSPACE_ORIGIN 置空，
   // getWorkspaceClientUrl 回落同源相对路径），外网 IP/域名变化零改动。client
-  // preview 与平台同为 https（VITE_DEV_HTTPS），故目标用 https（commonProxyOptions
+  // preview 与平台同为 https（VITE_DEV_HTTPS），故默认目标用 https（commonProxyOptions
   // 已含 secure:false）；rewrite=false 路径原样转发（client preview 自带
   // /workspace/api、/workspace/bisheng 等规则）。
-  proxyTargets['/workspace'] = createProxyConfig('https://127.0.0.1:4001', false);
+  // 本地 dev（client 为纯 HTTP）在 platform/.env.development.local 里用
+  // VITE_WORKSPACE_PROXY_TARGET=http://127.0.0.1:4001 覆盖，否则 https 目标握手失败 → 500。
+  proxyTargets['/workspace'] = createProxyConfig(env.VITE_WORKSPACE_PROXY_TARGET || 'https://127.0.0.1:4001', false);
 
   return {
     base: app_env.BASE_URL || '/',
