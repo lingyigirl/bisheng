@@ -103,13 +103,22 @@ export default function SqlConfigItem({ data, onChange, onValidate }) {
             {/* 配置表单 */}
             {open && (
                 <>
+                    {/* F061 AC-56：内联入口只保留对既有流程的兼容读取。
+                        已填写过的流程照常显示、照常运行；但这里不再能新建连接——
+                        字段全部只读，且由后端的数据源管理页承担新连接的建立。
+                        这样明文密码这条债只减不增，而既有流程不受影响（AC-54）。 */}
+                    <p className="mb-3 text-xs text-[#61646D]">
+                        {t("sqlInlineReadonlyHint")}
+                    </p>
+
                     {/* 数据库类型下拉框 */}
                     <Label className="flex items-center bisheng-label">{t("dbType")}</Label>
                     <Select
                         value={database_engine}
+                        disabled
                         onValueChange={(value) => handleChange("database_engine", value)}
                     >
-                        <SelectTrigger className={`mt-2 mb-4 nodrag ${errors.database_engine ? "border-red-500" : ""}`}>
+                        <SelectTrigger className={`mt-2 mb-4 nodrag opacity-60 ${errors.database_engine ? "border-red-500" : ""}`}>
                             <SelectValue placeholder={t("selectDbType")} />
                         </SelectTrigger>
                         <SelectContent>
@@ -124,36 +133,40 @@ export default function SqlConfigItem({ data, onChange, onValidate }) {
                     {/* 数据库地址 */}
                     <Label className="flex items-center bisheng-label">{t("dbAddress")}</Label> {/* 数据库地址 */}
                     <Input
-                        className={`mt-2 nodrag ${errors.db_address ? "border-red-500" : ""}`}
+                        className={`mt-2 nodrag opacity-60 ${errors.db_address ? "border-red-500" : ""}`}
                         value={db_address}
                         type="text"
+                        readOnly
                         onChange={(e) => handleChange("db_address", e.target.value)}
                     />
 
                     {/* 数据库名称 */}
                     <Label className="flex items-center bisheng-label mt-4">{t("dbName")}</Label> {/* 数据库名称 */}
                     <Input
-                        className={`mt-2 nodrag ${errors.db_name ? "border-red-500" : ""}`}
+                        className={`mt-2 nodrag opacity-60 ${errors.db_name ? "border-red-500" : ""}`}
                         value={db_name}
                         type="text"
+                        readOnly
                         onChange={(e) => handleChange("db_name", e.target.value)}
                     />
 
                     {/* 数据库用户名 */}
                     <Label className="flex items-center bisheng-label mt-4">{t("dbUsername")}</Label> {/* 数据库用户名 */}
                     <Input
-                        className={`mt-2 nodrag ${errors.db_username ? "border-red-500" : ""}`}
+                        className={`mt-2 nodrag opacity-60 ${errors.db_username ? "border-red-500" : ""}`}
                         value={db_username}
                         type="text"
+                        readOnly
                         onChange={(e) => handleChange("db_username", e.target.value)}
                     />
 
                     {/* 数据库密码 */}
                     <Label className="flex items-center bisheng-label mt-4">{t("dbPassword")}</Label> {/* 数据库密码 */}
                     <Input
-                        className={`mt-2 nodrag ${errors.db_password ? "border-red-500" : ""}`}
+                        className={`mt-2 nodrag opacity-60 ${errors.db_password ? "border-red-500" : ""}`}
                         value={db_password}
                         type="password"
+                        readOnly
                         onChange={(e) => handleChange("db_password", e.target.value)}
                     />
                 </>

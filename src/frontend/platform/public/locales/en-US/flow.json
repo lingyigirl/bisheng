@@ -672,5 +672,6 @@
   "loopItemVar": "Loop item",
   "loopEmpty": "No published workflows",
   "loopOutputEmpty": "This flow has no exposable output variables",
-  "loopSchemaUnavailable": "The input/output schema of this flow is unavailable"
+  "loopSchemaUnavailable": "The input/output schema of this flow is unavailable",
+  "sqlInlineReadonlyHint": "These inline connection details are read-only now. Create and authorize datasources on the Datasource page instead."
 }

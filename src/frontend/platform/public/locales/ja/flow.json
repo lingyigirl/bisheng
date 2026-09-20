@@ -672,5 +672,6 @@
   "loopItemVar": "ループ項目",
   "loopEmpty": "公開済みワークフローがありません",
   "loopOutputEmpty": "出力可能な変数がありません",
-  "loopSchemaUnavailable": "このフローの入出力情報は現在利用できません"
+  "loopSchemaUnavailable": "このフローの入出力情報は現在利用できません",
+  "sqlInlineReadonlyHint": "インライン接続情報は参照専用です。新規接続は「データソース」ページで作成・認可してください。"
 }
