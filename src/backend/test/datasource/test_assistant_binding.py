@@ -7,7 +7,10 @@ therefore match nothing, and every save would append another duplicate row
 instead of replacing. `test_saving_twice_does_not_duplicate` is that guard.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from bisheng.database.models.assistant import AssistantLinkDao
 
@@ -48,7 +51,14 @@ def test_saving_twice_does_not_duplicate():
         str(one.compile(compile_kwargs={'literal_binds': True})) for one in first_filter.args
     )
     assert 'IS NOT NULL' in rendered.upper(), f'delete filter would not match NULL rows: {rendered}'
+    # The widening clause: without it, one assistant's save wipes every
+    # assistant's bindings -- a larger blast radius than the duplication above.
+    assert 'assistantlink.assistant_id' in rendered, f'delete is not scoped to one assistant: {rendered}'
     assert [link.datasource_id for link in added] == [7, 8]
+
+    # A dropped commit() is silent loss the mock cannot otherwise reveal: the
+    # rows are staged on the fake session and nothing else would notice.
+    session.commit.assert_called_once()
 
 
 def test_an_empty_list_clears_the_binding():
@@ -67,10 +77,14 @@ def test_an_empty_list_clears_the_binding():
 
 async def test_the_login_user_contract_is_enforced():
     """Task 0's guard: a None or bare-LoginUser caller would silently skip the
-    tenant gate inside PermissionService.check, so it raises instead."""
-    import pytest
+    tenant gate inside PermissionService.check, so it raises instead.
 
+    Both halves are asserted: the guard's message names both, and the
+    bare-object one is what Task 3's wiring could most easily regress into.
+    """
     from bisheng.datasource.domain.services import conversation_service
 
     with pytest.raises(ValueError):
         await conversation_service.build_tools_for_assistant([], None)
+    with pytest.raises(ValueError):
+        await conversation_service.build_tools_for_assistant([], SimpleNamespace(user_id=3))
