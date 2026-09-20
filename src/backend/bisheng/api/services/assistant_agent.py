@@ -313,6 +313,26 @@ class AssistantAgent(AssistantUtils):
                     access_scope="per_user" if self.assistant.knowledge_auth else "shared",
                 )
             )
+        # F061 T-31: datasource tools go into the SAME list the knowledge tools
+        # go into, so the model picks between them within one turn (AC-26).
+        #
+        # Collected from the full link list, outside the loop above: that loop's
+        # else-branch files anything without a tool_id as a flow, and a
+        # datasource link has neither tool_id nor knowledge_id.
+        from bisheng.common.dependencies.user_deps import UserPayload
+        from bisheng.datasource.domain.services.conversation_service import (
+            build_tools_for_assistant,
+        )
+
+        # A UserPayload, not the bare int: PermissionService.check skips its
+        # tenant gate for anything without a callable get_visible_tenants, so a
+        # bare id here would drop tenant isolation silently. Same shape the tool
+        # permission check in this method already relies on.
+        datasource_user = UserPayload(user_id=self.invoke_user_id, user_name="", user_role=[])
+        tools.extend(
+            await build_tools_for_assistant(links, datasource_user, user_id=self.invoke_user_id)
+        )
+
         self.tools = [self.wrap_citation_tool(tool) for tool in tools]
         kb_name_by_id = self._resolve_kb_name_by_id(kb_ids + space_ids)
         for tool in self.tools:

@@ -8,7 +8,7 @@ instead of replacing. `test_saving_twice_does_not_duplicate` is that guard.
 """
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -178,3 +178,69 @@ async def test_the_update_response_reports_what_the_store_holds():
 
         # An empty list is a clear, and the response says so
         assert (await _update(datasource_list=[])).datasource_list == []
+
+
+def _payload(user_id=3):
+    """A UserPayload, which carries get_visible_tenants. The contract guard
+    rejects None and bare LoginUser, because both silently skip the tenant gate."""
+    from bisheng.common.dependencies.user_deps import UserPayload
+
+    return UserPayload(user_id=user_id, user_name='', user_role=[])
+
+
+def _link(datasource_id):
+    from bisheng.database.models.assistant import AssistantLink
+
+    return AssistantLink(assistant_id='a1', datasource_id=datasource_id)
+
+
+async def test_nothing_bound_yields_no_tools():
+    """AC-60: every existing assistant keeps behaving exactly as before."""
+    from bisheng.datasource.domain.services import conversation_service
+
+    assert await conversation_service.build_tools_for_assistant([], _payload()) == []
+
+
+async def test_a_bound_and_authorized_datasource_yields_a_tool(monkeypatch):
+    from bisheng.datasource.domain.services import conversation_service
+
+    async def _allowed(login_user, datasource_ids):
+        return list(datasource_ids)
+
+    datasource = SimpleNamespace(id=7, name='客户订单库', enabled=True)
+
+    monkeypatch.setattr(conversation_service, 'authorized_datasource_ids', _allowed)
+    monkeypatch.setattr(
+        'bisheng.datasource.domain.models.dao.DbDatasourceDao',
+        SimpleNamespace(aget_by_id=AsyncMock(return_value=datasource)),
+    )
+    monkeypatch.setattr(
+        'bisheng.datasource.domain.models.dao.DbDatasourceTableDao',
+        SimpleNamespace(alist_by_datasource=AsyncMock(return_value=[])),
+    )
+    # `langchain/tool.py` binds the table DAO at import time, so patching the dao
+    # module alone leaves the real one in place and this test would read a live
+    # database (it passed that way here only because MySQL answered and no rows
+    # existed for id 7). Patch the name the builder actually looks up.
+    monkeypatch.setattr(
+        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao',
+        SimpleNamespace(alist_by_datasource=AsyncMock(return_value=[])),
+    )
+
+    tools = await conversation_service.build_tools_for_assistant([_link(7)], _payload())
+
+    assert [tool.name for tool in tools] == ['datasource_7']
+
+
+async def test_init_tools_wires_the_datasource_tools():
+    """The wiring itself. Asserted on source because driving init_tools needs a
+    live assistant plus an LLM; the behaviour is covered by the tests above."""
+    import inspect
+
+    from bisheng.api.services import assistant_agent
+
+    source = inspect.getsource(assistant_agent.AssistantAgent.init_tools)
+    assert 'build_tools_for_assistant' in source, 'init_tools never asks for datasource tools'
+    assert 'UserPayload(' in source, (
+        'init_tools must pass a UserPayload -- a bare user id would skip the tenant gate'
+    )
