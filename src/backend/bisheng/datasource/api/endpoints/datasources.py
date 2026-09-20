@@ -170,6 +170,70 @@ async def create_datasource(
     return resp_200(to_safe_dict(datasource))
 
 
+@router.get('/available-datasources')
+async def list_available_datasources(
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """Datasources the CALLER may use, for a picker (spec AC-49 / AC-53).
+
+    Distinct from `GET /datasource` above, which is the admin list: that one is
+    gated by `get_tenant_admin_user` and deliberately unfiltered, because showing
+    an admin only their own datasources would make the management page useless.
+    This one answers the opposite question — "what may *I* pick?" — and so it is
+    open to any logged-in user and narrowed to their grants.
+
+    The population matters and is why this exists rather than reusing the admin
+    list: the flow editor at `/flow/:id` has no permission gate, so plenty of
+    people who can open it cannot call the admin endpoint at all.
+
+    The path is hyphenated so it cannot be shadowed by `/{datasource_id}`, which
+    matches any single segment — the same reason `test-connection` and
+    `query-failures` are, and what `test_no_route_can_be_shadowed_by_the_id_route`
+    enforces. Declaring it first would also work but would make correctness
+    depend on registration order.
+
+    Returns id and name only. A picker needs nothing else, and the connection
+    details — including the encrypted password — must not reach a chat-side
+    caller (INV-19 clause 1); `DatasourceRead` has no field for them.
+    """
+    from bisheng.api.v1.schemas import DatasourceRead
+    from bisheng.datasource.domain.services.conversation_service import (
+        authorized_datasource_ids,
+    )
+
+    # One page sized to a practical picker. A tenant with more datasources than
+    # this is not a picker problem — that many is a governance problem, and the
+    # admin page pages properly.
+    page_size = 200
+    candidates, _total = await DbDatasourceDao.alist(
+        enabled_only=True, page=1, page_size=page_size
+    )
+
+    # The authorization set narrows the READ, so a datasource the caller may not
+    # use is never loaded. `ids=[]` is the "authorized for nothing" case and must
+    # stay a real query rather than being skipped — passing no `ids` at all is
+    # the unfiltered read, which is the bug this shape avoids.
+    allowed = sorted(await authorized_datasource_ids(login_user, [row.id for row in candidates]))
+    rows, _total = await DbDatasourceDao.alist(
+        ids=allowed, enabled_only=True, page=1, page_size=page_size
+    )
+
+    return resp_200(
+        {
+            'data': [
+                DatasourceRead(
+                    id=row.id,
+                    name=row.name,
+                    description=row.description,
+                    engine=row.engine,
+                ).model_dump()
+                for row in rows
+            ],
+            'total': len(rows),
+        }
+    )
+
+
 @router.get('/{datasource_id}')
 async def get_datasource(
     datasource_id: int,
