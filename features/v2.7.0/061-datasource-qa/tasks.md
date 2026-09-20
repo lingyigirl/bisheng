@@ -13,8 +13,8 @@
 | spec.md | ✅ 已评审 | 2026-09-17 用户确认。首轮审查 2 CONFLICT 已消除（契约登记完成 + AC-41 收窄遵守 INV-11）；3 条 low ISSUE 经用户确认保留原样（AC-01/AC-10/AC-22 字段枚举、AC-39 意图声明、AC-21 并发约束） |
 | design.md | ✅ 已评审 | 2026-09-17 用户确认。首轮 `/sdd-review design` 0 high / 3 medium / 3 low，**全部 6 条已修订**：① §9 补平台管理端 UI 步骤（spec AC-57，原缺失整块）；② 决策 6 补 AC-28 的「可观测口径」（注入形态标记三处共用）；③ §7 补可操作验证路径（uvicorn / pnpm start / :4001 等真实命令）；④ §4.2 补结果表快照与下载（AC-33）；⑤ §4.2 绑定行改为定稿表述 + §8 推荐项；⑥ §8 补 F058 既有文档漂移记录。**Constitution Check PASS**（C1–C7 无违反） |
 | tasks.md | ✅ 已拆解 | 2026-09-18 拆解完成：**45 个任务 / 10 个 Wave**，66 条 AC 全覆盖（追溯矩阵见文末）。5 条实现前置已全部调研闭环（见下）；拆解前又发现 2 处引擎侧实现缺口（见「拆解期新发现」） |
-| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30 的 API / SQL 校验 / 执行 / 生成链路，共 9 个 commit）。本行原先写「0 / 45」与事实不符，2026-09-20 订正。**T-31 对话侧接线已于 2026-09-20 完成**（10 个 commit，见下「T-31 执行记录」）。**T-35~T-39 平台管理端 UI 已于 2026-09-20 完成**（见下「W8 执行记录」）。**同时核实 T-34 实为已完成**（随 T-31 落地，见 W7 记录）。**余下**：T-32（AC-52 会话内撤权不生效为真缺陷）、T-33（回答侧来源标注缺失）、T-40/T-41 客户端 SPA、T-42 工作流节点收敛、T-43 合规复用、T-44 不变量验证。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
-| e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——需先完成 T-32/T-33 与助手绑定数据源 |
+| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30，9 个 commit）。**2026-09-20 集中推进**：T-31 对话侧接线（10 commit）、T-35~T-39 平台管理端 UI、T-32（AC-52 真缺陷修复）、T-33（回答侧来源保证）、T-40/T-41 客户端。**核实 T-34 实为已完成**（随 T-31 落地）。**余下**：T-42 工作流节点收敛（含 R4 同步阻塞）、T-43 合规复用（行为验证）、T-44 不变量验证。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
+| e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——T-31/T-32/T-33 均已落地，可补对话侧用例 |
 | code-review | 🔲 未开始 | — |
 
 ---
@@ -937,6 +937,26 @@ cd src/frontend && pnpm typecheck && pnpm lint
 
 **覆盖 AC**: AC-24, AC-49, AC-58
 
+**2026-09-20 完成，口径由「选择」收窄为「展示」（用户确认）**
+
+**为什么改口径**：数据源工具由 `AssistantAgent.init_tools` 从助手的**管理端绑定**一次性注入；而支持**逐轮选择**的链路是 workstation SSE（`use_knowledge_base` / `tools`），那条链路**根本没有数据源工具**，且其数据源半边已在 AC-24 登记为已知缺口（需另立 Feature 走 spec 评审）。即：**没有可被选择的东西**——逐轮选择器背后没有可选的工具集。
+
+**落地**：助手应用会话（`pages/appChat/`）输入框上方一行只读来源，列出该助手绑定且**当前用户已授权**的数据源名。与 T-41 的锚点渲染合起来兑现 AC-58 的「来源可辨」：锚点说明**这一次回答**来自哪里，此行说明**可以来自哪里**。
+
+**后端改动（原计划外）**：`AssistantInfo.datasource_list` 由 `list[int]` 改为解析后的只读模型 `DatasourceRead{id, name, description, engine}`。
+- **它不是「多做的」**：同 schema 的 `tool_list` / `flow_list` / `knowledge_list` 三个兄弟**早已是解析后的模型**，平台的保存路径本就把它们 map 回 id；只有 `datasource_list` 是裸 id，是 T-31 引入的不一致。
+- **裸 id 根本没法用**：能解析 id→名字的接口 `GET /api/v1/datasource` 由 `get_tenant_admin_user` 把关，**聊天用户无权调用**。留在客户端解析是死路。
+- 解析与授权过滤（T-32）放在同一处，两者不会各自漂移。
+- 两个 `AssistantInfo` 站点都已更新——**包括 `update_assistant` 的返回值**（T-31 执行记录里那个「漏掉过一次」的站点）。
+
+**实现期发现**：
+
+1. **`DatasourceRead` 必须是窄 schema，不能复用 ORM 行**：`DbDatasource.password` 存 Fernet 密文，INV-19 ① 禁止任何读取路径回显。窄 schema 让这件事变成**结构性**的而非「记得别写错」。变异验证：改成返回 ORM 行 → 6 条用例转红。
+2. **三条既有测试被引入「依赖真实 MySQL」**：写入路径解析会先调权限服务（`edit_app`），而这三个测试只 patch 了 DAO、没 patch 权限服务。**与 T-31 计划里那个「测试打在真实 MySQL 上」是同一类错误**，这次由套件直接报错暴露。已补 stub，耗时从 24 秒超时降到 0.2 秒。
+3. **客户端 Recoil 冻结**（root AGENTS.md §4 / ledger #5）：新组件不 import recoil，改由父组件（本就持有会话状态）派生后以 props 传入。
+
+**验证**：`test/datasource` 409 passed；client `pnpm typecheck` 6 个既有错误不变、`pnpm lint` 5 个既有错误不变、jest 323 passed（同样的 6 条既有失败）。AC-60：无绑定的助手序列化仍为 `[]`（用例如在）。
+
 ---
 
 #### T-41 客户端回答区：来源标注 + 引用锚点 + 展开与下载
@@ -955,6 +975,26 @@ cd src/frontend && pnpm typecheck && pnpm lint
 **验证**：`pnpm typecheck && pnpm lint`；手动：提问触达数据源 → 展开区默认收起 → 展开看到语句与结果表 → 下载 → 刷新页面后仍可展开。
 
 **覆盖 AC**: AC-30, AC-31, AC-32, AC-33, AC-34, AC-58, AC-59
+
+**2026-09-20 完成**（两个 commit：`d8fa3efbe` 识别 + `f1e8f8bb8` 面板与下载）
+
+**核心缺陷是「误分类」而非「缺失功能」**：客户端引用体系只认两类（文档 / 网页），`normalizeCitationType` 把**非 web 一律归为 'rag'**。于是数据源锚点（后端 resolve 接口本来就返回、且已校验）走**文档路径**——badge 显示「文档」、展开器给文档预览，**语句 / 表名 / 结果行无处可渲染**。`citationUtils` 里有一行注释承认这个非 web 默认行为，只是 F061 之前从没有数据源类型流到那里。
+
+**加上了第三类**：`isDatasourceCitation` / `getCitationDataSourceKind`、`getDatasourceAnchor`（含畸形 payload 降级——这是历史重载读回的持久化数据）、`buildDatasourceCsv`、图标与 badge 区分。`bisheng-icons` 全表无数据库字形，按客户端规则回落到 lucide 的 `Database`。
+
+**两个「错了才看得见」的点**：
+
+1. **CSV 的 UTF-8 BOM**。没有它，zh-CN Windows 的 Excel 按 GBK 解码，客户结果表里所有非 ASCII 单元格变乱码。**其他任何查看器都看不出差别**——回归了也毫无征兆，直到客户打开文件。断言因此**读原始字节**（`FileReader.readAsText` 会吃掉 BOM，`Blob.text()` 和 `TextDecoder` 在本项目 jsdom 里都不存在）。
+2. **公式注入**。文件内容来自**客户数据库**，单元格天然是不可信输入；开头的 `=`/`+`/`-`/`@` 加单引号前缀，否则 Excel 打开即执行。
+3. **结果表列宽 = max(表头, 各行)**，与 `buildDatasourceCsv` 一致；两边算法不同会让下载文件与屏幕显示不一致。NULL 渲染为破折号（空单元格与 `""` 无法区分）。
+
+**AC-36（不查询则完全不渲染）**断言了两次（null 与文档引用各一条）。这是最容易退化的一条：「渲染空盒子」看起来像个刻意设计的状态，且空展开器会告诉用户「查过数据库但没结果」——一个**不同且错误**的陈述。
+
+**实现期我自己的失误（记录以免重犯）**：把 BOM **字面量**写进源码，文件对 git/grep/eslint 变成**二进制**；同一个错误还把 `\x00`–`\x1f` 字面控制字符写进了正则字符类。现已全部改为码点构造，控制字符范围整个删除。
+
+**验证**：client `pnpm typecheck` 6 个既有错误不变、`pnpm lint` 5 个既有错误不变（且 `CitationReferencesDrawer` 比改动前**少 2 条**）、jest 323 passed / 同样的 6 条既有失败。25 条新测试**全部经变异验证**（BOM、AC-32 默认收起、AC-36 不渲染、AC-30 豁免、列宽 —— 各自回退都让特定用例转红）。
+
+**未做（不在本任务范围）**：工作台（workstation）链路的锚点渲染——那条链路没有数据源工具（见 AC-24 缺口登记）。`components/Chat/Messages/Content/` 下的渲染是两条链路共用的，故一旦缺口补上即可复用。
 
 ---
 
