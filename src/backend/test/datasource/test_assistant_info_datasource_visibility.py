@@ -74,6 +74,13 @@ def _assistant():
     return _Assistant()
 
 
+def _row(datasource_id):
+    """A datasource row as the DAO returns it, for the resolution step."""
+    return SimpleNamespace(id=int(datasource_id), name=f'db-{datasource_id}', engine='mysql',
+                           host='h', port=1, database_name='d', username='u',
+                           password='ciphertext', description=None, enabled=1)
+
+
 def _links(*datasource_ids):
     return [
         SimpleNamespace(tool_id=None, knowledge_id=None, flow_id=None, datasource_id=ds_id)
@@ -120,6 +127,13 @@ async def _info(monkeypatch, *, can_edit: bool, viewer_for: set[int]):
             'bisheng.api.services.assistant.user_may_share_app',
             AsyncMock(return_value=False),
         ),
+        # The resolution step reads each visible row to get its name. Stubbed
+        # here because leaving it real sends this test at a live MySQL (the
+        # F061 T-31 postmortem records that exact mistake).
+        patch(
+            'bisheng.datasource.domain.models.dao.DbDatasourceDao.aget_by_id',
+            AsyncMock(side_effect=lambda ds_id: _row(ds_id)),
+        ),
     ):
         info = await AssistantService.get_assistant_info('app-1', _User())
 
@@ -128,7 +142,7 @@ async def _info(monkeypatch, *, can_edit: bool, viewer_for: set[int]):
 
 async def test_a_user_without_the_grant_does_not_see_the_bound_datasource(monkeypatch):
     """AC-49: not theirs to use, so not disclosed."""
-    assert await _info(monkeypatch, can_edit=False, viewer_for={7}) == [7]
+    assert [e.id for e in await _info(monkeypatch, can_edit=False, viewer_for={7})] == [7]
 
 
 async def test_a_user_with_no_grants_sees_none_of_them(monkeypatch):
@@ -138,12 +152,12 @@ async def test_a_user_with_no_grants_sees_none_of_them(monkeypatch):
 async def test_an_editor_sees_the_full_binding(monkeypatch):
     """Not a leak: an editor may change the binding, so they must be able to see
     it. Filtering here would make the next save drop the missing ids."""
-    assert await _info(monkeypatch, can_edit=True, viewer_for={7}) == [7, 8]
+    assert [e.id for e in await _info(monkeypatch, can_edit=True, viewer_for={7})] == [7, 8]
 
 
 async def test_an_editor_who_is_granted_everything_is_unchanged(monkeypatch):
     """The common case today must be byte-identical to before (AC-60)."""
-    assert await _info(monkeypatch, can_edit=True, viewer_for={7, 8}) == [7, 8]
+    assert [e.id for e in await _info(monkeypatch, can_edit=True, viewer_for={7, 8})] == [7, 8]
 
 
 async def test_no_bound_datasource_short_circuits_before_any_check(monkeypatch):
@@ -179,6 +193,13 @@ async def test_no_bound_datasource_short_circuits_before_any_check(monkeypatch):
         patch(
             'bisheng.api.services.assistant.user_may_share_app',
             AsyncMock(return_value=False),
+        ),
+        # The resolution step reads each visible row to get its name. Stubbed
+        # here because leaving it real sends this test at a live MySQL (the
+        # F061 T-31 postmortem records that exact mistake).
+        patch(
+            'bisheng.datasource.domain.models.dao.DbDatasourceDao.aget_by_id',
+            AsyncMock(side_effect=lambda ds_id: _row(ds_id)),
         ),
     ):
         info = await AssistantService.get_assistant_info('app-1', _User())

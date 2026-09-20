@@ -12,7 +12,13 @@ import { useAreaText } from "./useAreaText";
 import DragDropOverlay from "~/components/Chat/Input/Files/DragDropOverlay";
 import { useFileDropAndPaste } from "./useFileDropAndPaste";
 
-export default function ChatInput({ readOnly, v }) {
+export default function ChatInput({ readOnly, v, datasources = [] }: {
+    readOnly?: boolean;
+    v?: string;
+    /** F061 T-40: names of the datasources this app may draw on; rendered above
+     *  the input box. Resolved by the parent, which already holds the chat state. */
+    datasources?: string[];
+}) {
     const [bishengConfig] = useRecoilState(bishengConfState);
     const { inputDisabled, error: inputMsg, showUpload, showStop, showReRun } = useRecoilValue(currentRunningState);
     // useAreaText
@@ -49,6 +55,9 @@ export default function ChatInput({ readOnly, v }) {
 
     return (
         <div className="z-10 w-full shrink-0 bg-[#fff] dark:bg-[#1B1B1B]">
+            {/* F061 T-40: what this app can draw on. Above the input box, so the
+                user knows the answer's possible sources before asking. */}
+            <AppSourceSummary datasources={datasources} />
             <div className="mx-auto w-full max-w-[800px] px-4 pt-1">
                 {/* drag upload overlay */}
                 {isDragging && <DragDropOverlay />}

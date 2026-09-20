@@ -58,6 +58,16 @@ export default function ChatView({ data, cid, v, readOnly, isGuestMode = false }
     const location = useLocation();
     const { fid: flowId, type: flowType } = useParams();
     const chatState = useRecoilValue(currentChatState);
+    // F061 T-40: the app's bound datasources, resolved server-side. Derived here
+    // and passed down rather than read in the child, because Recoil is frozen --
+    // a new `recoil` import anywhere would be rejected by lint (ledger #5).
+    const datasourceNames = useMemo<string[]>(() => {
+        const list = (chatState?.flow as { datasource_list?: unknown } | undefined)?.datasource_list;
+        if (!Array.isArray(list)) return [];
+        return list
+            .map((entry) => (entry as { name?: unknown })?.name)
+            .filter((name): name is string => typeof name === 'string' && name !== '');
+    }, [chatState]);
     const running = useRecoilValue(currentRunningState);
     const conversations = useRecoilValue(appConversationsState);
     const [, setConversations] = useRecoilState(appConversationsState);
@@ -224,7 +234,7 @@ export default function ChatView({ data, cid, v, readOnly, isGuestMode = false }
                                     />
                                 </div>
                             ) : (
-                                <ChatInput v={v} readOnly={readOnly} />
+                                <ChatInput v={v} readOnly={readOnly} datasources={datasourceNames} />
                             )
                         )}
                     </div>

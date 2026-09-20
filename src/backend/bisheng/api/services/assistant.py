@@ -318,7 +318,7 @@ class AssistantService(BaseService, AssistantUtils):
             else:
                 logger.error(f"not expect link info: {one.model_dump()}")
         tool_list, flow_list, knowledge_list = cls.get_link_info(tool_list, flow_list, knowledge_list)
-        datasource_list = await cls._visible_datasource_ids(datasource_list, login_user, assistant)
+        datasource_list = await cls._visible_datasources(datasource_list, login_user, assistant)
         assistant.logo = await cls.get_logo_share_link_async(assistant.logo)
         can_share = await user_may_share_app(login_user, "assistant", assistant_id)
         return AssistantInfo(
@@ -333,8 +333,20 @@ class AssistantService(BaseService, AssistantUtils):
         )
 
     @classmethod
-    async def _visible_datasource_ids(cls, datasource_ids: list[int], login_user, assistant) -> list[int]:
-        """The bound datasources `login_user` may know about (F061 AC-49).
+    async def _visible_datasources(cls, datasource_ids: list[int], login_user, assistant):
+        """The bound datasources `login_user` may know about, resolved for display.
+
+        Returns `DatasourceRead` entries rather than ids: the client renders these
+        beside `knowledge_list`, and a chat user cannot resolve an id to a name
+        (the endpoint that would is admin-gated).
+
+        `DatasourceRead`, NOT the ORM row: `DbDatasource.password` holds Fernet
+        ciphertext and INV-19 clause 1 forbids any read path returning it. The
+        narrow schema is what makes that structural rather than remembered.
+
+        A link pointing at a deleted datasource is skipped, not an error —
+        deleting a datasource deliberately leaves stale links behind so history
+        stays readable (AC-62), and one of them must not break the whole response.
 
         Two audiences read this field, and they must not be served the same way:
 
@@ -359,13 +371,32 @@ class AssistantService(BaseService, AssistantUtils):
         if await ApplicationPermissionService.has_any_permission_async(
             login_user, "assistant", str(assistant.id), ["edit_app"]
         ):
-            return datasource_ids
+            visible_ids = datasource_ids
+        else:
+            from bisheng.datasource.domain.services.conversation_service import (
+                authorized_datasource_ids,
+            )
 
-        from bisheng.datasource.domain.services.conversation_service import (
-            authorized_datasource_ids,
-        )
+            visible_ids = await authorized_datasource_ids(login_user, datasource_ids)
 
-        return await authorized_datasource_ids(login_user, datasource_ids)
+        from bisheng.api.v1.schemas import DatasourceRead
+        from bisheng.datasource.domain.models.dao import DbDatasourceDao
+
+        resolved: list[DatasourceRead] = []
+        for datasource_id in visible_ids:
+            row = await DbDatasourceDao.aget_by_id(int(datasource_id))
+            if row is None:
+                # A stale link (AC-62). Skip it rather than fail the request.
+                continue
+            resolved.append(
+                DatasourceRead(
+                    id=row.id,
+                    name=row.name,
+                    description=row.description,
+                    engine=row.engine,
+                )
+            )
+        return resolved
 
     @classmethod
     async def get_one_assistant(cls, assistant_id: str) -> Assistant | None:
@@ -590,9 +621,16 @@ class AssistantService(BaseService, AssistantUtils):
         # falsy ids, and None leaves the bindings untouched -- so echoing the
         # request would report an id that was never written, or [] where the
         # admin still has bindings, clearing the picker they never touched.
-        datasource_list = [
+        #
+        # Resolved through the same helper the read path uses, so the two cannot
+        # drift into different shapes (and so the credential never rides along:
+        # `DatasourceRead` has no password field). The caller just passed
+        # `edit_app` to reach this method, so the editor carve-out in the helper
+        # returns the full binding unchanged.
+        stored_ids = [
             one.datasource_id for one in await AssistantLinkDao.get_assistant_link(assistant.id) if one.datasource_id
         ]
+        datasource_list = await cls._visible_datasources(stored_ids, login_user, assistant)
         tool_list, flow_list, knowledge_list = cls.get_link_info(req.tool_list, req.flow_list, req.knowledge_list)
         cls.update_assistant_hook(request, login_user, assistant)
         can_share = await user_may_share_app(login_user, "assistant", str(assistant.id))

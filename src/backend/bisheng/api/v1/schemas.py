@@ -313,11 +313,33 @@ class AssistantSimpleInfo(BaseModel):
     update_time: datetime
 
 
+class DatasourceRead(BaseModel):
+    """F061: one bound datasource, resolved for display.
+
+    Deliberately a narrow read model rather than the ORM row: `DbDatasource`
+    carries `password` (Fernet ciphertext, INV-19 clause 1), and a schema that
+    took the row would put that one field-name collision away from the response.
+
+    The shape matches `KnowledgeRead` / `FlowRead` / `GptsToolsRead` — `{id,
+    name}` plus what the client needs — because the client renders these four
+    side by side and a bare id list could not be rendered at all: the endpoint
+    that resolves a datasource id to a name is admin-gated, so a chat user has
+    no other way to learn it.
+    """
+
+    id: int
+    name: str
+    description: str | None = None
+    engine: str | None = None
+
+
 class AssistantInfo(AssistantBase):
     tool_list: list[GptsToolsRead] = Field(default_factory=list, description="Tools for assistantsIDVertical")
     flow_list: list[FlowRead] = Field(default_factory=list, description="Skills for assistantsIDVertical")
     knowledge_list: list[KnowledgeRead] = Field(default_factory=list, description="The knowledge base uponIDVertical")
-    datasource_list: list[int] = Field(default_factory=list, description="F061: bound datasource ids")
+    # F061: resolved, like its three siblings above. Write paths still send ids
+    # (see AssistantUpdateReq) — the same asymmetry the siblings already have.
+    datasource_list: list[DatasourceRead] = Field(default_factory=list, description="F061: bound datasources")
     can_share: bool = Field(
         default=False, description="Current user may copy app share link (relation-model share_app)"
     )

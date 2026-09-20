@@ -171,6 +171,26 @@ async def test_the_update_response_reports_what_the_store_holds():
         ),
         patch.object(assistant_service, 'telemetry_service', new=telemetry),
         patch.object(assistant_service, 'user_may_share_app', new=AsyncMock(return_value=False)),
+        # The update caller holds edit_app by definition, and the resolution helper
+        # asks for it. Unstubbed, that check reaches a permission service backed by
+        # MySQL -- which is what made this test require a live database.
+        patch(
+            'bisheng.api.services.assistant.ApplicationPermissionService',
+            new=MagicMock(
+                has_any_permission_async=AsyncMock(return_value=True),
+            ),
+        ),
+        # The response resolves each stored binding to a read model, which reads
+        # the row. Left real, this test reaches a live MySQL (the T-31 postmortem
+        # records that exact mistake).
+        patch(
+            'bisheng.datasource.domain.models.dao.DbDatasourceDao.aget_by_id',
+            new=AsyncMock(
+                side_effect=lambda ds_id: SimpleNamespace(
+                    id=int(ds_id), name=f'db-{ds_id}', engine='mysql', description=None,
+                )
+            ),
+        ),
     ):
 
         async def _update(**overrides):
@@ -178,11 +198,11 @@ async def test_the_update_response_reports_what_the_store_holds():
             return await assistant_service.AssistantService.update_assistant(MagicMock(), MagicMock(), req)
 
         # The save drops the falsy id, so the response must not name it back
-        assert (await _update(datasource_list=[7, 0, 8])).datasource_list == [7, 8]
+        assert [e.id for e in (await _update(datasource_list=[7, 0, 8])).datasource_list] == [7, 8]
         assert [link.datasource_id for link in store['links']] == [7, 8]
 
         # None leaves them untouched -- [] here would clear the admin's picker
-        assert (await _update()).datasource_list == [7, 8]
+        assert [e.id for e in (await _update()).datasource_list] == [7, 8]
 
         # An empty list is a clear, and the response says so
         assert (await _update(datasource_list=[])).datasource_list == []
