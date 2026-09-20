@@ -15,6 +15,7 @@ import {
   getCitationDocumentUrl,
   getCitationSourceKind,
   getCitationSourceLabelI18n,
+  isDatasourceCitation,
   isRagCitation,
   normalizeCitationType,
   resolveCitationDocumentUrl,
@@ -22,6 +23,7 @@ import {
   type CitationPreview,
   type CitationReferenceItem,
 } from './citationUtils';
+import { DatasourceAnchorPanel } from './DatasourceAnchorPanel';
 import CitationDocumentPreviewDrawer, {
   CitationDocumentPreviewContent,
   type CitationDocumentPreviewState,
@@ -140,6 +142,18 @@ function CitationReferenceCard({
 
   const nameRowTextClass =
     'text-[14px] font-normal leading-[22px] text-text-1';
+
+  // F061 AC-32: a database anchor gets the panel — statement, table list, result
+  // table, collapsed by default. The document/web bodies below assume a
+  // documentName or a URL, neither of which a datasource has.
+  if (isDatasourceCitation(detail)) {
+    return (
+      <div className="flex flex-col gap-2">
+        <SourceTypeBadge preview={preview} type={item.data.type} label={sourceLabel} />
+        <DatasourceAnchorPanel detail={detail} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-[92px] flex-col gap-2 rounded-md border border-border-base bg-white p-2">

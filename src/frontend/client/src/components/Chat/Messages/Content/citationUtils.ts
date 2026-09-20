@@ -611,6 +611,48 @@ export function buildDatasourceCsv(anchor: DatasourceAnchor): string {
   return lines.join('\r\n');
 }
 
+/**
+ * The CSV as a Blob, ready for the download action (AC-33).
+ *
+ * The BOM is the whole point of this being a function rather than an inline
+ * `new Blob([csv])` at the call site. Without it Excel on a zh-CN Windows
+ * locale decodes the file as GBK and every non-ASCII cell in a customer's
+ * result table becomes mojibake — a failure that is invisible in every other
+ * viewer and in every test that does not specifically look for it.
+ *
+ * Naming is the caller's job: the filename needs the datasource name, which the
+ * panel has and this does not.
+ */
+export function buildDatasourceCsvBlob(anchor: DatasourceAnchor): Blob {
+  // Built from a code point, not written literally: an inline BOM is
+  // invisible and makes encoding-sniffing tools (git, grep, eslint) treat
+  // this source file as binary.
+  const bom = String.fromCharCode(0xfeff);
+  return new Blob([bom + buildDatasourceCsv(anchor)], { type: 'text/csv;charset=utf-8' });
+}
+
+
+/**
+ * A filename for the downloaded result (AC-33).
+ *
+ * Strips the characters Windows and macOS reject in a filename, and collapses
+ * everything else that is not a word character. A datasource can be named
+ * anything an admin typed, including a `/` — which would silently become a
+ * directory separator in some browsers.
+ */
+export function buildDatasourceExportFilename(
+  anchor: DatasourceAnchor,
+  timestamp: string,
+): string {
+  // Windows-reserved set plus `/`, which some browsers read as a path separator.
+  // Each special character is escaped individually — the backslash is doubled so
+  // the class does not run past it into the next character.
+  const UNSAFE = /[\\/:*?"<>|]/g;
+  const base = (anchor.datasourceName || 'datasource').replace(UNSAFE, '_').trim().slice(0, 60);
+  return `${base || 'datasource'}_${timestamp}.csv`;
+}
+
+
 export function createCitationDetailMap(citations?: ChatCitation[] | null) {
   return (citations ?? []).reduce<Record<string, ChatCitation>>((acc, item) => {
     if (item?.citationId) {
