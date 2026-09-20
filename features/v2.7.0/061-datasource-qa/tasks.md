@@ -13,7 +13,7 @@
 | spec.md | ✅ 已评审 | 2026-09-17 用户确认。首轮审查 2 CONFLICT 已消除（契约登记完成 + AC-41 收窄遵守 INV-11）；3 条 low ISSUE 经用户确认保留原样（AC-01/AC-10/AC-22 字段枚举、AC-39 意图声明、AC-21 并发约束） |
 | design.md | ✅ 已评审 | 2026-09-17 用户确认。首轮 `/sdd-review design` 0 high / 3 medium / 3 low，**全部 6 条已修订**：① §9 补平台管理端 UI 步骤（spec AC-57，原缺失整块）；② 决策 6 补 AC-28 的「可观测口径」（注入形态标记三处共用）；③ §7 补可操作验证路径（uvicorn / pnpm start / :4001 等真实命令）；④ §4.2 补结果表快照与下载（AC-33）；⑤ §4.2 绑定行改为定稿表述 + §8 推荐项；⑥ §8 补 F058 既有文档漂移记录。**Constitution Check PASS**（C1–C7 无违反） |
 | tasks.md | ✅ 已拆解 | 2026-09-18 拆解完成：**45 个任务 / 10 个 Wave**，66 条 AC 全覆盖（追溯矩阵见文末）。5 条实现前置已全部调研闭环（见下）；拆解前又发现 2 处引擎侧实现缺口（见「拆解期新发现」） |
-| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30 的 API / SQL 校验 / 执行 / 生成链路，共 9 个 commit）。本行原先写「0 / 45」与事实不符，2026-09-20 订正。**余下**：T-31 对话侧接线（方案见 design.md 决策 15）、T-35~T-41 平台与客户端 UI、T-42 工作流节点收敛、T-43 合规复用（无测试锚定）、T-44 不变量验证。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
+| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30 的 API / SQL 校验 / 执行 / 生成链路，共 9 个 commit）。本行原先写「0 / 45」与事实不符，2026-09-20 订正。**T-31 对话侧接线已于 2026-09-20 完成**（10 个 commit，见下「T-31 执行记录」）。**余下**：T-35~T-41 平台与客户端 UI、T-42 工作流节点收敛、T-43 合规复用、T-44 不变量验证。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
 | e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——需先完成 T-31 接线与助手绑定数据源 |
 | code-review | 🔲 未开始 | — |
 
@@ -696,6 +696,35 @@ uv run python -m pytest test/datasource/test_credential.py -q
 
 **覆盖 AC**: AC-24（仅助手，工作台半边见 spec 缺口登记）, AC-25, AC-29, AC-31, AC-34
 
+**T-31 执行记录（2026-09-20 完成）**
+
+实现计划：[plan-t31-chat-wiring.md](./plan-t31-chat-wiring.md)（9 个任务）。10 个 commit，按依赖顺序：
+
+| # | commit | 内容 |
+|---|---|---|
+| 0 | `aa7a0da65` | `build_tools_for_assistant` 的 `login_user` 契约断言 |
+| 1 | `c25fe1b87` + `9159b0499` | `AssistantLinkDao.update_assistant_datasource` + 测试 |
+| 2 | `134235b7d` | 请求 / 响应 / 保存分支 / 详情分桶 |
+| 3 | `d7ffd00b6` | 注入进 `AssistantAgent.init_tools` |
+| 4 | `4962e4fa8` | `outcomes` 改累积列表 |
+| 5 | `f47995098` | 锚点桥接（扩 citation wrapper） |
+| 6 | `d81d9162a` | 数据源锚点豁免 + **跨轮泄漏修复** |
+| — | `02a1995f1` | **citation registry 的 DATASOURCE 分支（阻断性缺陷）** |
+| 7 | `01e8ea710` | AC-63 输出围栏锚定 |
+| — | `fdef8aa8b` | 断言收紧（消除 vacuous 检查） |
+
+**执行期发现、计划中未预见的两个缺陷**（均已修复并有回归测试）：
+
+1. **跨轮锚点泄漏**（`d81d9162a`）。`AssistantAgent` 在**同一会话内跨轮复用**（`common/chat/client.py:253` 仅在切会话时重建），而 `reset_citation_registry_items` 只清了 collector 与 wrapper 的 `citation_registry_items`，**没清 `DatasourceQueryTool.outcomes`**。于是第 N 轮会重复引用第 1..N-1 轮查过的每一次查询。**该缺陷在本特性之前就存在**（无标记时 `select_registry_items_for_persistence` 返回全部），task 6 的豁免会把它从「纯数据源场景错」扩大到「所有场景错」，故两者必须同轮发布。变异验证：去掉 `inner.outcomes = []` 该测试即红。
+2. **citation registry 完全不认 DATASOURCE 类型**（`02a1995f1`）。`citation_registry_service.py` 的 `_group_registry_items` 与 `_load_source_payload` 都写成「RAG 吗？否则 WEB」的二元分支，数据源项落进 WEB 分支，`WebCitationPayloadSchema.model_validate` 抛 `url Field required`。**严重性不在少一条记录**：`save_citations` 在 `common/chat/client.py:461` 被调用，位置在**答案流式发出（:477）之前**，其外层 `except Exception`（:492）会发 system 错误帧并关闭 websocket——即「绑了数据源且模型真的查了库的助手，用户看到的是报错而不是回答」。该雷在 T-31 之前是哑的（无生产者），是 task 5 造出生产者后引爆的，故属本工作流必须收口的部分。
+
+**计划自身的缺陷（执行期由审查发现并修正，记录以免重犯）**：
+
+- 计划里 Task 1 的断言 `str(call_args)` 恒为 `<BinaryExpression object at 0x…>`，**任何实现都无法通过**；改用编译成 SQL 后断言。
+- 计划里 Task 3 的测试**打在一个真实 MySQL 上**：`langchain/tool.py` 在 import 期绑定 `DbDatasourceTableDao`，patch `...domain.models.dao.XXX` 打不到实际调用的名字。CI 或任何无中间件的机器上会直接报错。
+- 计划里第二个 `AssistantInfo` 站点（`update_assistant` 的返回值）被漏掉——三处不是两处，漏掉会导致「保存后立刻返回空列表」，UI 会清掉管理员刚做的选择。
+- 计划里两处 vacuous 断言（wiring 的 substring 检查、模块级计数）在执行期被收紧，并以变异验证确认可区分。
+
 ---
 
 #### T-32 未授权数据源不可见 + 授权变更即时生效
@@ -1026,7 +1055,7 @@ AC-61 / AC-64 建议用静态断言（扫描 `KnowledgeTypeEnum` 无数据源成
 | AC-60 | 未建数据源时既有行为完全一致 | T-44 |
 | AC-61 | 不进知识库类型枚举、不产生向量 | T-44 |
 | AC-62 | 删除后立即不可用，历史保持可读 | T-44 |
-| AC-63 | 回答文本遵守同一套对话合规约束 | T-43 |
+| AC-63 | 回答文本遵守同一套对话合规约束 | T-43（行为验证，待做）, T-31（结构性锚定已完成 `01e8ea710`） |
 | AC-64 | 不修改知识库任何既有行为 | T-44 |
 | AC-65 | 执行记录与失败留档不存结果集 / 提问原文 | T-24, T-29 |
 | AC-66 | 创建与变更统一经权限入口 | T-08, T-09 |
