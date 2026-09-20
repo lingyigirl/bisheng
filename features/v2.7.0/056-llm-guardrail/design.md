@@ -8,7 +8,7 @@
 
 **关联**: [spec.md](./spec.md) · [tasks.md](./tasks.md)（待设计评审后编写）
 **版本**: v2.7.0
-**最后更新**: 2026-09-18（**同步 F059 两层检测现状**：§4.2 `source` 字段与行粒度、§4.3 双 matcher、§5 坑 13-15、§6.1 双端点与脱敏口径；见修订历史）
+**最后更新**: 2026-09-20（**修复期收口**：K2 入口清单订正为 6 处、§4.1 补工作站链路与 HTTP 无状态说明、§5 新增坑 16-18；另**订正一处错误测量**——`FOR UPDATE SKIP LOCKED` 实为探测脚本占位符所致。见修订历史）
 
 ---
 
@@ -29,7 +29,7 @@
 | # | 约束 | 对方案的影响 |
 |---|---|---|
 | K1 | **流式实时性**：输出以 SSE 分片流式回传，不能攒完整段再检测（首字延迟不可接受） | 输出检测必须**增量**匹配；AC 自动机需新增带状态 API |
-| K2 | **入口一致性**：对话入口 ≥5 处（v1/v2 的助手与工作流 WebSocket + `/api/v2/assistant/chat/completions` HTTP），任一入口漏埋点 = 围栏有洞 | 检测点必须选在**共享收口层**（ChatManager/ChatClient），不逐端点埋点 |
+| K2 | **入口一致性**（**2026-09-20 订正清单**）：对话入口 **6 处** —— ①v1 助手 ws ②v1 工作流 ws ③v2 OpenAPI 助手 ws ④v2 OpenAPI 工作流 ws ⑤`/api/v2/assistant/chat/completions` HTTP ⑥`/api/v1/workstation/chat/completions` HTTP。**任一入口漏埋点 = 围栏有洞**（⑥ 正是因此被漏掉的，见 H8）。**建议**：检测点选在**共享收口层**（ChatManager/ChatClient），不逐端点埋点 —— 但 ⑤⑥ 是独立实现，绕过 ChatManager，**必须单独接入且单独验证** |
 | K3 | **零回归**：未配置策略的租户，行为与发布前逐字一致（AC-02/AC-17）——**前提是平台级强制词库（F059 / INV-10）未启用**；启用后该层独立于租户策略无条件生效 | 租户层检测点必须「策略无效即直通」：策略读取失败、未启用、词表空 → 直接放行。平台层为**独立的先决判断**，不并入本直通逻辑（F059 实现时在其之前短路） |
 | K4 | **性能**：词表规模可达万级，输入检测 <10ms（AC-06）；输出检测为逐分片增量，单分片开销应亚毫秒级 | 复用既有 AC 自动机 + 策略级进程缓存，检测路径不查库 |
 | K5 | **双 DB（C2）**：新表与字段必须用 `dialect_helpers`（JsonType/LargeText），禁 MySQL 专有语法 | 命中日志表、extra_config 解析按此约束设计 |
@@ -113,7 +113,11 @@
 `ws endpoint（api/v1/assistant.py:214 / api/v1/workflow.py:160 / open_endpoints 同构）→ ChatManager.dispatch_client（common/chat/manager.py:203）→ ChatClient._handle_message（common/chat/clients/base.py:62）→ workflow_client 提交执行（RedisCallback）→ 结果经 ChatClient.send_response（base.py:98）以 msg_type='stream'/'end' 分片回传 ws`
 
 **对话链路（HTTP 兼容接口）**：
-`POST /api/v2/assistant/chat/completions（open_endpoints/api/endpoints/assistant.py:31）→ 独立实现（不经 ChatManager）→ 同步/流式返回`
+`POST /api/v2/assistant/chat/completions（open_endpoints/api/endpoints/assistant.py:31）→ 独立实现（不经 ChatManager）→ 同步/流式返回。**该接口是无状态的**（调用方每次重发完整 messages），故 `chat_id` 为请求级生成（`openapi-{uuid}`），仅用于把同一轮的输入命中与输出命中在日志里关联起来`
+
+**对话链路（工作站）** —— **2026-09-20 补记，H8 的漏点**：
+`POST /api/v1/workstation/chat/completions → workstation/domain/services/chat_service.py::stream_chat_completion → 输入检测（分派前）→ _agent_stream_chat_completion（独立 SSR，不经 ChatManager）→ 逐 token 过 build_output_guard → agent_answer 帧`
+**该链路的三个检测点与 ws 侧不同**：① 输入检测在 `stream_chat_completion` 分派**之前**（agent 分支会在自己的初始化里建会话行，拦截必须早于它）；② 输出检测在**它自己的 SSE 生成器内**（`agent_answer` 的 `stream` 帧），守卫后的文本同时喂给帧、event log 与 `final_msg`；③ 历史过滤走 `answer_filter`（与 worker 共用），因为它不经 `api/v1/callback.py`。
 
 **敏感词检测现状（F036）**：
 `SensitiveWordPolicyService.check_texts（sensitive_word_policy_service.py:252）→ 读策略（SensitiveWordPolicyDao.get_policy，同步 session）→ 词表解析（builtin words.txt lru_cache + custom 文本）→ ACAutomaton.find_all（ac_automaton.py:46，整段从 root 开始匹配）`
@@ -162,6 +166,9 @@
 | 13 | **mask 的打码与计数必须用两份不同的匹配列表**（F059 两层重构引入）：`*_all` = 本缓冲区**全部**匹配（供打码与 emit 边界判定）、`*_matches` = 仅水位线**之后**的匹配（供计数/写日志）。一个词可能上一分片已计数、被扣在 `tail` 里，本分片重扫时**又**被找到——它已过水位线故不在计数列表里，但**仍必须出现在打码列表里** | 用计数列表去打码 → 该词**原样吐出**（实测：F056 原本传的是未过滤列表，F059 重构时误传过滤后列表，成为静默泄漏回归） | `chat_guard.py:311` 起注释写明「conflating them is a leak」，两列表在 `:323`（平台层）与 `:333`（租户层）分别构造 |
 | 14 | **block 截断点取两层中最早的命中**：若平台层命中但租户层同分片也命中，只截到平台词位置会把**租户敏感内容原样吐出**（租户策略在该路径上静默失效） | 平台层启用后租户围栏出现漏洞 | `chat_guard.py:365` 的 `first_start = min(... for pos, word, _ in all_seen)`，注释指明跨两层的取最早 |
 | 15 | `state.auto_reply` 在 block 时被**重写**为胜出层的话术（平台命中则用平台话术），因为 API 层守卫读的是 `state.auto_reply` | 平台拦截却用租户话术收尾，话术与判定来源不符 | `chat_guard.py:375-377` |
+| 16 | **`in_progress` 只看当前节点是不够的**：trie 叶节点 ⟺ 有词在此结束，故 `bool(node.children)` 回答的是「**本节点**能否延伸」；但已消费文本的后缀完全可能**经 fail 链**仍是更长模式的活前缀。此时 `hold=0`，缓冲被整段发出，更长词在下一分片完成时 `_mask` 又因跨度起点在边界之前而丢弃它 | **跨分片明文吐出命中词的大部分**。实测（随包真实词表）：`['习尽评吓台', '台独万岁']` 流 `'习尽评吓台独万岁'` → 输出 `'*****独万岁'`，`台独万岁` 有 3/4 字符可读。2809 个内置词中 **1530 个**以该形态结束 | `ac_automaton.py::in_progress` 走 fail 链（`15b5ee658`） |
+| 17 | **mask 的扣留尾部必须有显式冲刷点**：非流式路径把整段回答作为**一个** chunk 喂给守卫，而此前那次 `chunk == ''` 是空操作（尚无累积）；随后直接 `answer = guarded.safe_text`，扣留的尾部**被丢弃且永不冲刷** | 回答末尾悄无声息地丢字，最坏**整段变空**（如回答为 `'考'` 而 `考答案` 在词表里）。实测 `'上述内容仅供学习参考'` → `'上述内容仅供学习'` | 冲刷移入 `full_text()` 自身（`859799f9d`），调用点无法再搞错顺序 |
+| 18 | **扣留尾部属于「回调自有的守卫实例」，不是 client 的**：助手流式 token 由 `api/v1/callback.py` 的 `AsyncStreamingLLMCallbackHandler` 自己的 `_ensure_output_guard()` 建的守卫处理，而 `client.output_guard` 是**另一个对象**、这条路径从未喂过 | 用户 Stop 时若冲刷 `client.output_guard`，是**看起来像修复的空操作**，尾部照样丢。实测 `'这是正常内容最后'` 应为 `'这是正常内容最后参考'` | 由 callback 暴露 `flush_output_guard()`，client 在停止路径调用它并把返回值入队（`cf2001f68`） |
 
 ---
 
@@ -202,6 +209,20 @@
   - 平台日志页按时间 / 方向 / 应用筛选命中记录（AC-15）
 - **可观测**：命中事件 `logger.info`（含方向、flow_id、命中词数，不含原文）；检测耗时 debug 日志（性能回归用）；日志写失败 `logger.warning`；平台日志页兜底展示。
 
+### 7.1 测试方法论（2026-09-20 补，血泪教训）
+
+修复期 8 条 HIGH 中**有 5 条穿过了当时全部绿灯单测**。原因不是测试少，而是**测试测了别的东西**。三条可复用的判据：
+
+| 教训 | 实例 | 判据 |
+|---|---|---|
+| **穷举前先证触发条件存在** | 「mask 零泄漏」源自 25 种分片的穷举 —— 但词表 `['绝密文件','密码','ab']` **不含**「一个词的后缀是另一个词的前缀」结构，该缺陷**根本不可能发生**。25 次分片是同一未触发条件的 25 次重复 | 对穷举类结论，**先断言输入里存在能让缺陷发生的结构**，再谈覆盖 |
+| **变异测试是唯一证据** | 输出方向 `business_type` 改坏后 **214 个测试全绿**；4 个 ws 端点的守卫实参**可整体删除而 143 全绿** | 写完断言后**必须改坏实现跑一遍**；不变红 = 该断言无效 |
+| **mock 掉被测层 = 不测** | F058 报告已记此条；本轮 `lambda **kwargs: _policy(...)` 把 `business_type` 直接吞掉，是同一模式的另一种形态 | 断言要落在**被测层实际消费的输入**上，而非它忽略的参数 |
+
+**新增测试文件**：`test_in_progress_fail_chain.py`（坑 16）、`test_guard_wiring.py`（入口接线）、`test_answer_filter.py`（持久化前过滤）、`test_chat_output_guard.py`（工作站链路）、`test/sensitive_word/test_chat_guard.py` 的方向锚定。
+
+**一处已知覆盖局限**（如实记录，勿误认为已覆盖）：工作站输出守卫的 helper 是闭包，**外部无法直接调用**。替换其函数体为 `return text`（完全放弃守卫）**不会让任何单测变红**。该链路的有效性只能由 e2e 证明，见 §7 的 e2e 条目。
+
 ---
 
 ## 8. 后续改进 / 不打算做的事
@@ -225,7 +246,8 @@
 | 2026-09-08 | Wave 2 实现落库：ws 双 client 事实校正 + RULE-1 注入方案（决策 2 更新）；输出埋点按真实帧流向三链路落点（决策 3 更新：`_workflow_run` 事件 / 助手回调 / HTTP 端点，共享守卫闭包）；输入拦截返回帧定稿为 `over`/`end`（决策 6B 落地） | T007-T012 实现期发现：助手存在独立 ChatClient 实现；`send_response` 非流式收口；回调与 client 双重守卫风险 |
 | 2026-09-08 | Wave 4 实现落库：e2e 6/6（真实链路：策略 round-trip / HTTP 400+11201 / 命中日志无原文）；/code-review 修复 2 项（block 分支 emit_len 防御性下限；workflow_client 鸭子类型消除新增 RULE-1 违规）+ 坑 11/12 落档（Row 元组解包 / 循环导入惰性导入） | e2e 与 code-review 暴露：租户过滤 Row 包装、guardrail↔callback 循环导入、workflow_client 类型导入违宪 |
 | 2026-09-08 | Wave 3 实现落库：命中日志查询端点补充（§6.1，tasks 拆解遗漏）；平台「安全围栏」tab（策略配置 + 命中日志页，`DialogueWork` 新 tab）；i18n 三语（bs.json guardrail 组 + api_errors 11201/11202） | T013-T017 实现期：前端控制器按拦截器解包语义类型化（勿二次 .data 解包，F055 T-19 口径） |
-| 2026-09-18 | **code-review 执行**（报告：[code-review-report.md](./code-review-report.md)）。代码维度全通过（跨分片匹配与 mask 泄漏经穷举实测）；HIGH 两条均在测试覆盖与文档同步：① AC-05/10/11/12/14 的真实链路验证依赖**从未执行**的手动清单；② design 未同步 F059 两层现状 | 本次审查发现 F059 落地后本 design 已滞后：检测链路变为两层，但 §4.2/§4.3/§6.1 仍按单层描述 |
+| 2026-09-18 | **code-review 执行**（报告：[code-review-report.md](./code-review-report.md)）。~~代码维度全通过~~ —— **该判定后被二轮补审推翻**（见下方 09-20 条目）；本轮的实质发现是设计文档滞后：F059 落地后检测链路变为两层，而 §4.2/§4.3/§6.1 仍按单层描述 | 本次审查发现 design 未同步 F059 现状 |
 | 2026-09-18 | **回写 F059 两层现状**：§4.2 补 `source` 字段与「每层各写一行」的行粒度；§4.3 补双 matcher/双 tail_state；§5 新增坑 13（mask 必须用未过滤列表，否则泄漏词）、坑 14（block 取两层最早命中）、坑 15（auto_reply 按胜出层重写）；§6.1 补 `/all` 跨租户端点与平台词服务端脱敏口径 | 上条 code-review 的 H2/M3 文档漂移 |
 | 2026-09-18 | **订正 API 路径**：本文与 spec 中的 `POST /api/v2/chat/completions` 共 9 处改为 `/api/v2/assistant/chat/completions`。原路径**不存在**，按它写集成代码会 404 | code-review 发现。已用程序化方式复核（遍历 `api.router` + `router_rpc.routes`）：`/api/v2/assistant/chat/completions` 存在，`/api/v2/chat/completions` 不存在 |
 | 2026-09-18 | **补记 workstation 入口**：`POST /api/v1/workstation/chat/completions` 是第 4 个对话入口，原 K2 的清单未列、实现也未接入。第一步（输入拦截 + 历史过滤）已落地；**输出流式检测未做**，见 code-review 报告的 H8 | code-review 发现；其 SSE 事件形状与 ws 侧不同，需单独埋点 |
+| 2026-09-20 | **修复期收口（14 个提交，8 条 HIGH 全闭）**。补三处实现事实：① **§4.1 数据流**——助手 ws 的输出检测实际发生在**回调**（`api/v1/callback.py` 的 `on_llm_new_token`），不是初版写的 `send_response`；工作站链路（`workstation/.../chat_service.py`）为**独立实现**，输出检测在其 SSE 生成器内。② **§4.3 + K2 入口清单**——对话入口实为 **5 处**（4 个 ws + 1 个 OpenAI 兼容 HTTP + workstation），初版 K2 只列了 4 处。③ **坑 16-18**：mask 的 `in_progress` 必须走 fail 链（否则跨分片泄漏）、非流式路径必须显式冲刷扣留尾部（否则丢字/e68）、扣留尾部属于**回调自有的守卫实例**而非 client 的。**订正一处错误测量**：`FOR UPDATE SKIP LOCKED` 曾被记为「解析失败典型」，实为探测脚本里的 `...` 占位符所致。 | 二轮 code-review 找到 8 条 HIGH（mask 泄漏 / 历史存原文 / `output_msg` 绕过 为合规级）；首轮「代码维度全通过」判定有误 |

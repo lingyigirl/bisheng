@@ -12,9 +12,27 @@
 | spec.md | ✅ 已评审 | 2026-09-07 /sdd-review spec 通过（两处 low 已修复后复审） |
 | design.md | ✅ 已评审 | 2026-09-07 /sdd-review design 通过（决策 3 HTTP 流式输出锚点 + §7 验证入口已补） |
 | tasks.md | ✅ 已拆解 | 2026-09-07 拆解完成：19 个任务 / 5 个 Wave，18 条 AC 全覆盖 |
-| 实现 | ✅ 完成 | 20 / 20 完成。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
-| e2e-test | ⚠️ 部分执行 | 自动化 e2e 覆盖 AC-01/02/03/06/07/08/15/17（需活后端，CI 跑）。**AC-05/10/11/12/14 的真实 ws/流式链路验证落在 [e2e-checklist.md](./e2e-checklist.md) 的 7 项手动清单，状态仍为「待执行」** —— 见 code review 的 H1 |
-| code-review | ⚠️ 1 条 HIGH 待处理 | 2026-09-18。代码维度（边界/权限/并发/泄漏/风格）**全通过**；跨分片匹配与 mask 泄漏经穷举实测无误。**H2**（design 未同步 F059 两层现状）与 **M1**（AC-18 无测试）**已闭合**；**H1 仍开放** —— 核心 AC 的真实 ws/流式链路验证依赖 [e2e-checklist.md](./e2e-checklist.md) 的 7 项手动清单，需能连中间件的环境。报告：[code-review-report.md](./code-review-report.md) |
+| 实现 | ✅ 完成 | 20 / 20 完成。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4。**2026-09-18~20 修复期另有 14 个提交**（见下 code-review 行） |
+| e2e-test | ⚠️ 部分执行 | **自动化套件 2026-09-20 在活后端实跑：6 passed，连跑 3 次全绿**（`test/e2e/test_e2e_f056_llm_guardrail.py`，覆盖 AC-01/02/03/06/07/08/15/17）。**AC-05/10/11/12/14 的真实 ws 链路仍待手动验证** —— [e2e-checklist.md](./e2e-checklist.md) 的 7 项清单尚未执行（需浏览器 ws 链路）。**工作站链路已单独在活后端验证**（非 ws），见下 |
+| code-review | ✅ 已执行（8 条 HIGH 全闭） | 2026-09-18~20，共 3 轮。**首轮**判「代码维度全通过」**有误** —— 二轮补审找到 **8 条 HIGH**，全部已修并各有验证（多为变异测试 + 活后端实测）。**14 个修复提交**，`test/sensitive_word`+`datasource`+`worker` **472 passed**。报告：[code-review-report.md](./code-review-report.md) |
+
+> **修复期提交一览**（2026-09-18 ~ 09-20）：
+>
+> | 缺口 | 提交 |
+> |---|---|
+> | H3 mask 跨分片泄漏命中词 | `15b5ee658` |
+> | H4 非流式回答丢尾部 | `859799f9d` |
+> | H6 `output_msg` 帧绕过围栏 | `d752f6d56` |
+> | H5 工作流历史存未过滤原文 | `752206c4d` |
+> | 接线回归保护（4 入口可整体拆除而测试全绿） | `31374a4ab` |
+> | H8 第 1 步 workstation 入口无围栏 | `9fc585dbe` |
+> | H7 输出 `business_type` 无测试锚定 | `86320d7a8` |
+> | M-5 收尾话术按分片重复追加 | `9a00e6169` |
+> | M-6 多流式节点答案串在一起 / M-7 Stop 丢尾部 | `cf2001f68` |
+> | M-3 spec API 路径写错 / L2 `chat_id` 传 NULL | `0589af0b4` |
+> | H8 第 2 步 workstation 输出流式检测 | `aa51b6ea0` |
+
+> **仍未闭合**：**H1**（AC-05/10/11/12/14 的真实 ws 链路验证 —— 依赖手动清单）、**L1**（事件循环上的同步 DB 读，与 K4「检测路径不查库」相悖）、**L3**（`str.lower()` 长度不守恒导致打码错位）。
 
 ---
 
