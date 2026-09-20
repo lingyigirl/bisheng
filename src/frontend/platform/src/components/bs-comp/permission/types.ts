@@ -10,6 +10,9 @@ export type ResourceType =
   | 'tool'
   | 'channel'
   | 'dashboard'
+  // F061: mirrors the backend's `VALID_RESOURCE_TYPES` entry. A peer of
+  // `knowledge_library`, not a subtype (spec AC-43) — it has its own ids.
+  | 'db_datasource'
 
 export type RelationLevel = 'owner' | 'manager' | 'editor' | 'viewer'
 

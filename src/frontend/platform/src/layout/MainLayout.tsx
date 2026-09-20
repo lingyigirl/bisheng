@@ -236,6 +236,18 @@ export default function MainLayout() {
                                 </NavLink>
                             </>
                         }
+                        {/* F061 AC-57. Gated on the admin flags rather than a
+                            web_menu key, the same way the approval entry above
+                            is: every endpoint behind /datasource requires
+                            get_tenant_admin_user (global super admin or the
+                            current tenant's Child Admin), which is exactly
+                            isSuperAdmin || isChildAdmin. */}
+                        {
+                            (isSuperAdmin || isChildAdmin) &&
+                            <NavLink to='/datasource' className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
+                                <DatasetIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.datasource')}</span>
+                            </NavLink>
+                        }
                         {
                             showAdminNav('model') &&
                             <NavLink to={isMenu('model') ? '/model' : '/menu-pending?menu=model'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>

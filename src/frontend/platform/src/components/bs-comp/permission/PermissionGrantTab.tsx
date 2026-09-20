@@ -115,6 +115,11 @@ interface PermissionGrantTabProps {
   includeChildren?: boolean
   onIncludeChildrenChange?: (value: boolean) => void
   hideDepartmentIncludeChildrenControl?: boolean
+  /**
+   * F061 AC-47: restricts which subject kinds this resource may be granted to.
+   * Undefined means every kind, which is every other resource type.
+   */
+  allowedSubjectTypes?: SubjectType[]
 }
 
 export function PermissionGrantTab({
@@ -129,6 +134,7 @@ export function PermissionGrantTab({
   includeChildren: includeChildrenProp,
   onIncludeChildrenChange,
   hideDepartmentIncludeChildrenControl = false,
+  allowedSubjectTypes = SUBJECT_TYPES,
 }: PermissionGrantTabProps) {
   const { t } = useTranslation('permission')
   const { message } = useToast()
@@ -336,7 +342,7 @@ export function PermissionGrantTab({
       {!fixedSubjectType && (
         <div className="flex items-center gap-3">
           <div className="flex w-fit gap-1 rounded-md bg-muted p-1">
-            {SUBJECT_TYPES.map((type) => (
+            {allowedSubjectTypes.map((type) => (
               <button
                 key={type}
                 className={`rounded px-3 py-1.5 text-sm transition-colors ${subjectType === type

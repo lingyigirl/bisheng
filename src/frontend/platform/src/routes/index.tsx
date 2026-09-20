@@ -24,6 +24,7 @@ const DataSetPage = lazy(() => import("@/pages/DataSetPage"));
 const EvaluatingPage = lazy(() => import("@/pages/EvaluationPage"));
 const EvaluatingCreate = lazy(() => import("@/pages/EvaluationPage/EvaluationCreate"));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage"));
+const DatasourcePage = lazy(() => import("@/pages/DatasourcePage"));
 const AdjustFilesUpload = lazy(() => import("@/pages/KnowledgePage/AdjustFilesUpload"));
 const FilesPage = lazy(() => import("@/pages/KnowledgePage/detail"));
 const FilesUpload = lazy(() => import("@/pages/KnowledgePage/filesUpload"));
@@ -89,6 +90,11 @@ const privateRouter = [
       { path: "filelib/upload/:id", element: <FilesUpload />, permission: 'knowledge', },
       { path: "filelib/adjust/:fileId", element: <AdjustFilesUpload />, permission: 'knowledge', },
       { path: "filelib/qalib/:id", element: <QasPage />, permission: 'knowledge', },
+      // F061 AC-57: reuses the `sys` permission rather than minting a menu key.
+      // The backend behind this page is gated by get_tenant_admin_user (global
+      // super admin or the current tenant's Child Admin), and `sys` covers the
+      // same population — the sidebar entry below gates on the same two flags.
+      { path: "datasource", element: <DatasourcePage />, permission: 'sys', },
       { path: "build/apps", element: <Apps />, permission: 'build', },
       // @ts-ignore
       { path: "build/tools", element: <SkillToolsPage />, permission: 'build', },

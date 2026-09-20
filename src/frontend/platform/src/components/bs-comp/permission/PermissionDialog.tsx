@@ -6,7 +6,7 @@ import { Checkbox } from "@/components/bs-ui/checkBox"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/bs-ui/tabs"
 import { getGrantableRelationModelsApi, type RelationModel } from "@/controllers/API/permission"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { PermissionGrantTab } from "./PermissionGrantTab"
 import { PermissionListTab } from "./PermissionListTab"
@@ -20,7 +20,7 @@ interface PermissionDialogProps {
   resourceName: string
 }
 
-const SUBJECT_TABS: Array<{
+const ALL_SUBJECT_TABS: Array<{
   value: SubjectType
   labelKey: string
 }> = [
@@ -29,10 +29,33 @@ const SUBJECT_TABS: Array<{
   { value: 'user_group', labelKey: 'subject.userGroup' },
 ]
 
+/**
+ * F061 AC-47: a datasource carries no department semantics, so the department
+ * subject is not offered for it at all.
+ *
+ * This has to be a per-resource filter rather than a note on the page: the
+ * backend's `validate_resource_grants` accepts a department subject for EVERY
+ * resource type (`grant_subject_query_service.py`), so hiding it in the UI is
+ * what actually keeps "grant a datasource to a department" off the product.
+ */
+const SUBJECT_TABS_BY_RESOURCE: Partial<Record<ResourceType, SubjectType[]>> = {
+  db_datasource: ['user', 'user_group'],
+}
+
+function subjectTabsFor(resourceType: ResourceType) {
+  const allowed = SUBJECT_TABS_BY_RESOURCE[resourceType]
+  if (!allowed) return ALL_SUBJECT_TABS
+  return ALL_SUBJECT_TABS.filter((tab) => allowed.includes(tab.value))
+}
+
 export function PermissionDialog({
   open, onOpenChange, resourceType, resourceId, resourceName,
 }: PermissionDialogProps) {
   const { t } = useTranslation('permission')
+  // Memoised on resourceType: a fresh array each render would re-fire the
+  // children's effects that depend on it.
+  const subjectTabs = useMemo(() => subjectTabsFor(resourceType), [resourceType])
+  const allowedSubjectTypes = useMemo(() => subjectTabs.map((tab) => tab.value), [subjectTabs])
   const [currentSubjectType, setCurrentSubjectType] = useState<SubjectType>('user')
   const [grantDialogOpen, setGrantDialogOpen] = useState(false)
   const [grantSubjectType, setGrantSubjectType] = useState<SubjectType>('user')
@@ -90,7 +113,7 @@ export function PermissionDialog({
     >
       <div className="flex items-center justify-between gap-3">
         <TabsList className="h-auto w-fit shrink-0 rounded-[6px] border border-[#ECECEC] bg-white p-[3px] shadow-none">
-          {SUBJECT_TABS.map((tab) => (
+          {subjectTabs.map((tab) => (
             <TabsTrigger
               key={tab.value}
               value={tab.value}
@@ -124,6 +147,7 @@ export function PermissionDialog({
           prefetchedGrantableModelsLoaded={grantableModelsLoaded}
           prefetchedUseDefaultModels={useDefaultModels}
           skipGrantableModelsRequest
+          allowedSubjectTypes={allowedSubjectTypes}
         />
       </TabsContent>
     </Tabs>
@@ -160,7 +184,7 @@ export function PermissionDialog({
           <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="flex items-center gap-3">
               <div className="inline-flex w-fit shrink-0 items-center justify-center rounded-[6px] border border-[#ECECEC] bg-white p-[3px]">
-                {SUBJECT_TABS.map((tab) => (
+                {subjectTabs.map((tab) => (
                   <button
                     key={tab.value}
                     type="button"
@@ -201,6 +225,7 @@ export function PermissionDialog({
                 includeChildren={grantIncludeChildren}
                 onIncludeChildrenChange={setGrantIncludeChildren}
                 hideDepartmentIncludeChildrenControl
+                allowedSubjectTypes={allowedSubjectTypes}
               />
             </div>
           </div>

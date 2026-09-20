@@ -13,8 +13,8 @@
 | spec.md | ✅ 已评审 | 2026-09-17 用户确认。首轮审查 2 CONFLICT 已消除（契约登记完成 + AC-41 收窄遵守 INV-11）；3 条 low ISSUE 经用户确认保留原样（AC-01/AC-10/AC-22 字段枚举、AC-39 意图声明、AC-21 并发约束） |
 | design.md | ✅ 已评审 | 2026-09-17 用户确认。首轮 `/sdd-review design` 0 high / 3 medium / 3 low，**全部 6 条已修订**：① §9 补平台管理端 UI 步骤（spec AC-57，原缺失整块）；② 决策 6 补 AC-28 的「可观测口径」（注入形态标记三处共用）；③ §7 补可操作验证路径（uvicorn / pnpm start / :4001 等真实命令）；④ §4.2 补结果表快照与下载（AC-33）；⑤ §4.2 绑定行改为定稿表述 + §8 推荐项；⑥ §8 补 F058 既有文档漂移记录。**Constitution Check PASS**（C1–C7 无违反） |
 | tasks.md | ✅ 已拆解 | 2026-09-18 拆解完成：**45 个任务 / 10 个 Wave**，66 条 AC 全覆盖（追溯矩阵见文末）。5 条实现前置已全部调研闭环（见下）；拆解前又发现 2 处引擎侧实现缺口（见「拆解期新发现」） |
-| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30 的 API / SQL 校验 / 执行 / 生成链路，共 9 个 commit）。本行原先写「0 / 45」与事实不符，2026-09-20 订正。**T-31 对话侧接线已于 2026-09-20 完成**（10 个 commit，见下「T-31 执行记录」）。**余下**：T-35~T-41 平台与客户端 UI、T-42 工作流节点收敛、T-43 合规复用、T-44 不变量验证。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
-| e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——需先完成 T-31 接线与助手绑定数据源 |
+| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30 的 API / SQL 校验 / 执行 / 生成链路，共 9 个 commit）。本行原先写「0 / 45」与事实不符，2026-09-20 订正。**T-31 对话侧接线已于 2026-09-20 完成**（10 个 commit，见下「T-31 执行记录」）。**T-35~T-39 平台管理端 UI 已于 2026-09-20 完成**（见下「W8 执行记录」）。**同时核实 T-34 实为已完成**（随 T-31 落地，见 W7 记录）。**余下**：T-32（AC-52 会话内撤权不生效为真缺陷）、T-33（回答侧来源标注缺失）、T-40/T-41 客户端 SPA、T-42 工作流节点收敛、T-43 合规复用、T-44 不变量验证。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
+| e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——需先完成 T-32/T-33 与助手绑定数据源 |
 | code-review | 🔲 未开始 | — |
 
 ---
@@ -742,9 +742,13 @@ uv run python -m pytest test/datasource/test_credential.py -q
 
 **覆盖 AC**: AC-49, AC-52
 
----
+**2026-09-20 状态核实（本次未实施，记录以便下次直接开工）**：
 
-#### T-33 回答标注数据来源
+- **(a) 列表过滤半条 —— 会话侧已有，列表侧无面**。`conversation_service.py:70-101` 的 `authorized_datasource_ids` 按 id 逐个查 `viewer`，供 `build_tools_for_assistant` 过滤模型可用工具（`assistant_agent.py:366`）。但**面向用户的「可选数据源列表」接口不存在**：唯一的列表端点 `GET /api/v1/datasource` 由 `get_tenant_admin_user` 把关且刻意不做 per-user 过滤（`datasources.py:125-134` 明写管理页立场）。`AssistantInfo.datasource_list`（`assistant.py:304-317`）返回**原始绑定 id、未过授权**——能「使用」某助手的人能看到该助手绑定但自己无权使用的数据源 id。是否算 AC-49 违反取决于口径（AC-49 的字面要求是「不出现在该用户**可选的来源列表**中」），**需在 T-40 落地前定夺**。
+- **(b) 拒绝半条 —— 代码在，调用方零**。`resolve_bound_datasource`（`conversation_service.py:157-172`）专为 AC-49 后半句而写，但全仓 grep **零调用方、零测试**。当前实际拒绝来自 `can_manage` / 管理员角色校验（`datasources.py:238-245,273-290`），不是 `viewer` 关系。T-32 点名的 `test_datasource_permission.py` 里**没有「绕过列表直连接口」的用例**（其直接调用用例只覆盖 T-09 的 update 路径）。
+- **(c) 授权变更即时生效 —— 真缺陷**。`conversation_service.py` 的模块 docstring 自称「AC-52 由「每轮检查而非缓存解析结果」成立」，但**实际是每会话而非每轮**：工具集在 `AssistantAgent.init_tools` 里构建一次（`assistant_agent.py:366-368`），而 agent 在**同一会话内跨轮复用**（`common/chat/client.py:253` 仅在切会话时重建，`reset_citation_registry_items()` 每轮只清引用状态、不清工具）。**后果：会话进行中撤销授权，该会话的后续轮次仍可继续查该数据源**，直到切会话/重连。与 AC-52 字面冲突，且与自身 docstring 相矛盾。修复方向：把工具集的授权过滤挪到每轮（或每轮复检已构建工具的数据源是否仍在授权集内）。
+
+
 
 **依赖**: T-30, T-34
 
@@ -776,6 +780,19 @@ uv run python -m pytest test/datasource/test_credential.py -q
 
 **覆盖 AC**: AC-31, AC-34
 
+**2026-09-20 状态核实：已完成（随 T-31 落地，无需再做）**
+
+三条改动逐条复核，均由 T-31 的 10 个 commit 覆盖：
+
+- **(a) 锚点格式** ✅ `DatasourceCitationPayloadSchema`（`datasource/domain/schemas/citation.py:30-42`）＝ `{datasourceId, datasourceName, tables[], statement, columns[], rows[][], truncated}`；`tables` 由 `executor.tables_from_statement` 从语句解析。与 spec 字面 `{datasource, sql}` 仅命名差异（id/name 拆分、`statement`）。由 `AssistantCitationToolWrapper` 的数据源分支自 `QueryOutcome` 构造（`assistant_agent.py:94-102`）。
+- **(b) 随消息持久化** ✅ `common/chat/client.py:455-473`:`select_registry_items_for_persistence` → `save_message_citations(message_id=res.id, …)`，DATASOURCE 分组整组保留（`citation_registry_service.py:492-497`），按 `message_id` 存 `citation_type` + `source_payload`；回读走 `_load_source_payload` 的 DATASOURCE 分支 + `to_registry_item`，出口再校验（`citation_resolve_service.py:294-318`），经 `POST /api/v1/citations/resolve` 暴露。JSON 往返测试见 `test_citation_security.py:223-247`。
+- **(c) 复用执行期行数上限** ✅ 上限只有一处 `MAX_ROWS = 200`（`executor.py:62`），取数时一次性施加并置 `truncated`；锚点**原样复制** `outcome.rows`，无二次裁剪（`assistant_agent.py:100`）。
+
+**与任务书的两处偏差（均属订正而非降级）**：
+
+1. 点名的 `test/datasource/test_citation.py` **不存在**，覆盖实际落在 `test_assistant_anchor.py` + `test_citation_security.py`。
+2. 范围是**助手对话入口**，因为数据源工具目前只接在那里（`assistant_agent.py:389-396`），与 AC-24 已登记的范围收窄一致。
+
 ---
 
 ### Wave 8 — 平台管理端 UI（⚡ 可与 W6–7 并行，依赖 W4）
@@ -783,6 +800,35 @@ uv run python -m pytest test/datasource/test_credential.py -q
 > **技术栈**：platform SPA（Zustand + react-query v3 + bs-ui，import 用 `@/`）。
 > 参照最近似页面：`src/frontend/platform/src/pages/KnowledgePage/`。
 > ⚠️ 与 W9 的 client SPA **技术栈不同、组件不可共享**（design §9 排期警告）。
+
+**W8 执行记录（2026-09-20 完成，T-35~T-39）**
+
+新增文件（均无 `@ts-strict-ignore`，全量 strict 通过）：
+
+| 文件 | 行数 | 内容 |
+|---|---|---|
+| `pages/DatasourcePage/index.tsx` | 49 | 页面壳：列表 / 失败清单两个 Tab |
+| `pages/DatasourcePage/DatasourceListTab.tsx` | 203 | T-35 列表 + T-38 授权入口 + 删除 / 启停 |
+| `pages/DatasourcePage/DatasourceFormDialog.tsx` | 295 | T-35 表单（六引擎、测试连接、可写账号警告） |
+| `pages/DatasourcePage/DatasourceTablesView.tsx` | 312 | T-36 表勾选与结构、T-37 重采集 |
+| `pages/DatasourcePage/TableDescriptionDialog.tsx` | 91 | T-37 业务描述编辑 |
+| `pages/DatasourcePage/QueryFailuresTab.tsx` | 150 | T-39 失败清单 |
+| `pages/DatasourcePage/useDatasourceQueries.ts` | 63 | 列表状态（两个 Tab 共享，供失败行跳转） |
+| `pages/DatasourcePage/datasourceConstants.ts` | 100 | 引擎默认端口 / 标签 / 表单校验 |
+| `controllers/API/datasource.ts` | 214 | 全部 10 个后端端点的封装 |
+
+测试（3 个文件 / 10 条，**全部经变异验证**）：`test/datasourcePage.test.tsx`、`test/datasourcePermissionDialog.test.tsx`、`test/datasourceTablesView.test.tsx`。
+
+**入口位置（实现期决策，tasks.md 原未指定）**：**独立页面 `/datasource` + 侧边栏入口**，复用 `permission: 'sys'` 而非新增一级菜单键。理由：① 页面后端全部由 `get_tenant_admin_user` 把关（全局超管或当前租户 Child Admin），与 `isSuperAdmin || isChildAdmin` 同一人群；② 新增菜单键需改动后端 `WebMenuResource` 枚举 + `auth.py` 两个 frozenset + `init_data`、前端角色管理白名单 + 审批页 + 占位页，外加一个角色 backfill——而 `alembic/AGENTS.md §5` 禁止在迁移里做 backfill，需另起 `scripts/` CLI + 启动钩子。先例：`/model/resource`、`/approval` 同样复用既有 permission 自行渲染入口。**用户 2026-09-20 确认此方案**（备选：KnowledgePage 第三个 Tab / SystemPage 新增 Tab / 真·一级菜单键）。
+
+**实现期发现（已处理）**：
+
+1. **AC-46「全员可见」在码基中根本不存在** —— 权限对话框（`bs-comp/permission/`）没有任何 public/everyone 选项，是**结构性满足**而非遗漏。已加断言锁死（变异验证：往 DialogTitle 注入 `Public` 即红）。
+2. **AC-47 部门语义：后端不拦，只能靠 UI 不提供** —— `grant_subject_query_service.py:198` 的 `validate_resource_grants` 对**所有**资源类型一视同仁接受 `department` 主体，直接调 API 可把数据源授权给部门。故在 `PermissionDialog` 增加按资源类型过滤 `SUBJECT_TABS_BY_RESOURCE`（仅 `db_datasource` 去掉部门），并把过滤传到 `PermissionListTab` / `PermissionGrantTab`。**KB 等其它资源类型行为不变**（已加回归断言）。⚠️ **残留风险**：绕过 UI 直连 API 仍可授给部门，需后端补拒——已登记为 spec/后端待办。
+3. **AC-14 的「不可采」与「无注释」必须区分** —— 采集器对无法上报注释的方言**不写 `comment` 字段**，对有该能力但为空值者写 `""`。UI 据此区分：`undefined/null` 显示「该引擎无法自动采集注释」，`""` 显示空。已加断言（两条列各一，且断言「不可采」文案只出现一次）。
+4. **测试自身的一个假绿陷阱**：Radix 把 `DialogContent` portal 到 `document.body` 之外，`render()` 返回的 `container.innerHTML` **长度为 0**。凡以 `container.textContent` 写的「不得出现 X」类断言**恒真**——AC-46 的断言初版即如此，注入 `Public` 后仍全绿，改用 `screen.getByRole('dialog')` 才成立。已存入项目记忆。
+
+**W8 未覆盖 / 遗留**：写操作失败时的前端提示依赖 `captureAndAlertRequestErrorHoc` 的全局 toast（未逐操作定制文案）；无 Playwright 自动化（前端任务仍是手动验证口径，见「开发模式」）。
 
 #### T-35 数据源列表与创建 / 编辑表单
 

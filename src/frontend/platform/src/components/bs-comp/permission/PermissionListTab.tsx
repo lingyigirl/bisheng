@@ -82,6 +82,8 @@ interface PermissionListTabProps {
   prefetchedUseDefaultModels?: boolean
   skipGrantableModelsRequest?: boolean
   fixedSubjectType?: ListSubjectType
+  /** F061 AC-47: restricts the visible subject kinds. Undefined = all. */
+  allowedSubjectTypes?: readonly ListSubjectType[]
 }
 
 const DEFAULT_MODELS: RelationModelOption[] = [
@@ -103,6 +105,7 @@ export function PermissionListTab({
   prefetchedUseDefaultModels = false,
   skipGrantableModelsRequest = false,
   fixedSubjectType,
+  allowedSubjectTypes = LIST_SUBJECT_TYPES,
 }: PermissionListTabProps) {
   const { t } = useTranslation('permission')
   const { message } = useToast()
@@ -149,11 +152,11 @@ export function PermissionListTab({
 
   useEffect(() => {
     if (fixedSubjectType || userSelectedTab || entries.length === 0 || subjectEntries.length > 0) return
-    const firstNonEmptyTab = LIST_SUBJECT_TYPES.find((subjectType) =>
+    const firstNonEmptyTab = allowedSubjectTypes.find((subjectType) =>
       entries.some((entry) => entry.subject_type === subjectType),
     )
     if (firstNonEmptyTab) setListTab(firstNonEmptyTab)
-  }, [entries, fixedSubjectType, subjectEntries.length, userSelectedTab])
+  }, [entries, fixedSubjectType, subjectEntries.length, userSelectedTab, allowedSubjectTypes])
 
   useEffect(() => {
     return () => {
@@ -448,7 +451,7 @@ export function PermissionListTab({
     <div className="flex h-full min-h-0 flex-col">
       {!fixedSubjectType && (
         <div className="flex w-fit shrink-0 gap-1 rounded-md bg-muted p-1">
-          {LIST_SUBJECT_TYPES.map((subjectType) => (
+          {allowedSubjectTypes.map((subjectType) => (
             <button
               key={subjectType}
               type="button"
