@@ -43,9 +43,10 @@ class DatasourceQueryTool(BaseTool):
     """Answers a question by querying one datasource.
 
     Holds no result state: what came back is returned to the model as text, and
-    the structured outcome (rows, citation anchor) is collected by the caller
-    through `last_outcome`, which the conversation layer reads when composing
-    the answer's sources.
+    the structured outcomes (rows, citation anchor) are collected by the caller
+    through `outcomes`, which the conversation layer reads when composing the
+    answer's sources -- one entry per execution, in call order, so a turn that
+    queried twice still cites both.
     """
 
     name: str = 'datasource_query'
@@ -68,9 +69,10 @@ class DatasourceQueryTool(BaseTool):
     datasource: Any
     tables: list[dict] = Field(default_factory=list)
     user_id: int | None = None
-    #: Set by each call so the conversation layer can build the citation anchor
-    #: from the SAME execution the model saw, rather than re-deriving it.
-    last_outcome: Any = None
+    #: Every successful execution this turn, oldest first. A LIST rather than a
+    #: single slot: a model that queries twice in one turn must leave two
+    #: anchors, and a last-write-wins slot would silently drop the first.
+    outcomes: list[Any] = Field(default_factory=list)
     last_error_category: str | None = None
 
     class Config:
@@ -91,7 +93,9 @@ class DatasourceQueryTool(BaseTool):
         description. It does NOT get the statement -- that goes to the citation
         anchor, which the user sees and the model does not need to repeat.
         """
-        self.last_outcome = None
+        # `outcomes` is deliberately NOT reset here. It accumulates across every
+        # call within one turn -- resetting per call is exactly the single-slot
+        # bug this list replaced; the caller clears it once, per run.
         self.last_error_category = None
 
         context = await DatasourceQueryService.answer_question(
@@ -110,7 +114,7 @@ class DatasourceQueryTool(BaseTool):
             )
             return f'查询失败：{context.answer}'
 
-        self.last_outcome = context.outcome
+        self.outcomes.append(context.outcome)
         return self._render(context.outcome)
 
     @staticmethod

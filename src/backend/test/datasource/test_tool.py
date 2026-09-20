@@ -198,7 +198,7 @@ async def test_a_failure_is_reported_to_the_model_without_the_driver_error(monke
 
     assert '查询失败' in result
     assert tool.last_error_category == 'connection'
-    assert tool.last_outcome is None
+    assert tool.outcomes == []
 
 
 async def test_the_statement_is_not_returned_to_the_model(monkeypatch):
