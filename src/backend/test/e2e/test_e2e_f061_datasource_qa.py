@@ -292,3 +292,104 @@ def test_deleting_removes_the_datasource_and_its_table_metadata(client, admin_to
 
     gone = client.get(f'{API_BASE}/datasource/{datasource_id}', headers=auth_headers(admin_token))
     assert gone.json()['status_code'] == 11708, 'the datasource survived its deletion'
+
+
+# --- AC-49 / AC-53: the picker's list, for a non-admin -----------------------
+#
+# `GET /datasource` is the ADMIN list; `GET /datasource/available-datasources`
+# is what a flow author (who can reach `/flow/:id` but is not an admin) needs.
+# The two must not converge: the admin list is unfiltered by design, this one is
+# filtered by the caller's grants.
+
+
+def test_the_available_list_is_open_to_any_logged_in_user(client, admin_token, datasource):
+    """AC-53's blocking requirement: the editor's picker must not 403 for a
+    non-admin. Asserted as "the endpoint answers" rather than on its contents —
+    which grants the admin has is environment-dependent, but a 403 would be a
+    contract failure regardless of grants."""
+    response = client.get(
+        f'{API_BASE}/datasource/available-datasources', headers=auth_headers(admin_token)
+    )
+
+    assert response.status_code == 200, 'the picker endpoint refused a logged-in caller'
+    body = response.json()
+    assert body['status_code'] == 200, f'unexpected envelope: {body}'
+    assert isinstance(body['data']['data'], list)
+
+
+def test_the_available_list_never_carries_connection_details(client, admin_token, datasource):
+    """The picker needs a name. Host, account and the encrypted password must
+    not ride along to a chat-side caller (INV-19 clause 1)."""
+    data = assert_resp_200(
+        client.get(f'{API_BASE}/datasource/available-datasources', headers=auth_headers(admin_token))
+    )
+
+    for entry in data['data']:
+        for forbidden in ('password', 'host', 'port', 'username', 'database_name'):
+            assert forbidden not in entry, f'{forbidden} reached the picker payload'
+        assert set(entry) <= {'id', 'name', 'description', 'engine'}, (
+            f'unexpected field in the picker payload: {entry}'
+        )
+
+
+def test_the_available_route_is_not_swallowed_by_the_id_route(client, admin_token):
+    """The path is hyphenated so `/{datasource_id}` cannot match it. If the
+    route were shadowed, `available-datasources` would be parsed as an id and
+    answered with 11708 -- which is what this asserts is NOT happening."""
+    response = client.get(
+        f'{API_BASE}/datasource/available-datasources', headers=auth_headers(admin_token)
+    )
+
+    assert response.json()['status_code'] != 11708, (
+        'the literal route was shadowed by /{datasource_id}'
+    )
+
+
+# --- AC-53 / AC-56: the Agent node's datasource binding ----------------------
+
+
+def test_the_seeded_agent_node_template_offers_a_datasource_binding():
+    """AC-53/AC-56 at the template level: the node param a NEW flow is seeded
+    with must carry `datasource_id`, and its inline block must default to empty.
+
+    Checked against the seeded data rather than a live save/run: publishing and
+    running a flow needs an LLM slot this file cannot stand up, and the contract
+    these ACs fix is the SHAPE a flow stores — which is exactly the template.
+
+    A template that still shipped prefilled inline fields would put every new
+    flow back on the plaintext path AC-56 exists to close.
+    """
+    import json
+    from pathlib import Path
+
+    template_path = Path(__file__).resolve().parents[2] / 'bisheng/database/data/template.json'
+    template = json.loads(template_path.read_text(encoding='utf-8'))
+
+    sql_params = []
+
+    def _walk(node):
+        if isinstance(node, dict):
+            for group in node.get('group_params') or []:
+                for param in group.get('params') or []:
+                    if param.get('key') == 'sql_agent':
+                        sql_params.append(param)
+            for value in node.values():
+                _walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                _walk(value)
+
+    _walk(template)
+    assert sql_params, 'the agent node template no longer carries a sql_agent block'
+
+    for param in sql_params:
+        value = param.get('value') or {}
+        assert value.get('open') is False, (
+            'a seeded sql_agent block is switched ON — every new flow would start '
+            'with a database configured'
+        )
+        for inline in ('db_address', 'db_name', 'db_username', 'db_password'):
+            assert not value.get(inline), (
+                f'the seeded template prefills {inline}; new flows must not start on '
+                'the inline path (AC-56)'
+            )
