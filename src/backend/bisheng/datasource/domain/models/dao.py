@@ -168,6 +168,23 @@ class DbDatasourceTableDao:
                 return _rows(result)
 
     @classmethod
+    async def alist_by_ids(cls, table_ids: list[int]) -> list[DbDatasourceTable]:
+        """Fetch specific table rows by id.
+
+        Needed by the description endpoint, which receives a table id and must
+        find out WHICH datasource it belongs to before it can check the
+        caller's permission -- the id alone does not say.
+        """
+        if not table_ids:
+            return []
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.exec(
+                    select(DbDatasourceTable).where(DbDatasourceTable.id.in_(table_ids))
+                )
+                return _rows(result)
+
+    @classmethod
     async def areplace_snapshot(
         cls, table_id: int, *, structure_snapshot: list[dict[str, Any]], table_comment: str | None
     ) -> None:

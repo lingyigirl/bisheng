@@ -258,3 +258,46 @@ async def test_deleting_without_permission_is_not_found_not_forbidden():
     with patch.object(PermissionService, 'check', new=AsyncMock(return_value=False)):
         with pytest.raises(DatasourceNotFoundError):
             await ep.delete_datasource(7, _admin())
+
+
+# --- route shapes -------------------------------------------------------------
+
+
+def test_no_route_can_be_shadowed_by_the_id_route():
+    """`/datasource/{datasource_id}` matches ANY single segment.
+
+    So `/datasource/tables/{table_id}` was reachable as `datasource_id="tables"`
+    depending on registration order -- measured while adding it, and it is the
+    kind of bug that only shows up against a live server. Every literal segment
+    directly under `/datasource/` must therefore be distinguishable from an id.
+    """
+    from bisheng.datasource.api.endpoints import datasources as module
+
+    literal_first_segments = []
+    for route in module.router.routes:
+        path = getattr(route, 'path', '')
+        # Only the single-segment case is ambiguous; anything with a second
+        # segment cannot collide with `{datasource_id}`.
+        remainder = path.removeprefix('/datasource/')
+        if not remainder or '/' in remainder or remainder.startswith('{'):
+            continue
+        literal_first_segments.append(remainder)
+
+    # `query-failures` and `test-connection` are hyphenated, and no datasource id
+    # can contain a hyphen -- which is exactly what makes them safe.
+    for segment in literal_first_segments:
+        assert '-' in segment, (
+            f'/datasource/{segment} can be shadowed by /datasource/{{datasource_id}}; '
+            'give it a hyphenated (unmatchable-as-id) or nested path'
+        )
+
+
+def test_the_table_endpoints_exist_and_are_nested_or_prefixed():
+    """T-36/T-37's API surface, asserted so a rename cannot silently drop one."""
+    from bisheng.datasource.api.endpoints import datasources as module
+
+    paths = {getattr(route, 'path', '') for route in module.router.routes}
+    assert '/datasource/{datasource_id}/tables' in paths
+    assert '/datasource/{datasource_id}/tables/select' in paths
+    assert '/datasource/{datasource_id}/collect' in paths
+    assert '/datasource/table-metadata/{table_id}' in paths

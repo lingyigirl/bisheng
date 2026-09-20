@@ -40,6 +40,7 @@ from bisheng.common.schemas.api import resp_200
 from bisheng.core.context.tenant import strict_tenant_filter
 from bisheng.datasource.domain.models.dao import DbDatasourceDao, DbDatasourceTableDao
 from bisheng.datasource.domain.models.datasource import SUPPORTED_ENGINES
+from bisheng.datasource.domain.services import schema_service
 from bisheng.datasource.domain.services.credentials import encrypt_password, to_safe_dict
 from bisheng.datasource.domain.services.datasource_service import DatasourceService
 from bisheng.datasource.domain.services.engine_registry import canonical_engine
@@ -250,3 +251,122 @@ async def delete_datasource(
     await DbDatasourceTableDao.adelete_by_datasource(datasource_id)
     await DbDatasourceDao.adelete(datasource_id)
     return resp_200({'deleted': datasource_id})
+
+
+# --- table metadata (T-36 / T-37) --------------------------------------------
+#
+# The table-management half of the admin page. All four go through
+# `schema_service`, which owns the AC-12 rule: a re-collect refreshes the
+# structure and must NOT touch `business_desc`. An endpoint that wrote the row
+# itself could break that in one line, which is why none of them does.
+
+
+class TableSelectionPayload(BaseModel):
+    table_names: list[str] = Field(default_factory=list, description='勾选暴露给模型的表名')
+
+
+class TableDescriptionPayload(BaseModel):
+    business_desc: str | None = Field(default=None, description='人工维护的业务描述')
+
+
+async def _require_manage(datasource_id: int, login_user) -> None:
+    """Refuse unless the caller may manage this datasource.
+
+    Every table endpoint goes through here: the metadata describes a datasource,
+    so it is governed by the same `can_manage` relation the datasource itself
+    is. Without this, the table list would be a way around the datasource's own
+    permission check.
+    """
+    from bisheng.permission.domain.services.permission_service import PermissionService
+
+    if not await PermissionService.check(
+        user_id=login_user.user_id,
+        relation='can_manage',
+        object_type='db_datasource',
+        object_id=str(datasource_id),
+        login_user=login_user,
+    ):
+        raise DatasourceNotFoundError()
+
+
+@router.get('/{datasource_id}/tables')
+async def list_datasource_tables(
+    datasource_id: int,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+):
+    """The collected tables with their descriptions (spec AC-57).
+
+    Reads the stored snapshot rather than reflecting the customer's database:
+    the snapshot is what the model sees, so it is what the admin should be
+    judging their description against.
+    """
+    await _require_manage(datasource_id, login_user)
+    return resp_200({'data': await schema_service.list_tables_for_admin(datasource_id)})
+
+
+@router.post('/{datasource_id}/tables/select')
+async def select_datasource_tables(
+    datasource_id: int,
+    payload: TableSelectionPayload,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+):
+    """Set which collected tables are exposed to the model (spec AC-09).
+
+    Unticking sets `enabled=0` rather than deleting: the admin's description
+    survives, which is what makes an untick reversible.
+    """
+    await _require_manage(datasource_id, login_user)
+    changed = await schema_service.set_exposed(datasource_id, payload.table_names)
+    return resp_200({'changed': changed})
+
+
+@router.post('/{datasource_id}/collect')
+async def collect_datasource_tables(
+    datasource_id: int,
+    payload: TableSelectionPayload,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+):
+    """Re-collect the named tables' structure and persist it (spec AC-12).
+
+    The description is preserved by construction: the only write inside
+    `refresh_tables` is the snapshot update. `truncated` is reported rather than
+    swallowed -- a silently capped collect reads as "your schema is complete".
+    """
+    await _require_manage(datasource_id, login_user)
+
+    with strict_tenant_filter():
+        datasource = await DbDatasourceDao.aget_by_id(datasource_id)
+    if datasource is None:
+        raise DatasourceNotFoundError()
+
+    result = await schema_service.refresh_tables(datasource, payload.table_names)
+    return resp_200(result)
+
+
+@router.put('/table-metadata/{table_id}')
+async def update_table_description(
+    table_id: int,
+    payload: TableDescriptionPayload,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+):
+    """Set one table's business description (spec AC-11).
+
+    The path is `/table-metadata/{id}`, not `/tables/{id}`, deliberately: a bare
+    `/datasource/tables/{x}` would be matched by `/datasource/{datasource_id}`
+    depending on registration order, so the endpoint would sometimes receive the
+    literal string "tables" as an id. Prefixing with a segment that no id can be
+    keeps the two apart.
+
+    Checked against the datasource the table belongs to -- looked up first,
+    since a table id alone does not say whose table it is.
+    """
+    from bisheng.datasource.domain.models.dao import DbDatasourceTableDao
+
+    with strict_tenant_filter():
+        rows = await DbDatasourceTableDao.alist_by_ids([table_id])
+    if not rows:
+        raise DatasourceNotFoundError()
+
+    await _require_manage(rows[0].datasource_id, login_user)
+    await schema_service.update_description(table_id, payload.business_desc)
+    return resp_200({'id': table_id})
