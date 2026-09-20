@@ -3,6 +3,8 @@ import { Input } from "@/components/bs-ui/input";
 import { Label } from "@/components/bs-ui/label";
 import { Switch } from "@/components/bs-ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/bs-ui/select";
+import { listAvailableDatasourcesApi } from "@/controllers/API/datasource";
+import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -10,8 +12,24 @@ export default function SqlConfigItem({ data, onChange, onValidate }) {
     const { t } = useTranslation('flow');
     const [values, setValues] = useState(data.value);
     const [errors, setErrors] = useState({});
+    // F061 AC-53: the datasources THIS user may pick. Loaded lazily — the list
+    // is only useful when the block is switched on, and every other node in the
+    // flow would otherwise pay for the request.
+    const [datasources, setDatasources] = useState([]);
 
-    const { database_engine, db_address, db_name, db_username, db_password, open } = values;
+    const { database_engine, db_address, db_name, db_username, db_password, open, datasource_id } = values;
+
+    useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        captureAndAlertRequestErrorHoc(listAvailableDatasourcesApi()).then((res) => {
+            if (cancelled || !res) return;
+            setDatasources(res.data || []);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [open]);
 
     // 定义可用的数据库选项
     const DATABASE_OPTIONS = ['MySQL', 'Db2', 'PostgreSQL', 'GaussDB', 'Oracle'];
@@ -26,6 +44,12 @@ export default function SqlConfigItem({ data, onChange, onValidate }) {
     // 校验方法
     const handleValidate = () => {
         if (!open) return; // 开关关闭时无需校验
+
+        // F061 AC-53: a bound datasource carries the connection itself, so the
+        // inline fields are not required then — and must not be, or a flow that
+        // picks a datasource could never be saved. Mirrors the backend's
+        // `_require_a_source`, which enforces the same rule on save.
+        if (datasource_id) return false;
 
         const newErrors = {};
         const errorMessages = [];
@@ -103,6 +127,26 @@ export default function SqlConfigItem({ data, onChange, onValidate }) {
             {/* 配置表单 */}
             {open && (
                 <>
+                    {/* F061 AC-53：选一个已建数据源。这是本特性的新入口——
+                        凭据是 Fernet 密文、暴露表有治理、每次调用判权。
+                        只列出**当前用户有权使用**的数据源（AC-49）。 */}
+                    <Label className="flex items-center bisheng-label">{t("datasourceBinding")}</Label>
+                    <Select
+                        value={datasource_id ? String(datasource_id) : ''}
+                        onValueChange={(value) => handleChange("datasource_id", value ? Number(value) : null)}
+                    >
+                        <SelectTrigger className="mt-2 mb-4 nodrag">
+                            <SelectValue placeholder={t("datasourceBindingPlaceholder")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {datasources.map((one) => (
+                                <SelectItem key={one.id} value={String(one.id)}>
+                                    {one.name}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+
                     {/* F061 AC-56：内联入口只保留对既有流程的兼容读取。
                         已填写过的流程照常显示、照常运行；但这里不再能新建连接——
                         字段全部只读，且由后端的数据源管理页承担新连接的建立。

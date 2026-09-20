@@ -124,6 +124,20 @@ export async function listDatasourcesApi(params: {
   return await axios.get(`/api/v1/datasource`, { params });
 }
 
+/**
+ * The datasources the CURRENT USER may pick, for a picker (F061 AC-53).
+ *
+ * Not `listDatasourcesApi`: that one is the admin management list and is gated
+ * on `get_tenant_admin_user`, while the flow editor at `/flow/:id` has no
+ * permission gate — so an ordinary flow author would get a 403. This endpoint
+ * is open to any logged-in user and returns only what they hold `viewer` on.
+ */
+export async function listAvailableDatasourcesApi(): Promise<
+  PagedResult<Pick<DatasourceRow, "id" | "name" | "description" | "engine">>
+> {
+  return await axios.get(`/api/v1/datasource/available-datasources`);
+}
+
 export async function getDatasourceApi(id: number): Promise<DatasourceRow> {
   return await axios.get(`/api/v1/datasource/${id}`);
 }

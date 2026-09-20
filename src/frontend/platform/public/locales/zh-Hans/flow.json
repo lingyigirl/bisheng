@@ -673,5 +673,7 @@
   "loopEmpty": "暂无已发布的工作流",
   "loopOutputEmpty": "该流程没有可输出的变量",
   "loopSchemaUnavailable": "该流程的输入输出信息暂不可用",
-  "sqlInlineReadonlyHint": "内联连接信息仅供查看，不会再新建连接。请到「数据源」页面创建并授权数据源。"
+  "sqlInlineReadonlyHint": "内联连接信息仅供查看，不会再新建连接。请到「数据源」页面创建并授权数据源。",
+  "datasourceBinding": "数据源",
+  "datasourceBindingPlaceholder": "选择一个已建数据源"
 }
