@@ -301,6 +301,7 @@ class AssistantService(BaseService, AssistantUtils):
         tool_list = []
         flow_list = []
         knowledge_list = []
+        datasource_list = []
 
         links = await AssistantLinkDao.get_assistant_link(assistant_id)
         for one in links:
@@ -310,6 +311,10 @@ class AssistantService(BaseService, AssistantUtils):
                 knowledge_list.append(one.knowledge_id)
             elif one.flow_id:
                 flow_list.append(one.flow_id)
+            # F061: must stay ahead of the trailing else, or every datasource
+            # row falls into it and logs an error on every detail read.
+            elif one.datasource_id:
+                datasource_list.append(one.datasource_id)
             else:
                 logger.error(f"not expect link info: {one.model_dump()}")
         tool_list, flow_list, knowledge_list = cls.get_link_info(tool_list, flow_list, knowledge_list)
@@ -320,6 +325,9 @@ class AssistantService(BaseService, AssistantUtils):
             tool_list=tool_list,
             flow_list=flow_list,
             knowledge_list=knowledge_list,
+            # F061: ids, not a resolved read model -- the picker already fetches
+            # the datasource list from GET /api/v1/datasource.
+            datasource_list=datasource_list,
             can_share=can_share,
         )
 
@@ -539,6 +547,16 @@ class AssistantService(BaseService, AssistantUtils):
         if req.knowledge_list is not None:
             # Using Configuredflow Perform skill replenishment
             AssistantLinkDao.update_assistant_knowledge(assistant.id, knowledge_list=req.knowledge_list, flow_id="")
+        if req.datasource_list is not None:
+            # An empty list clears the bindings; the DAO skips falsy ids
+            AssistantLinkDao.update_assistant_datasource(assistant.id, req.datasource_list)
+        # F061: report what is stored, not what was asked for. The save skips
+        # falsy ids, and None leaves the bindings untouched -- so echoing the
+        # request would report an id that was never written, or [] where the
+        # admin still has bindings, clearing the picker they never touched.
+        datasource_list = [
+            one.datasource_id for one in await AssistantLinkDao.get_assistant_link(assistant.id) if one.datasource_id
+        ]
         tool_list, flow_list, knowledge_list = cls.get_link_info(req.tool_list, req.flow_list, req.knowledge_list)
         cls.update_assistant_hook(request, login_user, assistant)
         can_share = await user_may_share_app(login_user, "assistant", str(assistant.id))
@@ -547,6 +565,7 @@ class AssistantService(BaseService, AssistantUtils):
             tool_list=tool_list,
             flow_list=flow_list,
             knowledge_list=knowledge_list,
+            datasource_list=datasource_list,
             can_share=can_share,
         )
 

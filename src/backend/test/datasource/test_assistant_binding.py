@@ -88,3 +88,93 @@ async def test_the_login_user_contract_is_enforced():
         await conversation_service.build_tools_for_assistant([], None)
     with pytest.raises(ValueError):
         await conversation_service.build_tools_for_assistant([], SimpleNamespace(user_id=3))
+
+
+def test_the_detail_buckets_datasource_links_before_the_else():
+    """A datasource row must be recognised, not fall through to the `else` that
+    logs 'not expect link info' -- it would still work, but every datasource
+    binding would write an error line on every detail read."""
+    import inspect
+
+    from bisheng.api.services import assistant as assistant_service
+
+    source = inspect.getsource(assistant_service)
+    else_at = source.index('not expect link info')
+    datasource_at = source.index('one.datasource_id')
+    assert datasource_at < else_at, 'datasource branch is missing or after the else'
+
+
+def test_every_assistant_info_response_reports_datasource_bindings():
+    """All AssistantInfo construction sites that can carry bindings must pass
+    datasource_list. The update response is the easy one to miss: omitting it
+    reports [] right after a save, so the UI clears the selection just made."""
+    import inspect
+
+    from bisheng.api.services import assistant as assistant_service
+
+    source = inspect.getsource(assistant_service)
+    constructors = source.count('AssistantInfo(')
+    passing = source.count('datasource_list=')
+    # create_assistant is the one site that legitimately omits it.
+    assert passing >= constructors - 1, (
+        f'{constructors} AssistantInfo sites but only {passing} pass datasource_list'
+    )
+
+
+async def test_the_update_response_reports_what_the_store_holds():
+    """The update response has to describe the stored bindings, not the request.
+
+    Neither static check above can see the value. Two cases matter: the save
+    skips falsy ids, so echoing the request could name a datasource that was
+    never written; and None leaves the bindings untouched, so reporting the
+    schema default [] reads as a clear, and the picker drops a selection the
+    admin never touched.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from bisheng.api.services import assistant as assistant_service
+    from bisheng.api.v1.schemas import AssistantUpdateReq
+    from bisheng.database.models.assistant import Assistant
+
+    # A stand-in for the link table: the save writes it, the read reads it.
+    store = {'links': []}
+
+    def _save(_assistant_id, datasource_list):
+        store['links'] = [
+            SimpleNamespace(datasource_id=one, tool_id=0, knowledge_id=0, flow_id='')
+            for one in datasource_list
+            if one
+        ]
+
+    stored = Assistant(id='a1', name='n', user_id=1)
+    telemetry = MagicMock()
+    telemetry.log_event = AsyncMock()
+
+    with (
+        patch.object(assistant_service.AssistantDao, 'get_one_assistant', return_value=stored),
+        patch.object(assistant_service.AssistantDao, 'update_assistant', new=MagicMock()),
+        patch.object(assistant_service.AssistantService, 'check_update_permission_async', new=AsyncMock()),
+        patch.object(assistant_service.AssistantService, 'update_assistant_hook', new=MagicMock()),
+        patch.object(assistant_service.AssistantLinkDao, 'update_assistant_datasource', side_effect=_save),
+        patch.object(
+            assistant_service.AssistantLinkDao,
+            'get_assistant_link',
+            new=AsyncMock(side_effect=lambda _assistant_id: store['links']),
+        ),
+        patch.object(assistant_service, 'telemetry_service', new=telemetry),
+        patch.object(assistant_service, 'user_may_share_app', new=AsyncMock(return_value=False)),
+    ):
+
+        async def _update(**overrides):
+            req = AssistantUpdateReq(id='a1', model_name='m', temperature=1.0, **overrides)
+            return await assistant_service.AssistantService.update_assistant(MagicMock(), MagicMock(), req)
+
+        # The save drops the falsy id, so the response must not name it back
+        assert (await _update(datasource_list=[7, 0, 8])).datasource_list == [7, 8]
+        assert [link.datasource_id for link in store['links']] == [7, 8]
+
+        # None leaves them untouched -- [] here would clear the admin's picker
+        assert (await _update()).datasource_list == [7, 8]
+
+        # An empty list is a clear, and the response says so
+        assert (await _update(datasource_list=[])).datasource_list == []

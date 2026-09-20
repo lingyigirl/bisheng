@@ -281,6 +281,10 @@ class AssistantUpdateReq(BaseModel):
     knowledge_list: list[int] | None = Field(
         default=None, description="The knowledge base uponIDlist, forNonethen do not update"
     )
+    datasource_list: list[int] | None = Field(
+        default=None,
+        description="F061: bound datasource ids. An empty list clears them; None leaves them unchanged",
+    )
     knowledge_auth: bool | None = Field(
         default=None,
         description="F041: 用户知识库权限校验 — ON filters knowledge-space retrieval by the runtime "
@@ -313,6 +317,7 @@ class AssistantInfo(AssistantBase):
     tool_list: list[GptsToolsRead] = Field(default_factory=list, description="Tools for assistantsIDVertical")
     flow_list: list[FlowRead] = Field(default_factory=list, description="Skills for assistantsIDVertical")
     knowledge_list: list[KnowledgeRead] = Field(default_factory=list, description="The knowledge base uponIDVertical")
+    datasource_list: list[int] = Field(default_factory=list, description="F061: bound datasource ids")
     can_share: bool = Field(
         default=False, description="Current user may copy app share link (relation-model share_app)"
     )
