@@ -25,6 +25,7 @@ possible.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
@@ -40,7 +41,7 @@ from bisheng.common.schemas.api import resp_200
 from bisheng.core.context.tenant import strict_tenant_filter
 from bisheng.datasource.domain.models.dao import DbDatasourceDao, DbDatasourceTableDao
 from bisheng.datasource.domain.models.datasource import SUPPORTED_ENGINES
-from bisheng.datasource.domain.services import schema_service
+from bisheng.datasource.domain.services import schema_collector, schema_service
 from bisheng.datasource.domain.services.credentials import encrypt_password, to_safe_dict
 from bisheng.datasource.domain.services.datasource_service import DatasourceService
 from bisheng.datasource.domain.services.engine_registry import canonical_engine
@@ -287,6 +288,56 @@ async def _require_manage(datasource_id: int, login_user) -> None:
         login_user=login_user,
     ):
         raise DatasourceNotFoundError()
+
+
+@router.get('/{datasource_id}/available-tables')
+async def list_available_tables(
+    datasource_id: int,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+):
+    """Reflect the tables the configured account can see, for the picker (AC-09).
+
+    **A live read of the customer database**, not the stored snapshot: this is
+    the list an admin chooses FROM, so it has to show what is actually there
+    right now -- including a table added since the last collect, which a
+    snapshot-based list could not offer.
+
+    Two-step flow, and this is step one:
+
+      1. `GET /available-tables` -> what exists; the admin ticks boxes
+      2. `POST /collect` with the ticked names -> structure is persisted (AC-10)
+
+    Answers with names only. Column structure is deliberately NOT read here:
+    the admin has not chosen a table yet, and reflecting every column of every
+    accessible table on a 100-table schema is work nobody asked for. The
+    structure is collected for the tables that get picked.
+    """
+    await _require_manage(datasource_id, login_user)
+
+    with strict_tenant_filter():
+        datasource = await DbDatasourceDao.aget_by_id(datasource_id)
+    if datasource is None:
+        raise DatasourceNotFoundError()
+
+    # `list_tables` reflects through the connection; a failure here is the
+    # customer's database being unreachable, which surfaces as the connect
+    # error rather than an empty list -- an empty list would read as "your
+    # account can see nothing".
+    names = await asyncio.to_thread(schema_collector.list_tables, datasource)
+
+    # What has already been collected, so the picker can pre-tick it.
+    existing = await schema_service.list_tables_for_admin(datasource_id)
+    collected = {row['table_name']: row['enabled'] for row in existing}
+
+    return resp_200(
+        {
+            'data': [
+                {'table_name': name, 'collected': name in collected, 'enabled': collected.get(name, 0)}
+                for name in names
+            ],
+            'total': len(names),
+        }
+    )
 
 
 @router.get('/{datasource_id}/tables')

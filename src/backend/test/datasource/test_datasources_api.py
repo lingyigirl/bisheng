@@ -301,3 +301,66 @@ def test_the_table_endpoints_exist_and_are_nested_or_prefixed():
     assert '/datasource/{datasource_id}/tables/select' in paths
     assert '/datasource/{datasource_id}/collect' in paths
     assert '/datasource/table-metadata/{table_id}' in paths
+
+
+# --- AC-09: the picker's source, which is NOT the collected list --------------
+
+
+async def test_available_tables_reflects_the_live_database():
+    """AC-09's step one: what the account can see RIGHT NOW.
+
+    Distinct from `GET /tables`, which returns what has been COLLECTED. An
+    admin picks from the former and collects into the latter; serving the
+    collected list as the picker would hide a table added since the last
+    collect, making it impossible to ever expose.
+    """
+    from bisheng.permission.domain.services.permission_service import PermissionService
+
+    with patch.object(PermissionService, 'check', new=AsyncMock(return_value=True)), patch.object(
+        ep.DbDatasourceDao, 'aget_by_id', AsyncMock(return_value=_row())
+    ), patch.object(
+        ep.schema_collector, 'list_tables', MagicMock(return_value=['orders', 'customers', 'fresh'])
+    ), patch.object(
+        ep.schema_service, 'list_tables_for_admin', AsyncMock(return_value=[
+            {'table_name': 'orders', 'enabled': 1},
+            {'table_name': 'customers', 'enabled': 0},
+        ])
+    ):
+        response = await ep.list_available_tables(7, _admin())
+
+    rows = {r['table_name']: r for r in response.data['data']}
+    assert set(rows) == {'orders', 'customers', 'fresh'}, 'a live table was hidden'
+    assert rows['orders']['collected'] is True and rows['orders']['enabled'] == 1
+    assert rows['customers']['collected'] is True and rows['customers']['enabled'] == 0
+    # Never collected: offered, not pre-ticked. This is the case a
+    # snapshot-based picker could not represent at all.
+    assert rows['fresh']['collected'] is False
+    assert response.data['total'] == 3
+
+
+async def test_available_tables_is_authorized_like_the_rest():
+    from bisheng.permission.domain.services.permission_service import PermissionService
+
+    with patch.object(PermissionService, 'check', new=AsyncMock(return_value=False)):
+        with pytest.raises(DatasourceNotFoundError):
+            await ep.list_available_tables(7, _admin())
+
+
+async def test_available_tables_reads_only_names_not_structure():
+    """Columns are collected for the CHOSEN tables. Reflecting every column of
+    every accessible table is work nobody asked for -- on a 100-table schema it
+    is the expensive half of the collect, done before any choice is made."""
+    import inspect
+
+    source = inspect.getsource(ep.list_available_tables)
+    assert 'list_tables' in source
+    assert 'collect(' not in source, 'the picker is reading structure, not just names'
+
+
+def test_the_two_table_listings_are_separate_endpoints():
+    """A rename that merged them would silently break the two-step flow."""
+    from bisheng.datasource.api.endpoints import datasources as module
+
+    paths = {getattr(route, 'path', '') for route in module.router.routes}
+    assert '/datasource/{datasource_id}/available-tables' in paths
+    assert '/datasource/{datasource_id}/tables' in paths
