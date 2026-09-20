@@ -38,6 +38,13 @@ export const CITATION_START = '\ue200';
 export const CITATION_SEPARATOR = '\ue201';
 export const CITATION_END = '\ue202';
 
+/**
+ * F061: the backend's `CitationType.DATASOURCE`. It arrives UPPERCASED (the
+ * enum's value), so every comparison goes through `isDatasourceCitation`
+ * rather than a literal \u2014 spelled twice it would drift from the backend.
+ */
+export const DATASOURCE_CITATION_TYPE = 'DATASOURCE';
+
 export function normalizeCitationMarkers(content: string) {
   return content.replace(/(\\+)u([eE]20[012])/g, (match, slashes, code) => {
     if (slashes.length % 2 !== 0) {
@@ -219,10 +226,25 @@ export function getCitationClassName(type?: string) {
   }
 }
 
+/**
+ * F061: is this a database anchor?
+ *
+ * The three-kind split exists because the two-kind default is wrong for a
+ * datasource: `normalizeCitationType` returns 'rag' for anything non-web, so a
+ * database anchor was labelled 文档 and sent down the document path, where its
+ * statement, table list and result rows have nowhere to render.
+ */
+export function isDatasourceCitation(detail?: Pick<ChatCitation, 'type'> | null) {
+  return String(detail?.type || '').toLowerCase() === 'datasource';
+}
+
 export function normalizeCitationType(type?: string) {
   const normalizedType = type?.toLowerCase();
   if (normalizedType === 'web' || normalizedType === 'websearch') {
     return 'web';
+  }
+  if (normalizedType === 'datasource') {
+    return 'datasource';
   }
   return 'rag';
 }
@@ -231,6 +253,43 @@ export function isRagCitation(detail?: ChatCitation | null, type?: string) {
   return normalizeCitationType(detail?.type || type) === 'rag';
 }
 
+/**
+ * F061: which kind is this, for a caller that wants to label it.
+ *
+ * A KEY, not a translated string. New code should translate this via
+ * `useLocalize` at the render site rather than adding to `getCitationSourceLabel`
+ * below — that function's literals are part of this file's frozen
+ * hardcoded-Chinese count, which may only shrink.
+ */
+export type CitationSourceKind = 'web' | 'rag' | 'datasource';
+
+export function getCitationSourceKind(type?: string): CitationSourceKind {
+  return normalizeCitationType(type);
+}
+
+/**
+ * The label for a citation kind, in the user's language.
+ *
+ * Two locales are missing on purpose: `getCitationSourceLabel` below is the
+ * legacy hardcoded-Chinese one kept for `Markdown.tsx`'s aria-label, and it
+ * cannot learn a third case without growing a frozen count. Everything new
+ * routes through here.
+ */
+export function getCitationSourceLabelI18n(
+  kind: CitationSourceKind,
+  localize: (key: string) => string,
+): string {
+  if (kind === 'web') return localize('com_citation_source_web');
+  if (kind === 'datasource') return localize('com_citation_source_datasource');
+  return localize('com_citation_source_document');
+}
+
+/**
+ * The legacy two-kind label. Kept exactly as HEAD wrote it: its two literals are
+ * part of this file's frozen hardcoded-Chinese count (which may only shrink),
+ * and `Markdown.tsx` uses it for an aria-label. Callers that need a datasource
+ * label use `getCitationSourceLabelI18n` above.
+ */
 export function getCitationSourceLabel(type?: string) {
   return normalizeCitationType(type) === 'web' ? '网页' : '文档';
 }
@@ -467,6 +526,89 @@ export function buildCitationDocumentPreview(detail: ChatCitation | null, data: 
     link: payload.downloadUrl,
     type,
   };
+}
+
+/**
+ * A database anchor's content, normalized for the expand panel (F061 AC-31/32/33).
+ *
+ * Built from the payload the resolve endpoint returns, which is the same
+ * `DatasourceCitationPayloadSchema` the turn wrote — so what the user expands is
+ * what actually ran, not a re-derivation.
+ *
+ * `columns` and `rows` are positional: the backend sends the column names once
+ * and each row as an array, in the same order. `columns` can be shorter than a
+ * row (a driver that reports no names), so the panel addresses cells by index
+ * and pads rather than zipping — zipping would silently drop the extra cells.
+ */
+export type DatasourceAnchor = {
+  datasourceId: number | null;
+  datasourceName: string;
+  tables: string[];
+  statement: string;
+  columns: string[];
+  rows: unknown[][];
+  truncated: boolean;
+  /** True when there is a result table worth a download button. */
+  hasRows: boolean;
+};
+
+export function getDatasourceAnchor(detail?: ChatCitation | null): DatasourceAnchor | null {
+  if (!isDatasourceCitation(detail)) {
+    return null;
+  }
+
+  // `sourcePayload` already carries an index signature, so no `any` is needed
+  // here — and adding one would grow this file's suppression entry, which is
+  // count-based and may only shrink.
+  const payload = detail?.sourcePayload || {};
+  const rawRows = Array.isArray(payload.rows) ? payload.rows : [];
+  const rows = rawRows.map((row: unknown) =>
+    Array.isArray(row) ? row : row === null || row === undefined ? [] : [row],
+  );
+
+  return {
+    datasourceId: typeof payload.datasourceId === 'number' ? payload.datasourceId : null,
+    datasourceName: String(payload.datasourceName || '').trim(),
+    tables: Array.isArray(payload.tables) ? payload.tables.map((t: unknown) => String(t)) : [],
+    statement: String(payload.statement || ''),
+    columns: Array.isArray(payload.columns) ? payload.columns.map((c: unknown) => String(c)) : [],
+    rows,
+    truncated: Boolean(payload.truncated),
+    hasRows: rows.length > 0,
+  };
+}
+
+/**
+ * The anchor as CSV, for the download action (AC-33).
+ *
+ * Quoting follows RFC 4180: a field is wrapped when it contains a comma, a
+ * quote or a newline, and an embedded quote is doubled. Escaping only the comma
+ * is the common shortcut and it corrupts any cell holding a quote character —
+ * which, in database data, is the normal case rather than the edge case.
+ *
+ * A leading `=`, `+`, `-` or `@` is prefixed with a single quote. Spreadsheets
+ * execute those as formulas, and this file is written from customer database
+ * content — a cell is untrusted input by definition.
+ */
+export function buildDatasourceCsv(anchor: DatasourceAnchor): string {
+  const escapeCell = (value: unknown) => {
+    const text = value === null || value === undefined ? '' : String(value);
+    const guarded = /^[=+\-@]/.test(text) ? `'${text}` : text;
+    return /[",\r\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded;
+  };
+
+  // Fall back to positional names so a nameless column still gets a header
+  // cell — dropping it would shift every column after it.
+  const width = Math.max(
+    anchor.columns.length,
+    ...anchor.rows.map((row) => row.length),
+    0,
+  );
+  const header = Array.from({ length: width }, (_, index) => anchor.columns[index] ?? `column_${index + 1}`);
+  const lines = [header, ...anchor.rows].map((row) =>
+    Array.from({ length: width }, (_, index) => escapeCell(row[index])).join(','),
+  );
+  return lines.join('\r\n');
 }
 
 export function createCitationDetailMap(citations?: ChatCitation[] | null) {

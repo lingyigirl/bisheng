@@ -13,6 +13,8 @@ import {
   getCitationDocumentFileType,
   getCitationDocumentName,
   getCitationDocumentUrl,
+  getCitationSourceKind,
+  getCitationSourceLabelI18n,
   isRagCitation,
   normalizeCitationType,
   resolveCitationDocumentUrl,
@@ -62,16 +64,31 @@ export type CitationReferencesDesktopPayload = {
 type CitationDesktopView = 'list' | 'document-preview';
 const CITATION_PANEL_EXPANDED_BREAKPOINT = 768;
 
-function SourceTypeBadge({ preview, type }: { preview: CitationPreview | null; type?: string }) {
-  const isWeb = normalizeCitationType(preview?.type || type) === 'web';
+function SourceTypeBadge({
+  preview,
+  type,
+  label,
+}: {
+  preview: CitationPreview | null;
+  type?: string;
+  label: string;
+}) {
+  const normalizedType = normalizeCitationType(preview?.type || type);
   return (
     <div
       className={cn(
         'inline-flex h-[18px] min-w-[16px] items-center justify-center rounded-md px-1 text-[12px] font-normal leading-[18px]',
-        isWeb ? 'bg-[#F7F3FF] text-[#7224D9]' : 'bg-blue-50 text-blue-600',
+        normalizedType === 'web'
+          ? 'bg-[#F7F3FF] text-[#7224D9]'
+          : normalizedType === 'datasource'
+            // Neutral slate rather than the brand tint: this badge sits next to
+            // document badges in a mixed answer, and brand blue reads as "this
+            // one is selected" rather than "this one is a database".
+            ? 'bg-[#F4F5F8] text-[#61646D]'
+            : 'bg-blue-50 text-blue-600',
       )}
     >
-      {isWeb ? '网页' : '文档'}
+      {label}
     </div>
   );
 }
@@ -109,9 +126,14 @@ function CitationReferenceCard({
   hasError: boolean;
   onOpenDocumentPreview: (item: CitationReferenceItem, detail: ChatCitation) => void;
 }) {
+  const localize = useLocalize();
   const preview = item.legacyPreview ?? buildCitationDocumentPreview(detail, item.data);
   const type = preview?.type || item.data.type;
   const isWeb = normalizeCitationType(type) === 'web';
+  // F061: the datasource kind is labelled through i18n rather than by extending
+  // the hardcoded pair in `getCitationSourceLabel` — this file's Chinese literals
+  // are a frozen lint count that may only shrink.
+  const sourceLabel = getCitationSourceLabelI18n(getCitationSourceKind(type), localize);
   const title = preview?.title || '暂无标题';
   const canOpenDocument = !!detail && isRagCitation(detail, type);
   const { name: documentName, extension: documentExtension } = splitDocumentTitle(title, detail, preview);
@@ -122,7 +144,7 @@ function CitationReferenceCard({
   return (
     <div className="flex min-h-[92px] flex-col gap-2 rounded-md border border-border-base bg-white p-2">
       <div className="flex items-center">
-        <SourceTypeBadge preview={preview} type={item.data.type} />
+        <SourceTypeBadge preview={preview} type={item.data.type} label={sourceLabel} />
       </div>
 
       {canOpenDocument ? (

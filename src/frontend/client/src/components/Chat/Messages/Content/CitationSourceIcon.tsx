@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { Outlined } from 'bisheng-icons';
+// F061: `bisheng-icons` has no database/storage glyph (checked the full Outlined
+// set), so the client rule's fallback applies — lucide only where the
+// design-system set has no matching-semantic icon.
+import { Database } from 'lucide-react';
 import type { FileType } from '~/components/ui/icon/File/FileIcon';
 import { cn } from '~/utils';
 import type { ChatCitation } from '~/api/chatApi';
@@ -14,7 +18,12 @@ import {
 
 export type CitationSourceIconData = {
   key: string;
-  type: 'web' | 'rag';
+  /**
+   * F061: 'datasource' is a third kind. It is deliberately NOT folded into
+   * 'rag' — the icon stack labels these, and a database anchor shown with a
+   * document icon tells the user their numbers came from a PDF.
+   */
+  type: 'web' | 'rag' | 'datasource';
   title: string;
   faviconUrl?: string;
   fileType?: FileType;
@@ -71,10 +80,18 @@ function getReferenceIconKey({
   detail: ChatCitation | null;
   preview: CitationPreview | null;
   item: CitationReferenceItem;
-  type: 'web' | 'rag';
+  type: CitationSourceIconData['type'];
 }) {
   if (type === 'web') {
     return resolvePreviewUrl(detail, preview) || item.data.citationId;
+  }
+
+  if (type === 'datasource') {
+    // Keyed by the datasource, not by a document name it does not have: two
+    // queries against the same datasource share one icon, two datasources do
+    // not. Falls back to the citation id on a payload without a name.
+    const payload = detail?.sourcePayload;
+    return String(payload?.datasourceName || payload?.datasourceId || item.data.citationId);
   }
 
   return (detail ? getCitationDocumentName(detail) : '') || preview?.title || item.data.groupKey || item.data.citationId;
@@ -245,6 +262,10 @@ export function CitationSourceIcon({
     >
       {icon.type === 'web' ? (
         <WebSourceIcon icon={icon} iconClassName={iconClassName} />
+      ) : icon.type === 'datasource' ? (
+        // Neutral, not brand: a database is neither the document palette nor a
+        // link, and the surrounding drawer already tints the anchor by brand.
+        <Database className={cn('size-4 text-text-3', iconClassName)} aria-hidden="true" />
       ) : ragIconVariant === 'knowledge' ? (
         <Outlined.BookOpenText className={cn('size-4 text-text-3', iconClassName)} />
       ) : (
