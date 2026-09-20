@@ -15,7 +15,7 @@ from loguru import logger
 from pydantic import Field, SkipValidation
 
 from bisheng.api.services.assistant_base import AssistantUtils
-from bisheng.citation.domain.schemas.citation_schema import CitationRegistryItemSchema
+from bisheng.citation.domain.schemas.citation_schema import CitationRegistryItemSchema, CitationType
 from bisheng.citation.domain.services.citation_prompt_helper import (
     CITATION_PROMPT_RULES,
     CitationRegistryCollector,
@@ -34,6 +34,9 @@ from bisheng.common.errcode.assistant import (
     AssistantModelNotConfigError,
 )
 from bisheng.database.models.assistant import Assistant, AssistantLink, AssistantLinkDao
+from bisheng.datasource.domain.langchain.tool import DatasourceQueryTool
+from bisheng.datasource.domain.schemas.citation import DatasourceCitationPayloadSchema
+from bisheng.datasource.domain.services.executor import tables_from_statement
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
 from bisheng.knowledge.domain.services.knowledge_utils import KnowledgeUtils
 from bisheng.llm.domain.services import LLMService
@@ -74,6 +77,37 @@ class AssistantCitationToolWrapper(BaseTool):
 
     def _has_knowledge_rag_tool(self) -> bool:
         return hasattr(self.tool, "knowledge_retriever_tool")
+
+    def _is_datasource_tool(self) -> bool:
+        return isinstance(self.tool, DatasourceQueryTool)
+
+    def datasource_citation_items(self) -> list[CitationRegistryItemSchema]:
+        """One anchor per execution this tool performed (AC-31/34).
+
+        Built from the tool's accumulated outcomes -- the same objects the model
+        read -- rather than from a re-derivation, which would drift.
+        """
+        if not self._is_datasource_tool():
+            return []
+        items: list[CitationRegistryItemSchema] = []
+        for outcome in self.tool.outcomes:
+            payload = DatasourceCitationPayloadSchema(
+                datasourceId=self.tool.datasource.id,
+                datasourceName=self.tool.datasource.name,
+                tables=tables_from_statement(outcome.statement),
+                statement=outcome.statement,
+                columns=list(outcome.columns),
+                rows=[list(row) for row in outcome.rows],
+                truncated=outcome.truncated,
+            )
+            items.append(
+                CitationRegistryItemSchema(
+                    citationId=f"datasource_{self.tool.datasource.id}_{len(items)}",
+                    type=CitationType.DATASOURCE,
+                    sourcePayload=payload.model_dump(),
+                )
+            )
+        return items
 
     def _append_web_citation(self, output: Any) -> Any:
         if not isinstance(output, str):
@@ -353,7 +387,11 @@ class AssistantAgent(AssistantUtils):
         return {str(kb.id): (kb.name or "") for kb in KnowledgeDao.get_list_by_ids(ids)}
 
     def wrap_citation_tool(self, tool: BaseTool) -> BaseTool:
-        if tool.name == "web_search" or hasattr(tool, "knowledge_retriever_tool"):
+        if (
+            tool.name == "web_search"
+            or hasattr(tool, "knowledge_retriever_tool")
+            or isinstance(tool, DatasourceQueryTool)
+        ):
             return AssistantCitationToolWrapper.wrap(tool, self.citation_registry_collector)
         return tool
 
@@ -375,6 +413,7 @@ class AssistantAgent(AssistantUtils):
         for tool in self.tools:
             if isinstance(tool, AssistantCitationToolWrapper):
                 candidate_items.extend(tool.citation_registry_items)
+                candidate_items.extend(tool.datasource_citation_items())
         for item in candidate_items:
             item_key = (item.citationId, item.itemId)
             if item_key in seen_keys:

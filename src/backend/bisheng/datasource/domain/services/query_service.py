@@ -43,7 +43,11 @@ from bisheng.common.models.config import ConfigKeyEnum
 from bisheng.datasource.domain.models.dao import DbQueryFailureDao
 from bisheng.datasource.domain.models.datasource import DbDatasource
 from bisheng.datasource.domain.services import schema_prompt
-from bisheng.datasource.domain.services.executor import DatasourceExecutor, QueryOutcome
+from bisheng.datasource.domain.services.executor import (
+    DatasourceExecutor,
+    QueryOutcome,
+    tables_from_statement,
+)
 
 #: Spec AC-38: never more than three rounds. After this the feature gives up and
 #: says so -- each round is a model call plus a query against a live database.
@@ -299,7 +303,7 @@ class DatasourceQueryService:
                     'datasource_id': datasource.id,
                     'statements': tried,
                     'error_category': category or 'other',
-                    'tables': sorted({t for s in tried for t in DatasourceExecutor._tables_from(s)}),
+                    'tables': sorted({t for s in tried for t in tables_from_statement(s)}),
                 }
             )
         except Exception:

@@ -99,6 +99,28 @@ class QueryOutcome:
     duration_ms: int = 0
 
 
+def tables_from_statement(statement: str) -> list[str]:
+    """Table names mentioned in the statement.
+
+    Deliberately a coarse parse rather than the guard's AST: this runs on
+    the success path where the statement already passed validation, and a
+    name it misses costs a less informative log line, not a wrong decision.
+
+    Public because the citation anchor needs the same summary across a module
+    boundary (F061 T-31). It is the table list the USER reads, so a second
+    parser living next to it would be a second answer to "which tables did this
+    touch" -- and the two would disagree the first time one was improved.
+    """
+    import re
+
+    found = re.findall(r'\b(?:from|join)\s+([A-Za-z_][\w.$]*)', statement, flags=re.IGNORECASE)
+    seen: list[str] = []
+    for name in found:
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
 class DatasourceExecutor:
     """Executes one already-validated statement. Stateless."""
 
@@ -184,7 +206,7 @@ class DatasourceExecutor:
             datasource,
             statement,
             status='truncated' if outcome.truncated else 'success',
-            tables=cls._tables_from(statement),
+            tables=tables_from_statement(statement),
             row_count=outcome.row_count,
             truncated=outcome.truncated,
             readonly_degraded=outcome.readonly_degraded,
@@ -250,23 +272,6 @@ class DatasourceExecutor:
             return True
 
     # --- the record ----------------------------------------------------------
-
-    @staticmethod
-    def _tables_from(statement: str) -> list[str]:
-        """Table names mentioned in the statement, for the audit row.
-
-        Deliberately a coarse parse rather than the guard's AST: this runs on
-        the success path where the statement already passed validation, and a
-        name it misses costs a less informative log line, not a wrong decision.
-        """
-        import re
-
-        found = re.findall(r'\b(?:from|join)\s+([A-Za-z_][\w.$]*)', statement, flags=re.IGNORECASE)
-        seen: list[str] = []
-        for name in found:
-            if name not in seen:
-                seen.append(name)
-        return seen
 
     @staticmethod
     async def _record(
