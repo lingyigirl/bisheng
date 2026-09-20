@@ -17,6 +17,7 @@ from bisheng.citation.domain.schemas.citation_schema import (
     WebCitationItemSchema,
     WebCitationPayloadSchema,
 )
+from bisheng.datasource.domain.schemas.citation import DatasourceCitationPayloadSchema
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
 
 
@@ -72,12 +73,17 @@ class CitationRegistryService:
         return str(value)
 
     @staticmethod
-    def _dump_source_payload(payload: RagCitationPayloadSchema | WebCitationPayloadSchema) -> dict[str, Any]:
+    def _dump_source_payload(
+        payload: RagCitationPayloadSchema | WebCitationPayloadSchema | DatasourceCitationPayloadSchema,
+    ) -> dict[str, Any]:
         """Serialize source payload for persistence."""
         return payload.model_dump(exclude_none=False)
 
     @classmethod
-    def dump_source_payload(cls, payload: RagCitationPayloadSchema | WebCitationPayloadSchema) -> dict[str, Any]:
+    def dump_source_payload(
+        cls,
+        payload: RagCitationPayloadSchema | WebCitationPayloadSchema | DatasourceCitationPayloadSchema,
+    ) -> dict[str, Any]:
         """Serialize source payload for external persistence callers."""
         return cls._dump_source_payload(payload)
 
@@ -91,6 +97,10 @@ class CitationRegistryService:
         """Validate persisted source payload before returning it."""
         if citation_type == CitationType.RAG.value:
             return RagCitationPayloadSchema.model_validate(source_payload).model_dump(exclude_none=False)
+        if citation_type == CitationType.DATASOURCE.value:
+            # The old binary shape sent a datasource row down the WEB branch and
+            # raised `url Field required`. F061 T-31.
+            return DatasourceCitationPayloadSchema.model_validate(source_payload).model_dump(exclude_none=False)
         return WebCitationPayloadSchema.model_validate(source_payload).model_dump(exclude_none=False)
 
     @classmethod
@@ -479,7 +489,13 @@ class CitationRegistryService:
         registry_items: list[CitationRegistryItemSchema] = []
         for grouped_flat_items in grouped_items.values():
             first_item = grouped_flat_items[0]
-            if first_item.type == CitationType.RAG:
+            if first_item.type == CitationType.DATASOURCE:
+                # One execution == one self-contained anchor: unlike RAG chunks
+                # or web links there are no sub-items to merge, and validating
+                # it as a WEB payload (the old else-branch) raised
+                # `url Field required`. F061 T-31.
+                registry_items.append(first_item)
+            elif first_item.type == CitationType.RAG:
                 registry_items.append(cls._group_rag_flat_items(grouped_flat_items))
             else:
                 registry_items.append(cls._group_web_flat_items(grouped_flat_items))
