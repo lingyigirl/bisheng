@@ -7,7 +7,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import ArgsSchema, BaseTool
 from langgraph.prebuilt import create_react_agent
 from loguru import logger
-from pydantic import BaseModel, Field, SkipValidation, field_validator
+from pydantic import BaseModel, Field, SkipValidation, field_validator, model_validator
 
 from bisheng.citation.domain.schemas.citation_schema import CitationRegistryItemSchema
 from bisheng.citation.domain.services.citation_prompt_helper import (
@@ -149,21 +149,47 @@ class WorkflowCitationToolWrapper(BaseTool):
 
 
 class SqlAgentParams(BaseModel):
-    """SQL Agent Param Model"""
+    """SQL Agent Param Model.
+
+    Two shapes, and both must keep validating (spec AC-53 / AC-54):
+
+    * **Bound to a managed datasource** — `datasource_id` is set and the inline
+      connection fields are unnecessary. This is the path AC-53 introduces:
+      credentials are Fernet-encrypted on the datasource row, and the exposed
+      tables are governed there rather than re-typed per flow.
+    * **Legacy inline** — no `datasource_id`, and the inline fields are required
+      exactly as they always were. Existing flows carry this shape and must not
+      start failing validation on load.
+
+    The inline fields therefore stay REQUIRED when there is no `datasource_id`.
+    Loosening them unconditionally would let a flow save with neither source and
+    discover the problem only when a user runs it.
+    """
 
     database_engine: str | None = Field(
         "mysql", description="Database type, supportmysql, db2, postgres, gaussdb, oracle"
     )
-    db_username: str
-    db_password: str
-    db_address: str
-    db_name: str
+    db_username: str = ''
+    db_password: str = ''
+    db_address: str = ''
+    db_name: str = ''
     open: bool = False
+    #: AC-53: a datasource registered in the platform, in place of inline details.
+    datasource_id: int | None = Field(
+        default=None,
+        description="Bind an existing datasource instead of filling in connection details (AC-53)",
+    )
 
     @field_validator("database_engine")
     @classmethod
     def validate_database_engine(cls, v):
-        # Convert to lowercase
+        # Deliberately NOT extended with the newer engines (dm, …). This
+        # validator guards the LEGACY inline block only: `test_engine_registry.py`
+        # records that an inline node still cannot be configured with DaMeng, and
+        # a datasource-bound node does not go through here at all -- its engine
+        # lives on the datasource row and is validated by `engine_registry`.
+        # Widening this set would silently change what existing flows accept,
+        # which is the opposite of what AC-54 asks for.
         if v:
             v = v.lower()
             if v not in ["mysql", "db2", "postgres", "gaussdb", "oracle", "postgresql"]:
@@ -171,6 +197,38 @@ class SqlAgentParams(BaseModel):
                     "Unsupported database engine. Supported engines are: MySQL, DB2, PostgreSql, GaussDB, Oracle."
                 )
         return v
+
+    @model_validator(mode='after')
+    def _require_a_source(self):
+        """A switched-on block must name either a datasource or a full inline
+        connection.
+
+        Checked here rather than per-field so the two shapes can be expressed:
+        the inline fields are optional in the schema and required in practice
+        unless `datasource_id` is present.
+        """
+        if not self.open:
+            return self
+        if self.datasource_id:
+            return self
+
+        missing = [
+            name
+            for name, value in (
+                ('db_address', self.db_address),
+                ('db_name', self.db_name),
+                ('db_username', self.db_username),
+                ('db_password', self.db_password),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                'sql_agent is switched on but names no datasource and is missing '
+                f'{missing}. Set datasource_id, or fill in the inline connection '
+                '(the shape every existing flow uses).'
+            )
+        return self
 
 
 class AgentNode(BaseNode):
@@ -223,15 +281,27 @@ class AgentNode(BaseNode):
         # OFF → by the config author's (flow creator) view_file.
         self._knowledge_auth = self.node_params.get("user_auth", False)
 
-        # Supported or notnl2sql
+        # Supported or not nl2sql. Two shapes (spec AC-53 / AC-54):
+        #
+        #   * `datasource_id` set -> a managed datasource; connection details,
+        #     encryption and exposed-table governance live on its row.
+        #   * inline details only -> the legacy shape, still read exactly as
+        #     before so existing flows keep running.
+        #
+        # An id wins when both are present: the flow was switched over, and the
+        # inline block is what it was switched FROM (the editor keeps it read-only
+        # for reference rather than deleting it, AC-56).
         self._sql_agent_params = self.node_params.get("sql_agent", None)
         self._sql_agent = (
             SqlAgentParams.model_validate(self.node_params["sql_agent"])
             if (self._sql_agent_params and self._sql_agent_params.get("open", False))
             else None
         )
+        self._datasource_id: int | None = (
+            self._sql_agent.datasource_id if self._sql_agent else None
+        )
         self._sql_address = ""
-        if self._sql_agent and self._sql_agent.open:
+        if self._sql_agent and self._sql_agent.open and not self._datasource_id:
             self._sql_address = self._init_sql_address()
 
         # agent
@@ -333,10 +403,87 @@ class AgentNode(BaseNode):
             return []
 
     def init_sql_agent_tool(self):
+        # AC-53: a bound datasource takes priority and goes through the SAME tool
+        # the assistant chat uses, so a flow gets encrypted credentials, the
+        # exposed-table governance and the per-call authorization check.
+        #
+        # `getattr` rather than `self._datasource_id`: this method is reachable on
+        # an `AgentNode` built outside `__init__` (deserialized fixtures, tests),
+        # and a missing attribute there would be an AttributeError on a code path
+        # that has nothing to do with datasources. Same treatment `_sql_address`
+        # already gets by being initialised to '' in `__init__`.
+        if getattr(self, '_datasource_id', None):
+            return self._init_datasource_tool()
         if not self._sql_address:
             return []
         tool_params = {"sql_agent": {"llm": self._llm, "sql_address": self._sql_address}}
         return load_tools(tool_params=tool_params, llm=self._llm)
+
+    def _init_datasource_tool(self):
+        """A `DatasourceQueryTool` for the bound datasource, or none.
+
+        **Who the query runs as**: the flow's CONFIG AUTHOR, not the runtime
+        caller, matching what this node already does for knowledge retrieval when
+        its permission toggle is off (`identity_user_id` above). The consequence
+        is deliberate and worth stating: publishing a flow publishes its
+        datasource to everyone who can run that flow, whether or not they hold
+        `viewer` on it themselves — the same way an assistant lends its knowledge
+        bases to whoever can chat with it. It does not widen who CONTROLS the
+        data: anyone who can edit the flow can already change what it queries.
+
+        The identity is built from the stored user row rather than from a bare
+        id: `PermissionService` skips its tenant gate for a payload without
+        `get_visible_tenants`, so `UserPayload(user_id=...)` would drop tenant
+        isolation silently. A missing row therefore builds no tool at all.
+
+        Every failure returns no tool rather than raising: a flow whose
+        datasource was deleted (AC-62) or whose author was removed must keep
+        running, minus the database — the same posture as the legacy path, which
+        simply contributes nothing when there is no address.
+        """
+        from bisheng.common.dependencies.user_deps import UserPayload
+        from bisheng.datasource.domain.langchain.tool import build_datasource_tools
+        from bisheng.datasource.domain.models.dao import DbDatasourceDao
+        from bisheng.user.domain.models.user import UserDao
+        from bisheng.utils.async_utils import run_async_safe
+
+        author_row = UserDao.get_user(int(self.flow_user_id or self.user_id))
+        if author_row is None:
+            logger.warning(
+                'sql_agent datasource {} skipped: flow author {} not found',
+                self._datasource_id,
+                self.flow_user_id,
+            )
+            return []
+
+        # `user_role` is passed explicitly so `LoginUser.__init__` does not fall
+        # back to `UserRoleDao.get_user_roles` — one fewer query per node
+        # construction, and the roles are not used by the permission check this
+        # identity feeds (`PermissionService.check` reads the FGA tuple).
+        login_user = UserPayload(
+            user_id=author_row.user_id,
+            user_name=author_row.user_name,
+            user_role=[],
+            tenant_id=author_row.tenant_id,
+        )
+
+        async def _load():
+            datasource = await DbDatasourceDao.aget_by_id(int(self._datasource_id))
+            # A deleted or disabled datasource (AC-62) contributes no tool.
+            if datasource is None or not datasource.enabled:
+                return []
+            return await build_datasource_tools(
+                [datasource], user_id=self.flow_user_id, login_user=login_user
+            )
+
+        try:
+            return run_async_safe(_load(), timeout=30)
+        except Exception:
+            logger.opt(exception=True).warning(
+                'sql_agent datasource {} could not be prepared; continuing without it',
+                self._datasource_id,
+            )
+            return []
 
     def _init_knowledge_tools(self, knowledge_retriever: dict):
         if not self._knowledge_ids:
