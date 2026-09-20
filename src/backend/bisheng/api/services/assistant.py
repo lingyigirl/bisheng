@@ -318,6 +318,7 @@ class AssistantService(BaseService, AssistantUtils):
             else:
                 logger.error(f"not expect link info: {one.model_dump()}")
         tool_list, flow_list, knowledge_list = cls.get_link_info(tool_list, flow_list, knowledge_list)
+        datasource_list = await cls._visible_datasource_ids(datasource_list, login_user, assistant)
         assistant.logo = await cls.get_logo_share_link_async(assistant.logo)
         can_share = await user_may_share_app(login_user, "assistant", assistant_id)
         return AssistantInfo(
@@ -330,6 +331,41 @@ class AssistantService(BaseService, AssistantUtils):
             datasource_list=datasource_list,
             can_share=can_share,
         )
+
+    @classmethod
+    async def _visible_datasource_ids(cls, datasource_ids: list[int], login_user, assistant) -> list[int]:
+        """The bound datasources `login_user` may know about (F061 AC-49).
+
+        Two audiences read this field, and they must not be served the same way:
+
+        * An EDITOR (`edit_app`) gets the full list. `update_assistant` persists
+          `datasource_list` wholesale, so a filtered read followed by a save
+          would silently unbind every datasource the editor personally cannot
+          use. What they can see is bounded by the fact that they may already
+          change it.
+        * Everyone else is a chat-side reader and gets only the ids they hold
+          `viewer` on. This matches what `conversation_service` does when it
+          builds the tools, and it exists for the same reason the datacenter
+          does the check per id: a raw id tells the reader that a datasource
+          exists, which is what AC-49's "未授权…不出现" is about.
+
+        Nothing here runs when no datasource is bound — the common case for the
+        whole install base, and it must not start costing permission calls
+        (AC-60).
+        """
+        if not datasource_ids:
+            return []
+
+        if await ApplicationPermissionService.has_any_permission_async(
+            login_user, "assistant", str(assistant.id), ["edit_app"]
+        ):
+            return datasource_ids
+
+        from bisheng.datasource.domain.services.conversation_service import (
+            authorized_datasource_ids,
+        )
+
+        return await authorized_datasource_ids(login_user, datasource_ids)
 
     @classmethod
     async def get_one_assistant(cls, assistant_id: str) -> Assistant | None:

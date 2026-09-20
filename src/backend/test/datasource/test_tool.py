@@ -25,6 +25,33 @@ def _datasource(ds_id=7, name='业务库'):
     return SimpleNamespace(id=ds_id, name=name, tenant_id=1, engine='mysql')
 
 
+class _AllowedUser:
+    """A caller that passes the per-call `viewer` check.
+
+    Every test here that reaches the query service needs one: since T-32 the
+    tool re-checks authorization on each call and refuses when there is no
+    caller (that behavior has its own file,
+    `test_datasource_use_authorization.py`). Pair it with `_allow_queries` so
+    the check is stubbed and these tests keep testing what they name.
+    """
+
+    user_id = 3
+    tenant_id = 1
+
+    def get_visible_tenants(self):
+        return [1]
+
+    def is_admin(self):
+        return False
+
+
+def _allow_queries(monkeypatch):
+    """Stub the authorization check to allow, in tests about querying."""
+    from bisheng.permission.domain.services.permission_service import PermissionService
+
+    monkeypatch.setattr(PermissionService, 'check', AsyncMock(return_value=True))
+
+
 def _tool(**overrides):
     fields = {
         'name': 'datasource_7',
@@ -32,6 +59,7 @@ def _tool(**overrides):
         'datasource': _datasource(),
         'tables': [{'table_name': 'orders', 'structure_snapshot': []}],
         'user_id': 3,
+        'login_user': _AllowedUser(),
     }
     fields.update(overrides)
     return DatasourceQueryTool(**fields)
@@ -85,6 +113,7 @@ async def test_the_tool_is_async_so_the_loop_is_not_blocked():
 
 
 async def test_a_call_goes_through_the_query_service(monkeypatch):
+    _allow_queries(monkeypatch)
     seen = {}
 
     async def _answer_question(datasource, question, tables, **kwargs):
@@ -110,9 +139,13 @@ async def test_a_call_goes_through_the_query_service(monkeypatch):
 # --- AC-25: nothing pre-routes ------------------------------------------------
 
 
-async def test_the_question_is_passed_through_unexamined(monkeypatch):
+async def test_the_question_is_passed_through_unexamined():
     """No keyword sniffing, no "is this a database question" gate. The model
-    decides; the platform only executes what it asks for."""
+    decides; the platform only executes what it asks for.
+
+    Inspects the module source rather than calling the tool, so it needs no
+    stubbed authorization -- it never reaches the query path.
+    """
     import inspect
 
     source = inspect.getsource(__import__(
@@ -126,6 +159,7 @@ async def test_an_ordinary_conversational_question_still_reaches_the_service(mon
     """Even a question that plainly has nothing to do with a database is
     executed if the MODEL chose to call the tool -- deciding that is not the
     platform's job."""
+    _allow_queries(monkeypatch)
     called = []
 
     async def _answer_question(datasource, question, tables, **kwargs):
@@ -148,6 +182,7 @@ async def test_an_ordinary_conversational_question_still_reaches_the_service(mon
 async def test_the_model_gets_the_rows(monkeypatch):
     """The model needs the data to answer; withholding it would make the tool
     pointless."""
+    _allow_queries(monkeypatch)
     monkeypatch.setattr(
         'bisheng.datasource.domain.langchain.tool.DatasourceQueryService.answer_question',
         AsyncMock(return_value=_answer(_outcome())),
@@ -160,6 +195,7 @@ async def test_the_model_gets_the_rows(monkeypatch):
 
 
 async def test_an_empty_result_reads_as_an_answer_not_an_error(monkeypatch):
+    _allow_queries(monkeypatch)
     monkeypatch.setattr(
         'bisheng.datasource.domain.langchain.tool.DatasourceQueryService.answer_question',
         AsyncMock(return_value=_answer(_outcome(row_count=0, rows=[]))),
@@ -173,6 +209,7 @@ async def test_an_empty_result_reads_as_an_answer_not_an_error(monkeypatch):
 
 async def test_a_truncated_result_says_so_to_the_model(monkeypatch):
     """Otherwise the model answers as if it had seen everything."""
+    _allow_queries(monkeypatch)
     monkeypatch.setattr(
         'bisheng.datasource.domain.langchain.tool.DatasourceQueryService.answer_question',
         AsyncMock(return_value=_answer(_outcome(truncated=True))),
@@ -184,6 +221,7 @@ async def test_a_truncated_result_says_so_to_the_model(monkeypatch):
 async def test_a_failure_is_reported_to_the_model_without_the_driver_error(monkeypatch):
     """The user-facing sentence goes back to the model too, so it can say
     "I could not query that" and, per AC-40, carry on with other sources."""
+    _allow_queries(monkeypatch)
     monkeypatch.setattr(
         'bisheng.datasource.domain.langchain.tool.DatasourceQueryService.answer_question',
         AsyncMock(
@@ -205,6 +243,7 @@ async def test_the_statement_is_not_returned_to_the_model(monkeypatch):
     """It goes to the citation anchor, which the user sees. The model does not
     need to repeat SQL back, and putting it in the tool result would make the
     model likely to paste it into the answer."""
+    _allow_queries(monkeypatch)
     monkeypatch.setattr(
         'bisheng.datasource.domain.langchain.tool.DatasourceQueryService.answer_question',
         AsyncMock(return_value=_answer(_outcome())),
@@ -229,7 +268,9 @@ async def test_one_tool_per_datasource_and_only_the_exposed_tables(monkeypatch):
         'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=rows),
     ) as alist:
-        tools = await build_datasource_tools([_datasource(7), _datasource(8, '报表库')], user_id=3)
+        tools = await build_datasource_tools(
+            [_datasource(7), _datasource(8, '报表库')], user_id=3, login_user=_AllowedUser()
+        )
 
     assert len(tools) == 2
     assert alist.await_count == 2
@@ -245,7 +286,9 @@ async def test_the_datasource_name_is_in_the_tool_description(monkeypatch):
         'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=[]),
     ):
-        tools = await build_datasource_tools([_datasource(7, '客户订单库')])
+        tools = await build_datasource_tools(
+            [_datasource(7, '客户订单库')], login_user=_AllowedUser()
+        )
 
     assert '客户订单库' in tools[0].description
     assert tools[0].name == 'datasource_7'

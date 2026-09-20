@@ -14,6 +14,27 @@ from bisheng.datasource.domain.langchain.tool import DatasourceQueryTool
 from bisheng.datasource.domain.services.executor import QueryOutcome
 
 
+class _AllowedUser:
+    """A caller that passes the per-call `viewer` check (T-32)."""
+
+    user_id = 3
+    tenant_id = 1
+
+    def get_visible_tenants(self):
+        return [1]
+
+    def is_admin(self):
+        return False
+
+
+def _allow_queries(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bisheng.permission.domain.services.permission_service import PermissionService
+
+    monkeypatch.setattr(PermissionService, 'check', AsyncMock(return_value=True))
+
+
 def _tool():
     return DatasourceQueryTool(
         name='datasource_7',
@@ -21,6 +42,7 @@ def _tool():
         datasource=SimpleNamespace(id=7, name='业务库', tenant_id=1, engine='mysql'),
         tables=[],
         user_id=3,
+        login_user=_AllowedUser(),
     )
 
 
@@ -29,6 +51,7 @@ def _outcome(statement='SELECT 1'):
 
 
 async def test_two_queries_both_leave_an_outcome(monkeypatch):
+    _allow_queries(monkeypatch)
     tool = _tool()
     outcomes = [_outcome('SELECT 1'), _outcome('SELECT 2')]
 
@@ -57,6 +80,7 @@ async def test_two_queries_both_leave_an_outcome(monkeypatch):
 
 
 async def test_a_failed_query_adds_no_outcome(monkeypatch):
+    _allow_queries(monkeypatch)
     tool = _tool()
 
     async def _answer_question(datasource, question, tables, **kwargs):

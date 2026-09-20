@@ -7,9 +7,15 @@ must not merely be absent from the picker, it must be REFUSED if the id is
 passed directly. Filtering a list and calling it done is the classic version of
 this bug: the API stays open and only the UI looks right.
 
-AC-52 (authorization changes take effect on the next turn) follows from doing
-the check per turn rather than caching a resolved set. That is also why nothing
-here memoizes across calls.
+AC-52 (authorization changes take effect on the next turn) is guaranteed by
+re-checking on every TOOL CALL, not merely per turn. The distinction matters
+because the assistant agent is reused across the turns of one chat
+(`common/chat/client.py` rebuilds it only on a session switch), so `init_tools`
+-- and therefore the filter below -- runs once per session. A check that lived
+only here would let a revoked datasource keep answering in a chat that is
+already open. The per-call re-check lives in `DatasourceQueryTool._authorized`;
+this module's `authorized_datasource_ids` is what keeps unauthorized tools out
+of the model's tool list in the first place. Neither memoizes across calls.
 
 The citation anchor exists so an answer can be traced back: which datasource,
 which tables, and the statement that ran (AC-31). The result rows travel
@@ -151,7 +157,10 @@ async def build_tools_for_assistant(
         if datasource is not None and datasource.enabled:
             datasources.append(datasource)
 
-    return await build_datasource_tools(datasources, user_id=user_id)
+    # `login_user` goes with them: the tool re-checks `viewer` on every call, so
+    # a revoke lands on the next turn even though the tool set was built once
+    # for the whole session (spec AC-52).
+    return await build_datasource_tools(datasources, user_id=user_id, login_user=login_user)
 
 
 async def resolve_bound_datasource(login_user, datasource_id: int) -> DbDatasource:
