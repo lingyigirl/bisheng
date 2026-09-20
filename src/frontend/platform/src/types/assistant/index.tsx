@@ -35,6 +35,13 @@ export interface AssistantDetail {
     flow_list?: FlowType[];
     /** 知识库ID列表，为None则不更新；type 区分文档知识库(0)与知识空间(3, KnowledgeTypeEnum.SPACE) (F041) */
     knowledge_list?: { id: number, name: string, index_name?: string, type?: number }[];
+    /**
+     * F061: 绑定数据源列表。**读取时是已解析对象**（后端返回 `DatasourceRead`），
+     * `tool_list` / `flow_list` / `knowledge_list` 同理；**写入时必须 map 回 id**
+     * （见 `apps.tsx` 的复制应用路径与 `saveAssistanttApi` 的 `datasource_list: number[]`）。
+     * 直接 `...detail` 会把对象形状发给只接受 `list[int]` 的接口，被 Pydantic 422。
+     */
+    datasource_list?: { id: number, name: string, engine?: string }[];
     /** F041: 用户知识库权限校验开关，默认关；开=按运行使用者 view_file 过滤知识空间检索，关=按配置者可见范围 */
     knowledge_auth?: boolean;
     max_token: number;

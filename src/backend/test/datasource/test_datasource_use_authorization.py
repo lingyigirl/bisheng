@@ -224,3 +224,30 @@ async def test_building_with_no_datasources_still_returns_empty_without_a_contex
     assistants bind no datasource, so this is the common path and it must not
     start raising (AC-60: unchanged behavior when no datasource is configured)."""
     assert await build_datasource_tools([]) == []
+
+
+def test_the_use_relation_is_declared_once_but_spelled_identically():
+    """`tool.py` repeats `USE_RELATION = 'viewer'` instead of importing it.
+
+    The repetition is deliberate: `conversation_service` imports `tool`, so the
+    reverse import would be a cycle. What is NOT acceptable is the two silently
+    drifting — a tool checking `'viewer'` while the filter checks `'editor'`
+    would be a hole that no other test in this file can see, because each one
+    only ever exercises one of the two constants.
+
+    The comment in `tool.py` claims "the test that asserts this relation would
+    fail if the two drift". This is that test.
+    """
+    from bisheng.datasource.domain.langchain import tool as tool_module
+    from bisheng.datasource.domain.services import conversation_service
+
+    assert tool_module.USE_RELATION == conversation_service.USE_RELATION, (
+        f'the two USE_RELATION constants have drifted: tool.py says '
+        f'{tool_module.USE_RELATION!r}, conversation_service.py says '
+        f'{conversation_service.USE_RELATION!r}. A tool would check one relation '
+        f'while the tool-list filter checks another.'
+    )
+
+    # And both still name a relation the authorization model actually defines,
+    # so "identical" cannot be satisfied by both being wrong.
+    assert tool_module.USE_RELATION in {'owner', 'manager', 'editor', 'viewer'}

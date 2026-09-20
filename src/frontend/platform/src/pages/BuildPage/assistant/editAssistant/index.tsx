@@ -76,6 +76,11 @@ export default function editAssistant() {
             flow_list: assistantState.flow_list.map(item => item.id),
             tool_list: assistantState.tool_list.map(item => item.id),
             knowledge_list: assistantState.knowledge_list.map(item => item.id),
+            // F061: read shape is resolved objects, write shape is ids — same
+            // asymmetry as the three above. Spreading the objects through is a
+            // 422 from the backend, so saving an assistant with a datasource
+            // bound would fail outright.
+            datasource_list: (assistantState.datasource_list || []).map(item => item.id),
             guide_question: assistantState.guide_question.filter((item) => item),
             logo: assistantState.viewLogo ? assistantState.logo : '',
         })).then(res => {

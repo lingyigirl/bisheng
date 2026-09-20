@@ -324,6 +324,8 @@
 | 字段 / 结构 | 类型 / 格式 | 说明 | 谁会消费 |
 |---|---|---|---|
 | 助手 → 数据源的绑定 | 关联列 `AssistantLink.datasource_id`（**NULL = 未绑定**） | 与 `tool_id` / `flow_id` / `knowledge_id` 并列（`database/models/assistant.py:73-75`）。**不复用 `tool_id`**：那会让数据源继承 `tool` 的授权与管理页口径，与 AC-43/44 冲突（§8-2 已定案）。删除条件是 `IS NOT NULL` 而非 `!= 0`，理由见决策 15 | **仅助手**对话链路；工作台不在本特性范围（决策 15 末段） |
+| `AssistantInfo.datasource_list`（**读**） | `list[DatasourceRead]`，即 `[{id, name, description, engine}]` | **2026-09-20 T-40 变更**：原为 `list[int]`。三个兄弟字段（`tool_list` / `flow_list` / `knowledge_list`）**早已是解析后的只读模型**，只有它是裸 id，是不一致。裸 id 也无法使用——能解析 id→名字的 `GET /api/v1/datasource` 由 `get_tenant_admin_user` 把关，**聊天用户无权调用**。解析与授权过滤（T-32）在同一处：编辑者（`edit_app`）得全量（否则下次整体保存会静默解绑），其余人按 `viewer` 过滤。**窄模型而非 ORM 行**——`DbDatasource.password` 是 Fernet 密文，INV-19 ① 禁止回显，窄 schema 使这件事结构化 | client `appChat` 的来源展示（T-40）；platform 助手表单的初始值（写入仍是 id，见下行） |
+| `AssistantUpdateReq.datasource_list`（**写**） | `list[int]`（**与读不同形**） | 写入仍是 id 列表，与三个兄弟字段的「读解析、写 id」不对称**一致**（平台保存路径本就把兄弟字段 map 回 id）。`None` = 不动绑定，`[]` = 清空 | platform 助手编辑表单 |
 | `db_datasource.password` | Fernet 密文 | 复用 `core/config/settings.py:25-29` 的 `encrypt()`/`decrypt()`；**任何响应不回显** | 仅连接建立时解密 |
 | `db_datasource_table.structure_snapshot` | JSON（`dialect_helpers.JsonType`） | 表名/字段名/类型/库内注释；**重采集只刷它** | schema 注入、模型生成 SQL |
 | `db_datasource_table.business_desc` | text | **人工维护**，重采集不覆盖 | schema 注入 |

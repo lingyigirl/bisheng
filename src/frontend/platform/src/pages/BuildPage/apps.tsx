@@ -184,6 +184,12 @@ export default function apps() {
                         flow_list: (detail.flow_list || []).map((f: { id: string }) => f.id),
                         tool_list: (detail.tool_list || []).map((tool: { id: number }) => tool.id),
                         knowledge_list: (detail.knowledge_list || []).map((k: { id: number }) => k.id),
+                        // F061: `detail` comes from the read endpoint, which returns
+                        // resolved objects for this field (like the three above).
+                        // The write endpoint takes ids, so it has to be mapped back —
+                        // spreading the objects straight through is a 422, not a
+                        // silent no-op, and the copy silently failed.
+                        datasource_list: (detail.datasource_list || []).map((d: { id: number }) => d.id),
                         guide_question: (detail.guide_question || []).filter(Boolean),
                         logo: detail.logo || '',
                     })

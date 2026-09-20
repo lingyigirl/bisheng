@@ -7,6 +7,7 @@ import { useRecordingAudioLoading } from "~/components/Voice/textToSpeechStore";
 import { useGetWorkbenchModelsQuery } from "~/hooks/queries/data-provider";
 import { useLocalize } from "~/hooks";
 import InputFiles from "./components/InputFiles";
+import { AppSourceSummary } from "./components/AppSourceSummary";
 import { bishengConfState, currentRunningState } from "./store/atoms";
 import { useAreaText } from "./useAreaText";
 import DragDropOverlay from "~/components/Chat/Input/Files/DragDropOverlay";

@@ -206,3 +206,71 @@ async def test_no_bound_datasource_serializes_as_an_empty_list(monkeypatch):
     info = await _info(monkeypatch, can_edit=False, viewer_for=set(), rows={})
 
     assert info.datasource_list == []
+
+
+# ── the read/write asymmetry, which is a real hazard for callers ─────────────
+
+
+def test_the_write_schema_still_takes_ids_not_the_read_shape():
+    """The asymmetry is intentional (it matches the three sibling fields), and
+    this pins it so a caller cannot be surprised by it.
+
+    The failure it guards against is specific and was real: the platform's
+    save paths spread the GET response into a PUT payload, mapping the three
+    siblings back to ids but -- because `datasource_list` was added later --
+    not this one. That sends `[{id, name, engine}]` at a `list[int]` field.
+    Pydantic rejects it, so the save 422s rather than silently doing nothing.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from bisheng.api.v1.schemas import AssistantUpdateReq
+
+    # ids are accepted...
+    req = AssistantUpdateReq(id='a1', model_name='m', temperature=1.0, datasource_list=[7, 8])
+    assert req.datasource_list == [7, 8]
+
+    # ...the read shape is NOT, and that is by design rather than an oversight.
+    with pytest.raises(ValidationError):
+        AssistantUpdateReq(
+            id='a1',
+            model_name='m',
+            temperature=1.0,
+            datasource_list=[{'id': 7, 'name': 'db', 'engine': 'mysql'}],
+        )
+
+
+def test_the_read_shape_cannot_be_used_as_the_write_shape():
+    """The other half, stated on its own: a caller that forgets the mapping gets
+    a loud failure, not a silent one.
+
+    Asserted as a list-comprehension round trip because that IS the fix the
+    platform needed -- read entries in, ids out. If the write schema ever starts
+    accepting the read shape, this test fails, and that is worth knowing: the
+    asymmetry would have become an implicit one.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from bisheng.api.v1.schemas import AssistantUpdateReq
+
+    class _Entry:
+        def __init__(self, entry_id):
+            self.id = entry_id
+
+    read_entries = [_Entry(7), _Entry(8)]
+
+    # The mapping the callers must perform.
+    req = AssistantUpdateReq(
+        id='a1',
+        model_name='m',
+        temperature=1.0,
+        datasource_list=[entry.id for entry in read_entries],
+    )
+    assert req.datasource_list == [7, 8]
+
+    # And sending the entries themselves is refused rather than coerced.
+    with pytest.raises(ValidationError):
+        AssistantUpdateReq(
+            id='a1', model_name='m', temperature=1.0, datasource_list=read_entries
+        )
