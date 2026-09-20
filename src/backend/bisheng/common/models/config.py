@@ -28,6 +28,13 @@ class ConfigKeyEnum(Enum):
     # instruction-following than title/abstract/tagging, and sharing the slot
     # would make tuning one silently change the other.
     DOC_EXTRACT_LLM = "doc_extract_llm"  # Document extraction default model configuration
+    # F061: SQL generation for datasource Q&A. Its own slot for the same reason
+    # F058 has one -- translating a question into SQL against a specific schema
+    # is a different task from answering it, and sharing a slot with the
+    # conversation model would make tuning one silently change the other. When
+    # unset the feature falls back to the conversation model WITHOUT error
+    # (spec AC-27), which is why this slot has no "required" handling anywhere.
+    DATASOURCE_SQL_LLM = "datasource_sql_llm"
 
 
 class ConfigBase(SQLModelSerializable):

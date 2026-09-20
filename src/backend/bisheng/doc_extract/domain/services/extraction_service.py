@@ -100,36 +100,18 @@ class ExtractionService:
     def _parse_slot_value(value: Any) -> int | None:
         """Pull the model id out of a stored slot value.
 
-        The slot column holds **JSON text** (``{"model_id": N}``), not a bare
-        number -- every writer in the platform stores ``json.dumps(payload)``,
-        and every existing reader deserializes it first
-        (``llm/domain/services/llm.py``: ``model_cls(**(json.loads(value) ...))``).
+        Delegates to `llm/domain/services/model_slot.py`, which now owns this
+        logic: F061 resolves a datasource SQL-generation slot the same way, and
+        the parsing rules are subtle enough (the column holds JSON TEXT, not a
+        bare number -- see that module) that a second copy would eventually
+        drift into the same bug this one shipped with.
 
-        Skipping the ``json.loads`` here is not a cosmetic difference: ``int()``
-        on ``'{"model_id": 5}'`` raises, so the slot would look permanently
-        unconfigured and every extraction would fail with 11608 regardless of
-        what the operator configured. A bare integer is still accepted so a
-        hand-written row does not silently break.
+        Kept as a method so the existing slot-parsing tests keep exercising the
+        behaviour through the class that uses it.
         """
-        if value is None:
-            return None
-        payload = value
-        if isinstance(payload, str):
-            try:
-                payload = json.loads(payload)
-            except (ValueError, TypeError):
-                # Not JSON -- fall through and try it as a plain number.
-                payload = value
-        if isinstance(payload, dict):
-            model_id = payload.get('model_id') or payload.get('extract_model_id')
-            try:
-                return int(model_id) if model_id is not None else None
-            except (TypeError, ValueError):
-                return None
-        try:
-            return int(payload)
-        except (TypeError, ValueError):
-            return None
+        from bisheng.llm.domain.services.model_slot import parse_model_slot_value
+
+        return parse_model_slot_value(value)
 
     @classmethod
     def _resolve_model_id(cls, tenant_id: int | None) -> int | None:
