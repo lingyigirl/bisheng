@@ -75,3 +75,49 @@ def test_datasource_models_are_not_knowledge_types():
         f'KnowledgeTypeEnum changed to {sorted(values)}; datasource work must '
         'not add a member here (spec AC-61 / AC-64)'
     )
+
+
+# --- the ORM and the migration must agree on the assistant binding -----------
+
+
+def test_assistant_link_declares_the_datasource_column():
+    """The migration adds `assistantlink.datasource_id`, but that alone puts the
+    column in the DATABASE and not in the ORM -- SQLModel would neither read nor
+    write it, and nothing fails loudly.
+
+    That is exactly what happened: the migration (with a paragraph explaining
+    why the column must exist) shipped two commits before the model field did.
+    """
+    from bisheng.database.models.assistant import AssistantLink
+
+    assert 'datasource_id' in AssistantLink.__table__.columns, (
+        'the assistant binding column is missing from the ORM; the migration '
+        'creates it but SQLModel cannot use it'
+    )
+
+
+def test_the_migration_creates_the_index_the_orm_declares():
+    """Both paths must converge.
+
+    `create_all` builds indexes from the model's `index=True`; the migration
+    has to build the same one by hand. When they diverge, a fresh install and an
+    upgraded one end up with different schemas and nothing reports it.
+    """
+    from pathlib import Path
+
+    from bisheng.database.models.assistant import AssistantLink
+
+    declared = {i.name for i in AssistantLink.__table__.indexes}
+
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / 'bisheng/core/database/alembic/versions/v2_7_0_f061_datasource.py'
+    ).read_text(encoding='utf-8')
+
+    for index_name in declared:
+        if 'datasource' not in index_name:
+            continue
+        assert index_name in migration, (
+            f'the ORM declares {index_name} but the migration never creates it '
+            '-- a migrated database would lack an index a fresh one has'
+        )

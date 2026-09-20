@@ -224,11 +224,19 @@ def upgrade() -> None:
                 comment='F061 绑定的数据源ID; NULL=未绑定',
             ),
         )
+    # The index the ORM declares via `index=True`. Without it the two paths
+    # diverge: `create_all` builds it on a fresh database, this migration did
+    # not, so an upgraded deployment would silently lack an index a new one
+    # has. Guarded like every other step.
+    if not index_exists(conn, _ASSISTANT_LINK_TABLE, 'ix_assistantlink_datasource_id'):
+        op.create_index('ix_assistantlink_datasource_id', _ASSISTANT_LINK_TABLE, [_ASSISTANT_LINK_COLUMN])
 
 
 def downgrade() -> None:
     conn = op.get_bind()
 
+    if index_exists(conn, _ASSISTANT_LINK_TABLE, 'ix_assistantlink_datasource_id'):
+        op.drop_index('ix_assistantlink_datasource_id', table_name=_ASSISTANT_LINK_TABLE)
     if column_exists(conn, _ASSISTANT_LINK_TABLE, _ASSISTANT_LINK_COLUMN):
         op.drop_column(_ASSISTANT_LINK_TABLE, _ASSISTANT_LINK_COLUMN)
 

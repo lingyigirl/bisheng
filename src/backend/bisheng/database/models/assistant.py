@@ -73,6 +73,23 @@ class AssistantLinkBase(SQLModelSerializable):
     tool_id: int | None = Field(default=0, index=True, description="ToolsID")
     flow_id: str | None = Field(default="", index=True, description="SkillID")
     knowledge_id: int | None = Field(default=0, index=True, description="The knowledge base uponID")
+    # F061: the datasource bound to this assistant. Its own column rather than a
+    # reuse of `tool_id`, because storing datasources there would make them
+    # inherit the `tool` resource's authorization and management surface --
+    # contradicting AC-43 (a peer of the knowledge library) and AC-44 (its own
+    # permission point).
+    #
+    # NULL on every existing row, which is the correct meaning ("none bound"),
+    # so assistants are unaffected until an admin binds one (AC-60).
+    #
+    # NOTE: the migration added this column but this model did not declare it,
+    # so the column existed in the database and was invisible to the ORM. Worth
+    # watching for when adding a column to an existing table -- the migration
+    # alone is not enough, and nothing fails loudly when you forget.
+    datasource_id: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True, index=True, comment="F061 bound datasource id; NULL = none"),
+    )
     tenant_id: int | None = Field(
         default=None,
         sa_column=Column(Integer, nullable=False, server_default=text("1"), index=True, comment="Tenant ID"),
