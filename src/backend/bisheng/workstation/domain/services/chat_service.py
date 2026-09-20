@@ -13,6 +13,7 @@ from loguru import logger
 from pydantic import field_validator as PydanticFieldValidator
 
 from bisheng.api.services import knowledge_imp
+from bisheng.api.services.guardrail import build_output_guard
 from bisheng.api.v1.schema.chat_schema import APIChatCompletion
 from bisheng.common.chat.utils import get_input_snapshot
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
@@ -1351,6 +1352,32 @@ async def _agent_stream_chat_completion(
             media_type="text/event-stream",
         )
 
+    # F056 output guard for this entry point. Built here rather than inside the
+    # generator for the same reason the ws endpoints build theirs up front: the
+    # tenant ContextVar is populated on the request, and the generator may run
+    # after the response has started.
+    #
+    # This is H8 step 2. Step 1 covered input interception and history
+    # filtering; without this, the only thing standing between the model and
+    # the user on this path was `filter_answer_text` at persistence time --
+    # which protects what is STORED but not what is STREAMED.
+    output_guard = build_output_guard(login_user, conversation_id)
+    output_blocked = False
+
+    async def _guard_output_text(text: str) -> str:
+        """Run one token through the output policy; '' means drop it.
+
+        Shares the closure's state across calls, so mask mode's cross-chunk
+        hold-back behaves the same here as on the ws path.
+        """
+        nonlocal output_blocked
+        if output_blocked or not text:
+            return '' if output_blocked else text
+        result = await output_guard(conversation_id, text)
+        if result.blocked:
+            output_blocked = True
+        return result.safe_text
+
     async def _agent_event_stream_impl():
         # Single ordered event log — one entry per thinking segment or tool
         # call, in arrival order. The frontend renders this array directly;
@@ -1708,15 +1735,24 @@ async def _agent_stream_chat_completion(
                                     {"duration_ms": d},
                                     conversation_id,
                                 )
-                            final_msg += text
+                            # Guarded BEFORE anything consumes the token, so the
+                            # streamed frame, the event log and `final_msg` all
+                            # carry the same text. Filtering only the frame
+                            # would leave the persisted copy unfiltered, and
+                            # filtering only at persistence time (H8 step 1)
+                            # would leave the user reading the raw output.
+                            safe_text = await _guard_output_text(text)
+                            if not safe_text:
+                                continue
+                            final_msg += safe_text
                             if events and events[-1].get("type") == "text":
-                                events[-1]["content"] = events[-1].get("content", "") + text
+                                events[-1]["content"] = events[-1].get("content", "") + safe_text
                             else:
-                                events.append({"type": "text", "content": text})
+                                events.append({"type": "text", "content": safe_text})
                             yield _sse_resp(
                                 "agent_answer",
                                 "stream",
-                                {"msg": text},
+                                {"msg": safe_text},
                                 conversation_id,
                             )
 
@@ -1877,15 +1913,21 @@ async def _agent_stream_chat_completion(
                                 {"duration_ms": d},
                                 conversation_id,
                             )
-                        final_msg += text
+                        # Same guarding as the tool-branch above: one place
+                        # decides what the token becomes, so the frame, the
+                        # event log and `final_msg` cannot disagree.
+                        safe_text = await _guard_output_text(text)
+                        if not safe_text:
+                            continue
+                        final_msg += safe_text
                         if events and events[-1].get("type") == "text":
-                            events[-1]["content"] = events[-1].get("content", "") + text
+                            events[-1]["content"] = events[-1].get("content", "") + safe_text
                         else:
-                            events.append({"type": "text", "content": text})
+                            events.append({"type": "text", "content": safe_text})
                         yield _sse_resp(
                             "agent_answer",
                             "stream",
-                            {"msg": text},
+                            {"msg": safe_text},
                             conversation_id,
                         )
         except BaseErrorCode as exc:

@@ -167,14 +167,41 @@ def test_http_input_allowed_not_blocked(client, admin_token, created_assistant_i
         assert body.get('status_code') != 11201, f'guard blocked a clean input: {body}'
 
 
+def _find_hit_row(client, token, word: str, direction: str = 'input'):
+    """Page through the hit log until the row for `word` is found.
+
+    This used to read only the first page, which made the test FLAKY against a
+    shared database: the log accumulates across runs (83 rows and growing on
+    the dev box) and `HIT_WORD` is unique per run, so it landed on page 1 only
+    by luck. Verified flaky -- the same code passed and failed on consecutive
+    runs, failing a DIFFERENT test each time. A test that fails at random is
+    worse than no test: it teaches people to re-run until green.
+    """
+    page = 1
+    while True:
+        data = assert_resp_200(
+            client.get(
+                f'{API_BASE}/sensitive-word-hit-logs',
+                headers=auth_headers(token),
+                params={'direction': direction, 'page': page, 'page_size': 100},
+            )
+        )
+        for row in data['data']:
+            if any(hit['word'] == word for hit in row['hits']):
+                return row
+        if page * 100 >= data['total'] or not data['data']:
+            return None
+        page += 1
+
+
 def test_hit_log_recorded_without_raw_text(client, admin_token):
     """AC-07/AC-15: 命中日志落库, 仅摘要不存对话原文."""
     data = assert_resp_200(
         client.get(f'{API_BASE}/sensitive-word-hit-logs', headers=auth_headers(admin_token))
     )
-    rows = data['data']
-    assert data['total'] >= 1
-    row = next((r for r in rows if r['direction'] == 'input' and any(h['word'] == HIT_WORD for h in r['hits'])), None)
+    assert data['total'] >= 1, 'no hit log rows at all'
+
+    row = _find_hit_row(client, admin_token, HIT_WORD, direction='input')
     assert row is not None, f'no input hit log row for {HIT_WORD}'
     assert row['business_type'] == 'chat_input'
     assert row['action'] == 'block'
