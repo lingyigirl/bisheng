@@ -204,3 +204,111 @@ def test_a_second_turn_does_not_recite_the_first_turns_query():
     assert agent.collect_citation_registry_items() == [], (
         'turn 1 anchors leaked into turn 2 -- reset did not clear the tool outcomes'
     )
+
+
+def test_a_database_answer_still_goes_through_the_output_guard():
+    """AC-63: adding a datasource must not create a path that bypasses the
+    compliance guard. A datasource is an ordinary assistant tool (the agent
+    wraps every tool in `wrap_citation_tool`), so its rows reach the user inside
+    the `result[-1].content` that `handle_gpts_message` binds to `answer` after
+    `gpts_agent.run` -- the same answer every other assistant produces, and so
+    the same guard it has to pass on the way out.
+
+    Scoped to THAT method, not the module: an `output_guard` mention anywhere
+    in `common/chat/client.py` stays green if the call moves off the answer
+    path, which is exactly the regression AC-63 forbids. The ordering checks
+    pin both halves of the contract -- the guard runs BEFORE the answer is
+    persisted and sent, and the binding those calls read is the one the guard
+    wrote into (not the raw model output).
+
+    This is an EXISTENCE anchor, not behavioural verification: the real case
+    (an answer containing a sensitive word comes back truncated or masked)
+    needs a live backend with a configured policy, and belongs to /e2e-test.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from bisheng.common.chat import client as chat_client
+
+    method = chat_client.ChatClient.handle_gpts_message
+    tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
+
+    def _is_guard_call(node):
+        return (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == 'output_guard'
+        )
+
+    guard_calls = [node for node in ast.walk(tree) if _is_guard_call(node)]
+    assert guard_calls, (
+        'the output guard call left handle_gpts_message -- a database answer '
+        'would no longer be checked (AC-63)'
+    )
+    guard_line = min(node.lineno for node in guard_calls)
+
+    # ...and it is fed the answer, not some other string. A guard called on
+    # something else is a guard that runs and decides nothing.
+    guarded_args = [
+        arg for node in guard_calls for arg in list(node.args) + [kw.value for kw in node.keywords]
+    ]
+    assert any(isinstance(arg, ast.Name) and arg.id == 'answer' for arg in guarded_args), (
+        'the guard is fed something other than `answer` -- what is sent to the '
+        'user is not what was checked (AC-63)'
+    )
+
+    # Where `answer` leaves the method: the bot message row and the answer frame
+    # sent to the client. Both are searched for rather than hard-coded, so
+    # reformatting or a positional/kwarg change does not silently turn this
+    # anchor into a no-op.
+    answer_uses = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in ('add_message', 'send_response'):
+            continue
+        passes_answer = [
+            arg for arg in node.args if isinstance(arg, ast.Name) and arg.id == 'answer'
+        ] + [kw.value for kw in node.keywords if isinstance(kw.value, ast.Name) and kw.value.id == 'answer']
+        if passes_answer:
+            answer_uses.append((node.func.attr, node.lineno))
+
+    # Guard the guard: if the answer frame stops carrying `answer`, the check
+    # below would still hold over the persistence call alone and say nothing
+    # about what the user actually sees.
+    assert 'send_response' in {name for name, _ in answer_uses}, (
+        'no answer frame carries `answer` any more -- re-check what AC-63 anchors'
+    )
+    first_use = min(lineno for _, lineno in answer_uses)
+    assert first_use > guard_line, (
+        f'the answer is used at line {first_use} but the guard only runs at line '
+        f'{guard_line}: unguarded text would reach the user (AC-63)'
+    )
+
+    # ...and what those calls read is the guarded text: the LAST write to
+    # `answer` must take its value from the guard, directly or through a name
+    # the guard was assigned into. Matching by data flow rather than by line
+    # order matters -- `answer = result[-1].content` placed AFTER the guard call
+    # satisfies every ordering check while sending the raw model output.
+    guarded_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(_is_guard_call(sub) for sub in ast.walk(node.value)):
+            guarded_names |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+
+    answer_writes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == 'answer' for target in node.targets)
+    ]
+    assert answer_writes, 'handle_gpts_message no longer binds `answer`'
+    last_write = max(answer_writes, key=lambda node: node.lineno)
+    reads_the_guard = any(_is_guard_call(sub) for sub in ast.walk(last_write.value)) or any(
+        isinstance(sub, ast.Name) and sub.id in guarded_names for sub in ast.walk(last_write.value)
+    )
+    assert reads_the_guard, (
+        'the last write to `answer` does not read the guard result -- the guard '
+        'runs and its output is discarded, so the raw model output is persisted '
+        'and sent (AC-63)'
+    )
