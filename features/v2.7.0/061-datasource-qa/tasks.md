@@ -117,11 +117,18 @@ design §8 的 4 项开放项 + 拆解粒度，经调研后已定：
 - **注意**：`MODEL_VERSION`（`:33`，现 `v2.0.2`）需**同步递增** —— 授权模型变更后版本号不变会导致既有实例不重新加载。
 - 权限接入按 v2.5.0 **INV-15**：创建时 `PermissionService.authorize()`、变更前 `check()`（对应 AC-66 / C4）。
 
-### R4. 既有 `sql_agent` 同步阻塞 —— ✅ 确认存在，重写时须一并处理
+### R4. 既有 `sql_agent` 同步阻塞 —— ❌ **2026-09-20 实测推翻（不成立，无需处置）**
 
-- `bisheng_langchain/gpts/tools/sql_agent/tool.py:71-75` 的 `arun` 直接 `return self.run(query)`，而 `run` 调 `self.agent.invoke(...)`（**同步** LangGraph 调用）。
-- 后果：在 async 链路中调用会**阻塞事件循环**，同一进程内其他对话请求排队 —— 正是 AC-21 禁止的。
-- **处置口径**：本特性重写时改为 `await agent.ainvoke(...)`；既有 `SqlAgentTool` 若保留兼容读取，其 `arun` 也须同步修正（否则旧流程仍会阻塞）。
+> **本节原结论有误，保留下方原文以便追溯；以本框为准。**
+
+- **原结论（错）**：`bisheng_langchain/gpts/tools/sql_agent/tool.py:71-75` 的 `arun` 直接 `return self.run(query)`（同步 LangGraph 调用）⇒ async 链路会阻塞事件循环。
+- **引用属实，结论不成立**。没有任何代码调用那个 `arun`：
+  - `SqlAgentTool._run` 直接调 `api_wrapper.run(...)`（`tool.py:96`），**不经过** `api_wrapper.arun`；
+  - `SqlAgentTool` **未定义** `_arun`，故 `ainvoke` 走到 langchain 继承的 `BaseTool._arun`，它经 `run_in_executor` 扔到**线程池**；
+  - **工作流链路另有第二重独立卸载**：`AgentNode` 只定义 `_run`（`agent.py:438`），而 LangGraph 把同步 callable 包成 `RunnableCallable(thing, partial(run_in_executor, None, thing))`，故 `graph.astream` 也不在事件循环上跑它。
+- **实测证据**（`test/datasource/test_sql_agent_not_blocking.py`，4 条，均变异验证）：0.3s 同步节点期间心跳协程 tick **约 24 次**；节点与事件循环**线程 id 不同**。加一个阻塞式 `_arun` 即三条转红。
+- **处置口径**：**无需改动**。R4 要求的「修正」是空操作。两条卸载都是框架内部实现，故用例以**测量**而非阅读钉住——langchain/langgraph 升级可能移除任一条，而失效是静默的（表现为高负载下的延迟，不是报错）。
+- **方法论**：与 T-10 的 `FOR UPDATE SKIP LOCKED` 误记同类——**设计文档里的「已知缺陷」也要在动手前复验**。
 
 ### R5. 既有内联 `sql_agent` 配置的兼容读取边界 —— ✅ 边界可明确
 
