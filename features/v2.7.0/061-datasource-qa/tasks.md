@@ -13,9 +13,9 @@
 | spec.md | ✅ 已评审 | 2026-09-17 用户确认。首轮审查 2 CONFLICT 已消除（契约登记完成 + AC-41 收窄遵守 INV-11）；3 条 low ISSUE 经用户确认保留原样（AC-01/AC-10/AC-22 字段枚举、AC-39 意图声明、AC-21 并发约束） |
 | design.md | ✅ 已评审 | 2026-09-17 用户确认。首轮 `/sdd-review design` 0 high / 3 medium / 3 low，**全部 6 条已修订**：① §9 补平台管理端 UI 步骤（spec AC-57，原缺失整块）；② 决策 6 补 AC-28 的「可观测口径」（注入形态标记三处共用）；③ §7 补可操作验证路径（uvicorn / pnpm start / :4001 等真实命令）；④ §4.2 补结果表快照与下载（AC-33）；⑤ §4.2 绑定行改为定稿表述 + §8 推荐项；⑥ §8 补 F058 既有文档漂移记录。**Constitution Check PASS**（C1–C7 无违反） |
 | tasks.md | ✅ 已拆解 | 2026-09-18 拆解完成：**45 个任务 / 10 个 Wave**，66 条 AC 全覆盖（追溯矩阵见文末）。5 条实现前置已全部调研闭环（见下）；拆解前又发现 2 处引擎侧实现缺口（见「拆解期新发现」） |
-| 实现 | 🚧 进行中 | **后端 W0~W7 已落地并提交**（T-01..T-29 + T-30，9 个 commit）。**2026-09-20 集中推进**：T-31 对话侧接线（10 commit）、T-35~T-39 平台管理端 UI、T-32（AC-52 真缺陷修复）、T-33（回答侧来源保证）、T-40/T-41 客户端。**核实 T-34 实为已完成**（随 T-31 落地）。**余下**：T-42 的 AC-53 编辑器 UI（后端兼容回归已完成，R4 经实测推翻了）、T-45 e2e、code-review。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
-| e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——T-31/T-32/T-33 均已落地，可补对话侧用例 |
-| code-review | 🔲 未开始 | — |
+| 实现 | ✅ 任务全部完成 | **后端 W0~W7**（T-01..T-30，9 commit）。**2026-09-20/21 集中推进**：T-31 对话侧接线、T-32（AC-52 真缺陷修复）、T-33、T-34（核查为已完成）、T-35~T-39 平台管理端 UI、T-40/T-41 客户端、T-42（含 AC-53 编辑器选数据源；**R4 经实测推翻**）、T-43、T-44。**余下**：T-45 e2e。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
+| e2e-test | 🔲 未开始 | `test/e2e/test_e2e_f061_datasource_qa.py` 已有 7 条（CRUD / 采集 / 删除），覆盖不到对话侧——T-31/T-32/T-33/T-42 均已落地，可补对话侧用例 |
+| code-review | ✅ 已完成一轮 | 2026-09-20 `--base ac455cdcf`。**2 HIGH 已修**：① `ChatInput.tsx` 用了 `AppSourceSummary` 但无 import → 聊天输入框一渲染即崩（三个门全盲：该文件 `@ts-strict-ignore` 故 `tsc` 不查、Vite 不类型检查、组件自身测试直接 import 故测不到接线）；② 平台两处保存路径把**读形状**（`[{id,name}]`）发给 `list[int]` 写接口 → 复制带数据源的助手 422。另有 1 MEDIUM（`tool.py` 注释声称的漂移测试不存在，已兑现）与 1 LOW（N+1，记录）。 |
 
 ---
 
@@ -907,6 +907,16 @@ cd src/frontend && pnpm typecheck && pnpm lint
 
 **覆盖 AC**: AC-45, AC-46, AC-47, AC-48, AC-57
 
+**2026-09-21 后端补口（T-38 的残留风险已消除）**
+
+W8 执行期发现：AC-47 当时**只在 UI 层兑现**——`validate_resource_grants` 对所有资源类型一视同仁接受 `department` 主体，直连 API 仍可把数据源授权给部门。现已在该服务处按资源类型收窄（`_NO_DEPARTMENT_SUBJECT_TYPES = {'db_datasource'}`），拒绝 `department` 主体。
+
+- **先复现再修**：新用例首跑为 `DID NOT RAISE PermissionDeniedError`，确认缺口真实存在。
+- **作用域是「按资源类型」，不是全局**：其它资源类型的部门授权是既有能力，收窄它们会破坏存量授权。已加用例断言其它类型仍接受部门，且 `test_grant_departments_lazy.py` / `test_permission_enrichment.py` 共 33 条原样通过。
+- **落在 service 而非 endpoint**：授权端点不是唯一写入方，后续调用方不该需要记得这条规则。
+
+**覆盖 AC** 补齐：AC-45（授权对象集合 = 用户 + 用户组）、AC-47（无部门语义）。
+
 ---
 
 #### T-39 失败提问清单页
@@ -1031,15 +1041,16 @@ cd src/frontend && pnpm typecheck && pnpm lint
 | AC-55 不新增节点类型 | ✅ 枚举扫描断言 |
 | AC-56 关闭内联新建 | ✅ `SqlConfigItem` 五个字段全部 `readOnly` + 只读提示（三语） |
 | AC-53 节点读 `datasource_id` | ✅ `SqlAgentParams.datasource_id` + 节点注入 `DatasourceQueryTool`（`test_workflow_datasource_binding.py`，9 条） |
-| AC-53 编辑器「选数据源」下拉 | ❌ **未做，见下** |
+| AC-53 编辑器「选数据源」下拉 | ✅ 2026-09-20 完成（用户选方案 a：新增 `get_login_user` 把关的 `/datasource/available-datasources`） |
 
 **R4 经实测推翻**（详见「实现前置」R4 段落）：既有 `sql_agent` **不阻塞事件循环**，两条独立卸载（langchain 的 `BaseTool._arun` 线程池 + LangGraph 对同步节点的 `run_in_executor`）。R4 要求的改动是空操作，未做。
 
 **AC-53 的授权口径（用户 2026-09-20 确认）**：工作流里的数据源按**流程配置者**（`flow_user_id`）判权，与本节点知识检索的既有口径一致。**已知后果**：流程发布即等于把该数据源借给所有能运行该流程的人——与助手把知识库借给能对话的人同理；不扩大「谁能控制数据」，因为能编辑流程的人本就能改它查什么。
 
-**AC-53 编辑器下拉未做的原因（需决策，不是遗漏）**：`GET /api/v1/datasource` 由 `get_tenant_admin_user` 把关，而 `/flow/:id` 路由**没有任何权限门**——即「能打开流程编辑器」的人群**大于**「能调数据源列表」的人群。直接接下拉会让普通流程作者 403。两条路：
-- 加一个 `get_login_user` 把关的「当前用户可见数据源（id + name）」端点（与 T-40 当时弃用的方案同形）；
-- 或接受「只有管理员能配数据源绑定」。
+**AC-53 编辑器下拉的前置问题与定案**：`GET /api/v1/datasource` 由 `get_tenant_admin_user` 把关，而 `/flow/:id` 路由**没有任何权限门**——即「能打开流程编辑器」的人群**大于**「能调数据源列表」的人群，直接接下拉会让普通流程作者 403。**用户 2026-09-20 选方案 a**：新增 `GET /api/v1/datasource/available-datasources`（`get_login_user` 把关，按 `viewer` 过滤，只回 id + name）。
+- **路径带连字符**：`/available-datasources` 而非 `/available` —— 后者会被 `/{datasource_id}` 吃掉。这是**既有测试** `test_no_route_can_be_shadowed_by_the_id_route`（加 `/tables/{id}` 时写的）抓出来的；先声明也能工作，但会让正确性依赖注册顺序。
+- **授权集合下推到查询**（`alist(ids=...)`）而非查出后再过滤：无权使用的数据源根本不被读取；`ids=[]` 的既有语义正是「授权为空」。
+- 编辑器表单的必填校验同步放宽：选了数据源时内联字段不再必填，与后端 `_require_a_source` 对齐——两边对「已配置」的定义必须一致，否则选了数据源的流程永远存不下。
 
 **执行期由测试抓出的三处我自己的问题**（均已修）：
 1. 写错模块路径 `bisheng.database.models.user` —— 该模块不存在，正确为 `bisheng.user.domain.models.user`。
