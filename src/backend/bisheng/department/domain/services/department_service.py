@@ -55,6 +55,7 @@ from bisheng.department.domain.schemas.department_schema import (
     DepartmentTreeNode,
     DepartmentUpdate,
 )
+from bisheng.department.domain.constants import DepartmentAuditAction
 from bisheng.department.domain.services.department_change_handler import (
     DepartmentChangeHandler,
 )
@@ -291,6 +292,12 @@ def _dept_node_dict(d, *, has_children: bool = False, matched: bool = False) -> 
         "status": d.status,
         "is_tenant_root": bool(getattr(d, "is_tenant_root", 0)),
         "mounted_tenant_id": getattr(d, "mounted_tenant_id", None),
+        # F062: exposed as a bool like is_tenant_root above, so the platform tree
+        # can render the marker without knowing the 0/1 column encoding. This
+        # dict is the F038 lazy-tree path (hand-built + ORJSON) and is a SEPARATE
+        # surface from the pydantic DepartmentTreeNode — both must carry the
+        # field or one of the two tree endpoints silently loses it.
+        "is_department": bool(getattr(d, "is_department", 0)),
         "has_children": has_children,
         "matched": matched,
         "children": [],
@@ -452,6 +459,486 @@ class DepartmentService:
             )
 
     @classmethod
+    async def abatch_set_node_type(cls, data, login_user) -> dict:
+        """F062 (AC-08): annotate several nodes as 部门 / 机构 in one action.
+
+        ALL-OR-NOTHING. Every node is resolved and permission-checked BEFORE any
+        row is written, so a selection never ends up half-annotated — a partial
+        apply would leave the operator's single intention expressed as two
+        different facts about the tree, and it is the tree that decides who can
+        read what.
+
+        Validation is sequential by necessity (the permission gate is per node),
+        but nothing is written until all of them pass. The writes then happen in
+        ONE transaction so a mid-way database failure also rolls back cleanly.
+        """
+        from bisheng.core.database import get_async_db_session
+
+        # ---- phase 1: resolve + authorise everything, write nothing ----
+        plans: list[tuple[Department, int]] = []
+        for dept_id in data.dept_ids:
+            await cls._ensure_may_change_node_type(login_user, dept_id)
+            dept = await DepartmentDao.aget_by_dept_id(dept_id)
+            if dept is None:
+                raise DepartmentNotFoundError()
+            if dept.status == "archived":
+                raise DepartmentArchivedReadonlyError()
+            target = 1 if data.is_department else 0
+            if int(getattr(dept, "is_department", 0) or 0) != target:
+                plans.append((dept, target))
+
+        # ---- phase 2: apply in one transaction ----
+        if plans:
+            async with get_async_db_session() as session:
+                for dept, target in plans:
+                    row = (await session.exec(select(Department).where(Department.id == dept.id))).first()
+                    if row is None:
+                        raise DepartmentNotFoundError()
+                    row.is_department = target
+                    session.add(row)
+                await session.commit()
+
+            await cls._invalidate_org_domain_mapping()
+
+            # One audit row per node, so the trail reads per-node like the
+            # single-node path does. The count that mattered to the operator is
+            # carried in `batch_size`, which is what "who did this and to how
+            # much" needs.
+            for dept, target in plans:
+                await cls._audit_node_type_change(
+                    login_user=login_user,
+                    dept_id=dept.dept_id,
+                    dept_internal_id=int(dept.id),
+                    from_is_department=1 - target,
+                    to_is_department=target,
+                    action=DepartmentAuditAction.NODE_TYPE_CHANGED,
+                    extra={"batch_size": len(plans)},
+                )
+
+        return {"updated": len(plans), "requested": len(data.dept_ids)}
+
+    @classmethod
+    async def aget_node_type_impact(cls, dept_id: str, login_user) -> dict:
+        """F062 (AC-05): the permission-gated preview behind
+        `GET /departments/{dept_id}/node-type-impact`.
+
+        Gated by the SAME check as the flip itself: a caller who may not change
+        the marker has no business learning its blast radius, and the count
+        discloses the shape of the org tree.
+        """
+        await cls._ensure_may_change_node_type(login_user, dept_id)
+        dept = await DepartmentDao.aget_by_dept_id(dept_id)
+        if dept is None:
+            raise DepartmentNotFoundError()
+        return await cls._compute_node_type_impact(int(dept.id))
+
+    @classmethod
+    async def aget_move_impact(cls, dept_id: str, new_parent_id: int, login_user) -> dict:
+        """AC-05: the same preview, for moving a node under a new parent.
+
+        Gated by the ORDINARY department-edit permission, not the marker's: a
+        move is a normal edit an admin of the subtree may perform (design 决策 11
+        elevated only the marker), so requiring the marker permission here would
+        lock them out of a preview for an action they are allowed to take.
+
+        Reuses `_get_dept_and_check_permission` — the check `amove_department`
+        itself performs. Duplicating the logic would let the preview be reachable
+        by someone the move refuses, or vice versa.
+        """
+        from bisheng.core.database import get_async_db_session
+
+        async with get_async_db_session() as session:
+            dept = await _get_dept_and_check_permission(session, dept_id, login_user)
+        return await cls._compute_move_impact(int(dept.id), int(new_parent_id))
+
+    @classmethod
+    async def _diff_visibility_after_change(cls, hypothetical) -> dict:
+        """F062: how many departments / libraries a tree change would affect.
+
+        The shared engine behind every impact preview. `hypothetical` receives
+        the CURRENT tenant mapping and returns the mapping as it would look after
+        the change; everything else — which libraries count, who is a viewer, how
+        "affected" is decided — is identical for a marker flip and a move.
+
+        Computed by ASKING THE RULE, not by approximating it: compare the set of
+        (library, viewer) pairs that resolve as visible before and after, and
+        report the size of the difference. Anything cheaper would be a second
+        implementation of the visibility rule, and a dialog that understates the
+        blast radius is worse than no dialog at all — the operator would trust a
+        wrong number.
+
+        Cost is bounded by the tenant's library count, which is what
+        `department_stats` already pays. These are operator-initiated previews,
+        not hot paths.
+
+        Returns `{"affected_departments": int, "affected_libraries": int}`; both
+        can legitimately be ZERO. Adds `unavailable: True` when the tenant is too
+        large to evaluate — the UI must present that as "cannot estimate", never
+        as zero.
+        """
+        from bisheng.permission.domain.services.department_org_domain import (
+            get_department_mapping,
+            nearest_org_path,
+        )
+
+        mapping = await get_department_mapping()
+        if mapping is None:
+            # Cannot evaluate (oversized tenant, or a failed load). Reporting a
+            # fabricated number would be worse than admitting we do not know.
+            logger.warning("F062: cannot compute impact — no department mapping available")
+            return {"affected_departments": 0, "affected_libraries": 0, "unavailable": True}
+
+        changed = hypothetical(mapping)
+
+        owned = await cls._aget_owned_library_ids(list(mapping.keys()))
+
+        # Which (library, viewer-department) pairs change?
+        #
+        # The viewers are EVERY department in the tenant, not just the affected
+        # subtree. A change alters whether the subtree's libraries are reachable
+        # from OUTSIDE it — that is the whole meaning of dissolving a barrier —
+        # so scoping the loop to the subtree would report zero for exactly the
+        # case the dialog exists to warn about (design 决策 10: the affected
+        # population is "the whole subtree AND everyone outside it whose view
+        # intersects").
+        all_viewers = list(mapping.keys())
+        affected_departments: set[int] = set()
+        affected_libraries: set[int] = set()
+        for lib_id, owning_dept in owned:
+            before_domain = nearest_org_path(owning_dept, mapping)
+            after_domain = nearest_org_path(owning_dept, changed)
+            if before_domain == after_domain:
+                continue
+            for viewer in all_viewers:
+                # BOTH sides must use the viewer's path in the tree they belong
+                # to: `mapping` for "before", `changed` for "after". Reading the
+                # viewer's path only from `mapping` looks harmless for a marker
+                # flip (which does not touch paths) but is WRONG for a move: a
+                # move rewrites the path of every node in the subtree, so the
+                # "after" test would compare a stale path against the new domain
+                # and report a change for viewers whose view did not move at all.
+                before_path = str(mapping[viewer][1])
+                after_path = str(changed.get(viewer, mapping[viewer])[1])
+                was = bool(before_domain) and before_path.startswith(before_domain)
+                now = bool(after_domain) and after_path.startswith(after_domain)
+                if was != now:
+                    affected_departments.add(viewer)
+                    affected_libraries.add(lib_id)
+
+        return {
+            "affected_departments": len(affected_departments),
+            "affected_libraries": len(affected_libraries),
+        }
+
+    @classmethod
+    async def _audit_node_move(
+        cls,
+        *,
+        login_user,
+        dept_id: str,
+        dept_internal_id: int,
+        old_parent_id: int | None,
+        new_parent_id: int,
+        impact: dict,
+    ) -> None:
+        """AC-07: record a node move. Best-effort, like the marker audit.
+
+        Takes the impact as an ARGUMENT rather than computing it, because a move
+        must be measured before it commits — see the call site. The marker audit
+        computes its own precisely because nothing invalidates its input; here
+        the input is gone by the time we write.
+
+        `dept_internal_id` is accepted for symmetry with the marker audit and to
+        keep the signature obvious at a glance; the row keys on `dept_id`.
+        """
+        await cls._write_audit_row(
+            login_user=login_user,
+            dept_id=dept_id,
+            from_is_department=None,
+            to_is_department=None,
+            impact=impact,
+            action=DepartmentAuditAction.NODE_MOVED,
+            extra={"from_parent_id": old_parent_id, "to_parent_id": new_parent_id},
+        )
+
+    @classmethod
+    async def _compute_node_type_impact(cls, dept_internal_id: int) -> dict:
+        """AC-05: the blast radius of flipping this node's 机构/部门 marker."""
+
+        def _flip(mapping):
+            entry = mapping.get(int(dept_internal_id))
+            if entry is None:
+                return mapping
+            parent_id, path, current_marker = entry
+            flipped = dict(mapping)
+            flipped[int(dept_internal_id)] = (parent_id, path, 0 if current_marker else 1)
+            return flipped
+
+        return await cls._diff_visibility_after_change(_flip)
+
+    @classmethod
+    async def _compute_move_impact(cls, dept_internal_id: int, new_parent_id: int) -> dict:
+        """AC-05: the blast radius of moving this node under a new parent.
+
+        A move is at least as disruptive as a flip — it rewrites the materialized
+        `path` of the WHOLE subtree, relocating every node in it between org
+        domains — so it gets its own preview rather than reusing the flip's.
+        Reusing would report a number for a change that is not the one about to
+        happen, which is exactly the kind of wrong number the dialog must not
+        show (and which the audit row logged until this was fixed).
+
+        The hypothetical tree mirrors what `amove_department` actually writes:
+        the moved node's parent changes, and its own path — plus every
+        descendant's — is rebased from the old prefix to the new one.
+        """
+
+        def _move(mapping):
+            entry = mapping.get(int(dept_internal_id))
+            new_parent = mapping.get(int(new_parent_id))
+            if entry is None or new_parent is None:
+                return mapping
+
+            old_path = str(entry[1])
+            new_path = f"{new_parent[1]}{int(dept_internal_id)}/"
+
+            moved = dict(mapping)
+            # The node itself.
+            moved[int(dept_internal_id)] = (int(new_parent_id), new_path, entry[2])
+            # Every descendant: rebase its path off the moved node's new prefix.
+            for node_id, (parent_id, path, marker) in mapping.items():
+                if node_id == int(dept_internal_id):
+                    continue
+                if str(path).startswith(old_path):
+                    moved[node_id] = (parent_id, new_path + str(path)[len(old_path):], marker)
+            return moved
+
+        return await cls._diff_visibility_after_change(_move)
+
+    @classmethod
+    async def _aget_owned_library_ids(cls, department_ids: list[int]) -> list[tuple[int, int]]:
+        """`[(knowledge_id, department_id)]` for the given owning departments.
+
+        A read-only helper over the existing `knowledge` table. Not a new DAO
+        entry point: it goes through the session directly here because the
+        existing `KnowledgeDao` list methods are all viewer-scoped (they answer
+        "what may THIS user see"), and the question here is the opposite one.
+
+        NO tenant bypass. `department_ids` comes from the caller's already
+        tenant-scoped mapping (built by `aget_active_by_tenant`), so the rows we
+        want are already inside the current tenant — and C3 wants the automatic
+        filter left ON. An earlier draft bypassed it "just in case", which is
+        both unnecessary and exactly the manual escape the constitution warns
+        against.
+        """
+        from bisheng.core.database import get_async_db_session
+        from bisheng.knowledge.domain.models.knowledge import Knowledge as KnowledgeModel
+
+        if not department_ids:
+            return []
+        async with get_async_db_session() as session:
+            rows = await session.exec(
+                select(KnowledgeModel.id, KnowledgeModel.department_id).where(
+                    KnowledgeModel.department_id.in_(department_ids)
+                )
+            )
+            return [(int(r[0]), int(r[1])) for r in rows.all()]
+
+    @classmethod
+    async def _audit_node_type_change(
+        cls,
+        *,
+        login_user,
+        dept_id: str,
+        dept_internal_id: int,
+        from_is_department: int,
+        to_is_department: int,
+        action,
+        extra: dict | None = None,
+    ) -> None:
+        """F062 (AC-07): record a marker flip / node move.
+
+        Best-effort, mirroring `_clear_knowledge_ownership`: a failed audit write
+        must never roll back a change the caller has already committed. A missed
+        row is recoverable out-of-band; a half-applied department edit is not.
+
+        The IMPACT IS COMPUTED HERE, not passed in. Computing it at the call site
+        put a real DB read in an argument position, outside this method's
+        try/except — so a failure there would surface AFTER the caller had
+        committed (endpoint 500s on a change that already landed) and, in
+        `amove_department`, would skip the FGA tuple write and tenant sync that
+        follow it. The "audit must not break the change" promise has to cover the
+        audit's own inputs, not just its insert.
+
+        `action` is passed as the enum member so the caller cannot introduce a
+        typo'd literal at the call site.
+        """
+        try:
+            impact = await cls._compute_node_type_impact(int(dept_internal_id))
+        except Exception as e:
+            # A count we could not compute must not read as "zero" in the trail.
+            # `unavailable` is the same signal the confirmation dialog uses.
+            logger.warning("F062: could not compute impact for %s: %s", dept_id, e)
+            impact = {"unavailable": True}
+
+        await cls._write_audit_row(
+            login_user=login_user,
+            dept_id=dept_id,
+            from_is_department=from_is_department,
+            to_is_department=to_is_department,
+            impact=impact,
+            action=action,
+            extra=extra,
+        )
+
+    @classmethod
+    async def _write_audit_row(
+        cls,
+        *,
+        login_user,
+        dept_id: str,
+        from_is_department: int | None,
+        to_is_department: int | None,
+        impact: dict,
+        action,
+        extra: dict | None = None,
+    ) -> None:
+        """The single writer for F062's two audit rows.
+
+        Extracted so a marker flip and a node move cannot drift in how they name
+        fields or record an unknown impact — the failure mode `audit_log.action`
+        being free text already invites once.
+        """
+        from bisheng.database.models.audit_log import AuditLogDao
+
+        action_value = getattr(action, "value", action)
+        metadata = {
+            "from_is_department": None if from_is_department is None else int(from_is_department),
+            "to_is_department": None if to_is_department is None else int(to_is_department),
+            "affected_departments": impact.get("affected_departments"),
+            "affected_libraries": impact.get("affected_libraries"),
+        }
+        # Preserve "cannot estimate" as an EXPLICIT fact. Writing 0 would tell an
+        # auditor the change was measured and touched nothing — a different, and
+        # false, claim when the tenant was simply too large to evaluate.
+        if impact.get("unavailable"):
+            metadata["impact_unavailable"] = True
+        if extra:
+            metadata.update(extra)
+
+        try:
+            tenant_id = getattr(login_user, "tenant_id", None)
+            await AuditLogDao.ainsert_v2(
+                tenant_id=tenant_id,
+                operator_id=int(getattr(login_user, "user_id", 0) or 0),
+                operator_tenant_id=tenant_id,
+                action=action_value,
+                target_type="department",
+                target_id=dept_id,
+                metadata=metadata,
+            )
+        except Exception as e:
+            logger.warning(
+                "F062: failed to audit %s for department %s: %s",
+                action_value,
+                dept_id,
+                e,
+            )
+
+    @classmethod
+    async def _ensure_may_change_node_type(cls, login_user, dept_id: str) -> None:
+        """F062 (AC-04 / AC-04a): may this actor change a node's 机构/部门 marker?
+
+        Elevated ABOVE the ordinary department-edit gate, and deliberately not
+        folded into `_check_permission`: a department admin legitimately edits
+        their own subtree, so reusing that gate would let them flip their own
+        node from 机构 to 部门 and dissolve a barrier that bounds visibility far
+        beyond their subtree. The marker is the one field whose blast radius
+        exceeds the node it sits on, so it gets its own rule.
+
+        Admitted:
+          - system admin / global super  → anywhere;
+          - tenant admin                  → within their EXISTING department
+                                            management scope (the mount subtree),
+                                            neither widened nor narrowed here.
+
+        Scope is evaluated by the SAME helper `_check_permission` uses for tenant
+        admins, so the two can never drift apart.
+        """
+        if _is_admin(login_user):
+            return
+
+        if await _is_tenant_admin(login_user):
+            tenant_root_path = await _aget_user_tenant_root_path(login_user)
+            if tenant_root_path:
+                target = await DepartmentDao.aget_by_dept_id(dept_id)
+                if target is not None and target.path and target.path.startswith(tenant_root_path):
+                    return
+
+        raise DepartmentPermissionDeniedError()
+
+    @classmethod
+    async def _invalidate_org_domain_mapping(cls) -> None:
+        """F062: drop the cached `id -> nearest-org-path` mapping for this tenant,
+        AND the cached permission verdicts that were derived from it.
+
+        The mapping backs the org-domain visibility rule
+        (`permission/domain/services/department_org_domain.py`). Every change to
+        the tree's SHAPE or to any node's 机构/部门 marker can move a node between
+        domains, so the cache must be dropped on create / update / move / delete
+        / purge / restore — not just on the marker flip.
+
+        Correctness, not performance: a stale mapping resolves visibility against
+        the old tree, which is wrong in whichever direction the edit went. The
+        10s TTL is only the backstop for paths that bypass this service.
+
+        Best-effort and synchronous, mirroring `_clear_knowledge_ownership`: the
+        cache is a process-local dict and clearing it cannot fail meaningfully,
+        but a failure here must never abort the department change the caller has
+        already committed.
+        """
+        from bisheng.permission.domain.services.department_org_domain import (
+            invalidate_department_mapping,
+        )
+
+        try:
+            from bisheng.core.context.tenant import get_current_tenant_id
+
+            invalidate_department_mapping(get_current_tenant_id())
+        except Exception as e:
+            # Fall back to dropping everything. The mapping is cheap to rebuild,
+            # and clearing too much is always safe — clearing too little is the
+            # case that grants against a stale tree.
+            logger.warning(
+                "F062: could not scope department-mapping invalidation (%s); clearing all",
+                e,
+            )
+            invalidate_department_mapping()
+
+        # F062 (design 决策 10): ALSO drop the permission-VERDICT cache.
+        #
+        # These are two different caches and clearing one does not clear the
+        # other. `_cache` above maps ids to paths for the org-domain rule;
+        # `PermissionCache` holds the *answers* `PermissionService.check` already
+        # returned, keyed per (user, relation, object) with a 10s TTL.
+        #
+        # Without this, a flip that REMOVES access leaves the old "allowed"
+        # verdict live for up to 10 seconds — a stale-allow window, i.e. exactly
+        # the direction that leaks. The whole point of决策 10 was to close it:
+        # the affected population spans a subtree plus everyone outside it whose
+        # view intersects, which cannot be enumerated cheaply, so this clears
+        # everything rather than guessing. The cost is bounded — the TTL is only
+        # 10s, so the worst case is "everyone re-evaluates once".
+        #
+        # Best-effort, same as the mapping invalidation: Redis being down must
+        # not fail a change that already committed. The TTL remains the backstop.
+        try:
+            from bisheng.permission.domain.services.permission_cache import PermissionCache
+
+            await PermissionCache.invalidate_all()
+        except Exception as e:
+            logger.warning("F062: could not clear the permission-verdict cache (%s); TTL will expire it", e)
+
+    @classmethod
     async def acreate_department(
         cls,
         data: DepartmentCreate,
@@ -501,6 +988,12 @@ class DepartmentService:
                 external_id=dept_id,
                 status="active",
                 create_user=login_user.user_id,
+                # F062 (AC-03): the marker is chosen explicitly at creation and
+                # is NEVER inherited from the parent — a new node under a 部门
+                # parent is still an 机构 by default, because "transparent" is
+                # the permissive state and inheriting it would widen visibility
+                # as a side effect of where someone happened to click "create".
+                is_department=1 if data.is_department else 0,
             )
             session.add(dept)
             await session.flush()
@@ -515,6 +1008,9 @@ class DepartmentService:
         # Fire change handler (outside session)
         ops = DepartmentChangeHandler.on_created(dept.id, parent.id)
         await DepartmentChangeHandler.execute_async(ops)
+
+        # F062: the tree grew — the cached org-domain mapping is stale.
+        await cls._invalidate_org_domain_mapping()
 
         # Set initial admins if provided
         if data.admin_user_ids:
@@ -572,6 +1068,11 @@ class DepartmentService:
                 status=d.status,
                 is_tenant_root=bool(getattr(d, "is_tenant_root", 0)),
                 mounted_tenant_id=getattr(d, "mounted_tenant_id", None),
+                # F062: the third and last place a tree node is built (the other
+                # two are `_dept_node_dict` above and the pydantic model itself).
+                # Missing this one would make this endpoint silently drop the
+                # marker while the lazy-tree endpoint kept it.
+                is_department=bool(getattr(d, "is_department", 0)),
                 children=[],
             )
 
@@ -750,9 +1251,32 @@ class DepartmentService:
         data: DepartmentUpdate,
         login_user,
     ) -> Department:
+        # F062: the 机构/部门 marker is gated SEPARATELY from the rest of this
+        # update, and the check runs BEFORE anything is written. Flipping a node
+        # to 部门 removes a visibility barrier, so a department admin flipping
+        # their own (legitimately editable) node could dissolve a restriction
+        # bounding the whole bank — a bottom-up escalation (design 决策 11).
+        #
+        # Rejecting up front is deliberate: a request carrying both `name` and
+        # the marker is refused WHOLE rather than partially applied, so a caller
+        # never has to reason about which half of their edit landed.
+        marker_before: int | None = None
+        if data.is_department is not None:
+            await cls._ensure_may_change_node_type(login_user, dept_id)
+            # Capture the pre-change marker + blast radius for the audit row.
+            # Read BEFORE the write, since the impact is a difference.
+            existing = await DepartmentDao.aget_by_dept_id(dept_id)
+            if existing is not None:
+                marker_before = int(getattr(existing, "is_department", 0) or 0)
+
         async with get_async_db_session() as session:
             dept = await _get_dept_and_check_permission(session, dept_id, login_user)
 
+            # Archived departments are read-only (error 21017). This guard is on
+            # EVERY mutating path — it was briefly lost here while the F062
+            # marker gate was being wired in, which would have let an archived
+            # (soft-deleted) node be renamed, re-roled, or have its visibility
+            # marker flipped. Restored, and pinned by a test.
             if dept.status == "archived":
                 raise DepartmentArchivedReadonlyError()
 
@@ -782,10 +1306,31 @@ class DepartmentService:
                 dept.sort_order = data.sort_order
             if data.default_role_ids is not None:
                 dept.default_role_ids = data.default_role_ids
+            if data.is_department is not None:
+                dept.is_department = 1 if data.is_department else 0
 
             session.add(dept)
             await session.commit()
             await session.refresh(dept)
+
+        # F062: name / marker / role changes all invalidate — the TTL is only a
+        # backstop, and a marker flip moves nodes between org domains outright.
+        await cls._invalidate_org_domain_mapping()
+
+        # F062 (AC-07): the marker moved — record who did it and how much it
+        # touched. Audited AFTER the commit so a failed audit cannot roll back a
+        # change that already landed (see `_audit_node_type_change`).
+        if marker_before is not None and data.is_department is not None:
+            marker_after = 1 if data.is_department else 0
+            if marker_after != marker_before:
+                await cls._audit_node_type_change(
+                    login_user=login_user,
+                    dept_id=dept_id,
+                    dept_internal_id=dept.id,
+                    from_is_department=marker_before,
+                    to_is_department=marker_after,
+                    action=DepartmentAuditAction.NODE_TYPE_CHANGED,
+                )
 
         if data.admin_user_ids is not None:
             await cls.aset_admins(dept_id, list(data.admin_user_ids), login_user)
@@ -824,6 +1369,11 @@ class DepartmentService:
             dept.status = "archived"
             session.add(dept)
             await session.commit()
+
+        # F062: an archived node leaves every org domain it appeared in. Invalidate
+        # BEFORE the F057 cleanup below so a concurrent permission check cannot
+        # read a mapping that still contains the departing node.
+        await cls._invalidate_org_domain_mapping()
 
         # F057: unclassify the department's libraries. An archived department
         # must not keep granting access to them, and leaving the id behind would
@@ -879,6 +1429,9 @@ class DepartmentService:
             # Physical delete
             await session.delete(dept)
             await session.commit()
+
+        # F062: the row is gone — drop the mapping that still names it.
+        await cls._invalidate_org_domain_mapping()
 
         # F057: unclassify the department's libraries now that the row is gone.
         # Archive already cleared them on the user-facing path; this also covers
@@ -936,6 +1489,9 @@ class DepartmentService:
             session.add(dept)
             await session.commit()
 
+        # F062: a restored node re-enters the org tree.
+        await cls._invalidate_org_domain_mapping()
+
     @classmethod
     async def amove_department(
         cls,
@@ -968,6 +1524,18 @@ class DepartmentService:
             old_path = dept.path
             new_path = f"{new_parent.path}{dept.id}/"
 
+            # F062 (AC-05/07): the blast radius must be measured against the tree
+            # as it is RIGHT NOW — once this transaction commits, the mapping is
+            # invalidated and the old tree is gone, so computing it afterwards
+            # would compare the moved tree with itself and report nothing.
+            # Best-effort: a failure here degrades the audit's numbers, never the
+            # move the caller asked for.
+            try:
+                pre_move_impact = await cls._compute_move_impact(int(dept.id), int(data.new_parent_id))
+            except Exception as e:
+                logger.warning("F062: could not compute move impact for %s: %s", dept_id, e)
+                pre_move_impact = {"unavailable": True}
+
             # Batch update subtree paths
             await session.execute(
                 update(Department)
@@ -981,6 +1549,29 @@ class DepartmentService:
             session.add(dept)
             await session.commit()
             await session.refresh(dept)
+
+        # F062: a move rewrites `path` for the whole subtree, which relocates
+        # every node in it between org domains. This is the single most important
+        # invalidation site — a stale mapping here mis-resolves the entire
+        # subtree, and `update_paths_batch` is exactly the thing F057's design
+        # said a cached chain would fail to observe.
+        await cls._invalidate_org_domain_mapping()
+
+        # F062 (AC-07): audited after the commit, best-effort.
+        #
+        # NOTE on the impact: it is computed against the tree as it was BEFORE
+        # the move, which requires passing the OLD parent — by this point the row
+        # already carries the new path, so recomputing from live state would
+        # compare the new tree with itself and report zero. The earlier version
+        # reused the flip's impact, which described a change that never happened.
+        await cls._audit_node_move(
+            login_user=login_user,
+            dept_id=dept_id,
+            dept_internal_id=dept.id,
+            old_parent_id=old_parent_id,
+            new_parent_id=int(data.new_parent_id),
+            impact=pre_move_impact,
+        )
 
         # Fire change handler
         ops = DepartmentChangeHandler.on_moved(dept.id, old_parent_id, data.new_parent_id)
@@ -1071,6 +1662,9 @@ class DepartmentService:
 
                 await session.commit()
                 await session.refresh(dept)
+
+        # F062: a new root starts a fresh org domain.
+        await cls._invalidate_org_domain_mapping()
 
         return dept
 

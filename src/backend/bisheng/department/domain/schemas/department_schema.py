@@ -37,6 +37,10 @@ class DepartmentCreate(BaseModel):
     sort_order: int = 0
     default_role_ids: list[int] | None = None
     admin_user_ids: list[int] | None = None
+    #: F062 节点标记：True=部门（对上级透明），False=机构（不透明，可见性隔离边界）。
+    #: **不从父节点继承**（AC-03）——默认为 False（机构），与存量默认值同一套语义：
+    #: 「不透明」是安全缺省，全树为机构时新规则恒等于 F057 的既有行为。
+    is_department: bool = False
 
 
 class DepartmentUpdate(BaseModel):
@@ -47,6 +51,26 @@ class DepartmentUpdate(BaseModel):
     admin_user_ids: list[int] | None = None
     #: 为 True 时，将当前请求中的默认角色（若未传 ``default_role_ids`` 则用库中已有值）授予本部门全部现存成员
     apply_default_roles_to_existing_members: bool = False
+    #: F062 节点标记。``None`` = 不改。改动此字段**单独提级**到系统管理员/租户管理员
+    #: （AC-04）——部门管理员能改本子树内的 name/sort_order，但不能改这一项，否则
+    #: 一级分行把自己翻成「部门」即可解除全局屏障，构成自下而上的提权（design 决策 11）。
+    is_department: bool | None = None
+
+
+class DepartmentNodeTypeBatchUpdate(BaseModel):
+    """F062 (AC-08): set the 机构/部门 marker on several nodes at once.
+
+    A batch, not N calls from the client, because the operator is asserting one
+    intention over a selection: "these are all departments". N separate calls can
+    stop halfway (one node rejected by the permission gate, one renamed by a
+    concurrent edit) and leave a selection half-annotated, with whatever landed
+    deciding who can see what. The endpoint is all-or-nothing instead.
+
+    `dept_ids` are business keys, matching every other path in this module.
+    """
+
+    dept_ids: list[str] = Field(..., min_length=1, max_length=200)
+    is_department: bool
 
 
 class DepartmentMoveRequest(BaseModel):
@@ -98,6 +122,12 @@ class DepartmentTreeNode(BaseModel):
     # DepartmentDao.aset_mount).
     is_tenant_root: bool = False
     mounted_tenant_id: int | None = None
+    # F062: organization-tree node marker. `True` = 部门 (transparent to its
+    # ancestors), `False` = 机构 (opaque barrier). Defaulted so every existing
+    # consumer that constructs this model without the field keeps working — the
+    # F038 lazy-tree path builds plain dicts (`_dept_node_dict`) and would raise
+    # on a missing required field.
+    is_department: bool = False
     # F038 lazy tree: has_children lets the frontend draw the expand affordance
     # without loading the child layer; matched flags search/locate hits in the
     # pruned tree. Both default False so existing (full-tree) consumers are unaffected.

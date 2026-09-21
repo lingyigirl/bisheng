@@ -227,6 +227,22 @@ export function DepartmentTree({
                 {t("bs:tenant.mountedTag", { defaultValue: "子租户" })}
               </span>
             )}
+            {/* F062 node marker. Rendered on the MANAGEMENT tree only — the
+                picker consumers of LazyDepartmentTree deliberately do not show
+                it: the marker is an org-hierarchy concept, and injecting it into
+                authorization pickers would change their row heights for a fact
+                that is irrelevant to picking a subject.
+                Only 部门 is badged. An 机构 is the default and the common case,
+                so badging it would add noise to almost every row for no
+                information — its absence already means "机构". */}
+            {node.is_department && (
+              <span
+                className="mr-1 shrink-0 rounded bg-fill-2 px-1 py-0.5 text-[10px] font-medium text-text-3"
+                title={t("bs:department.isDepartmentTip")}
+              >
+                {t("bs:department.isDepartmentTag")}
+              </span>
+            )}
             {/* Quick create child button — hidden for archived departments */}
             {!isArchived && (
               <button

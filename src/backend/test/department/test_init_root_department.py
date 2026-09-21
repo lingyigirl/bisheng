@@ -58,6 +58,8 @@ def init_engine():
                 status VARCHAR(16) DEFAULT 'active',
                 is_tenant_root INTEGER NOT NULL DEFAULT 0,
                 mounted_tenant_id INTEGER,
+                is_department INTEGER NOT NULL DEFAULT 0,
+                concurrent_session_limit INTEGER NOT NULL DEFAULT 0,
                 is_deleted INTEGER NOT NULL DEFAULT 0,
                 last_sync_ts BIGINT NOT NULL DEFAULT 0,
                 default_role_ids JSON,

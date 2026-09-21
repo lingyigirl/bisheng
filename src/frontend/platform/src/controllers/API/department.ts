@@ -7,6 +7,7 @@ import {
   DepartmentSearchResult,
   DepartmentTreeNode,
   DepartmentUpdateForm,
+  NodeTypeImpact,
 } from "@/types/api/department"
 
 /** dept_id 常含 `BS@...`，必须编码进 URL path，否则部分代理/网关会误解析成 404 */
@@ -126,6 +127,58 @@ export async function updateDepartmentApi(
   data: DepartmentUpdateForm
 ): Promise<any> {
   return await axios.put(`/api/v1/departments/${depSeg(deptId)}`, data)
+}
+
+/**
+ * F062: preview how many departments / libraries a marker flip would affect.
+ *
+ * Read-only, but gated by the SAME permission as the flip — a caller who may not
+ * change the marker cannot learn its blast radius. Call this BEFORE submitting a
+ * changed `is_department` and show the numbers in a confirm dialog: the value
+ * moves at most one bit, but what it changes is who can see whose knowledge.
+ *
+ * Returns `unavailable: true` when the tenant is too large to evaluate; the
+ * dialog must present that as "cannot estimate", never as zero.
+ */
+export async function getNodeTypeImpactApi(
+  deptId: string
+): Promise<NodeTypeImpact> {
+  return await axios.get(
+    `/api/v1/departments/${depSeg(deptId)}/node-type-impact`
+  )
+}
+
+/**
+ * F062: the same preview, for moving a node under a new parent.
+ *
+ * `newParentId` is the internal numeric PK, matching what `moveDepartmentApi`
+ * sends — not the `BS@...` business key used in the path.
+ */
+export async function getMoveImpactApi(
+  deptId: string,
+  newParentId: number
+): Promise<NodeTypeImpact> {
+  return await axios.get(`/api/v1/departments/${depSeg(deptId)}/move-impact`, {
+    params: { new_parent_id: newParentId },
+  })
+}
+
+/**
+ * F062 (AC-08): annotate several nodes as 部门 / 机构 in one action.
+ *
+ * All-or-nothing on the server side: if any node is unauthorised, archived or
+ * missing, nothing is written. Callers should NOT batch by looping this per node
+ * themselves — a partial apply would express one intention as several different
+ * facts about the tree, which is exactly what decides who can read what.
+ */
+export async function batchSetNodeTypeApi(
+  deptIds: string[],
+  isDepartment: boolean
+): Promise<{ updated: number; requested: number }> {
+  return await axios.put(`/api/v1/departments/node-type/batch`, {
+    dept_ids: deptIds,
+    is_department: isDepartment,
+  })
 }
 
 export async function deleteDepartmentApi(deptId: string): Promise<any> {

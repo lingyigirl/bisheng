@@ -165,6 +165,25 @@ class Department(SQLModelSerializable, table=True):
             comment="F014: 1=removed by SSO authoritative source",
         ),
     )
+    # F062: organization-tree node marker. This is NOT a cosmetic label — it is
+    # the only visibility barrier on the org tree for department-owned knowledge
+    # libraries. `1` = 部门 (transparent to its ancestors, so sibling/avuncular
+    # departments within the same org domain see each other); `0` = 机构
+    # (opaque, terminates the domain). Every node defaults to 0, which makes the
+    # new rule collapse exactly onto F057's ancestor-only rule — see
+    # v2_7_0_f062_department_node_type.py for why that default is load-bearing.
+    #
+    # Named `is_department`, not `is_org`: the value mapping is 0=机构/1=部门, so
+    # an `is_org` field would read `is_org == 0` for "this IS an org".
+    is_department: int = Field(
+        default=0,
+        sa_column=Column(
+            Integer,
+            nullable=False,
+            server_default=text("0"),
+            comment="F062 是否部门:1=部门(对上级透明),0=机构(不透明,可见性隔离边界);默认0=升级零行为变化",
+        ),
+    )
     # v2.5.1 F014/F015 INV-T12: per-external_id high-water mark so that
     # Gateway realtime sync and Celery reconciliation converge on
     # "ts max wins; same ts with upsert vs remove → remove wins".

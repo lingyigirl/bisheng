@@ -1232,11 +1232,25 @@ class PermissionService:
                 user_department_ids = [int(row.department_id) for row in memberships]
                 user_departments = await DepartmentDao.aget_by_ids(user_department_ids)
 
-                # Ancestor-or-self test: the owning department's path is a prefix
-                # of the user's department path. `path` always carries a trailing
-                # slash, so `/1/2/` cannot spuriously prefix-match `/1/20/`.
-                owning_path = str(owning_department.path)
-                if any(str(row.path or "").startswith(owning_path) for row in user_departments):
+                # F062: the left-hand side of the prefix test is the owning
+                # department's ORG DOMAIN, not the department itself. `nearest_org_path`
+                # returns the department's own path when it is an 机构 (opaque, so its
+                # domain starts at itself — a nested 机构 stays outside its parent's
+                # domain) and its nearest 机构 ancestor's path otherwise. With every
+                # node defaulting to 机构 this is an IDENTITY with the pre-F062 rule
+                # (`owning_department.path`), which is what makes the upgrade inert.
+                #
+                # Returns None when the domain cannot be resolved (unknown id,
+                # dangling parent, cycle, or an oversized tenant falling back) —
+                # fail closed, exactly like the surrounding error handling.
+                domain_path = await cls._resolve_org_domain_path(int(knowledge.department_id))
+                if domain_path is None:
+                    return None
+
+                # Ancestor-or-self test: the org domain's path is a prefix of the
+                # user's department path. `path` always carries a trailing slash,
+                # so `/1/2/` cannot spuriously prefix-match `/1/20/`.
+                if any(str(row.path or "").startswith(domain_path) for row in user_departments):
                     return PermissionLevel.can_read.value
         except Exception as e:
             # Fail closed: an ownership lookup that cannot be evaluated must not
@@ -1248,6 +1262,78 @@ class PermissionService:
                 e,
             )
             return None
+        return None
+
+    @classmethod
+    async def _resolve_org_domain_path(cls, dept_id: int) -> str | None:
+        """F062: the org-domain path of `dept_id`, resolved through the tenant mapping.
+
+        Wraps `department_org_domain.nearest_org_path` with the cache lookup that
+        supplies its mapping. Kept here (rather than inlined into the ownership
+        branch) so the fallback path has one home.
+
+        When the mapping is unavailable — an oversized tenant, or a failed load —
+        this falls back to reading the single node and walking `parent_id` one
+        level at a time. That path is slow but correct; it exists so the
+        3w+-department deployments documented in `department_service.py:1518`
+        still get the right answer, they just pay for it. It is NOT the target
+        deployment, which is served from the cached mapping.
+
+        Returns None (fail closed) whenever the domain cannot be determined.
+        """
+        from bisheng.permission.domain.services.department_org_domain import (
+            get_department_mapping,
+            nearest_org_path,
+        )
+
+        mapping = await get_department_mapping()
+        if mapping is not None:
+            return nearest_org_path(int(dept_id), mapping)
+        return await cls._resolve_org_domain_path_uncached(int(dept_id))
+
+    #: Upper bound on the uncached walk. Mirrors the guard in
+    #: `department_org_domain.nearest_org_path`: a cycle can outlive the code
+    #: that created it, so the traversal is bounded rather than trusting the tree.
+    _ORG_DOMAIN_MAX_WALK = 256
+
+    @classmethod
+    async def _resolve_org_domain_path_uncached(cls, dept_id: int) -> str | None:
+        """Per-node fallback: walk `parent_id` up to the nearest 机构.
+
+        Used only when no mapping is available (see `_resolve_org_domain_path`).
+        One query per level, which is exactly why it is not the primary path.
+
+        MUST AGREE WITH THE CACHED PATH, including on archived nodes. The mapping
+        is built from `aget_active_by_tenant`, which filters `status=='active'`,
+        so an archived node is absent and the cached walk stops there with None.
+        `aget_by_id` does NOT filter status, so without the explicit check below
+        this branch would happily walk THROUGH an archived 机构 and return its
+        path — granting visibility the cached path denies. Two implementations of
+        one rule must not disagree, and certainly not in the permissive
+        direction: an oversized tenant would then get looser visibility than a
+        small one for the same data (AC-19).
+        """
+        from bisheng.database.models.department import DepartmentDao
+
+        current = int(dept_id)
+        for _ in range(cls._ORG_DOMAIN_MAX_WALK):
+            row = await DepartmentDao.aget_by_id(current)
+            if row is None:
+                return None
+            # Parity with `aget_active_by_tenant`: an archived node is not part
+            # of the org tree for visibility purposes. Treat it as a hole.
+            if str(getattr(row, "status", "") or "") != "active":
+                return None
+            if not int(getattr(row, "is_department", 0) or 0):
+                return str(row.path) or None
+            if row.parent_id is None:
+                return None
+            current = int(row.parent_id)
+        logger.warning(
+            "F062: org-domain walk from %s exceeded %d steps (cycle?); failing closed",
+            dept_id,
+            cls._ORG_DOMAIN_MAX_WALK,
+        )
         return None
 
     @classmethod

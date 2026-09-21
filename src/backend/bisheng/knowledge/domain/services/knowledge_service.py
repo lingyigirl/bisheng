@@ -243,6 +243,7 @@ class KnowledgeService(KnowledgeUtils):
         preferred_ids: list[int] | None,
         department_ids: list[int] | None = None,
         filter_department_ids: list[int] | None = None,
+        include_any_department: bool = False,
     ) -> tuple[list[Knowledge], dict[int, set[str]], int, int]:
         """Scan bounded DB batches and refill rows removed by exact permission checks."""
         visible: list[Knowledge] = []
@@ -274,6 +275,10 @@ class KnowledgeService(KnowledgeUtils):
                 cursor=None if offset_scan else batch_cursor,
                 department_ids=department_ids,
                 filter_department_ids=filter_department_ids,
+                # F062: widen the candidate set to every department-owned
+                # library, or rows reachable by the org-domain rule but absent
+                # from the caller's ancestor chain would never be evaluated.
+                include_any_department=include_any_department,
             )
             batch_count += 1
             scanned_rows += len(batch)
@@ -435,6 +440,11 @@ class KnowledgeService(KnowledgeUtils):
                 preferred_ids=preferred_ids,
                 department_ids=department_chain,
                 filter_department_ids=filter_department_ids,
+                # F062: the org-domain rule reaches sibling departments that the
+                # ancestor chain does not contain, so the candidate set must be
+                # the super-set. See `_user_knowledge_filters` for why narrowing
+                # here silently disables the feature.
+                include_any_department=True,
             )
             logger.info(
                 "[perf][knowledge.list.filter] user_id={} permission_id={} type={} accessible_ids={} creator_ids={} "

@@ -201,6 +201,11 @@ CREATE TABLE IF NOT EXISTS department (
     status VARCHAR(16) DEFAULT 'active',
     is_tenant_root INTEGER NOT NULL DEFAULT 0,
     mounted_tenant_id INTEGER,
+    -- F062: org-tree node marker; 0=机构 (opaque), 1=部门 (transparent).
+    -- Hand-maintained DDL — a model column added without this mirror fails at
+    -- INSERT with "table department has no column named ..." (as F057 hit).
+    is_department INTEGER NOT NULL DEFAULT 0,
+    concurrent_session_limit INTEGER NOT NULL DEFAULT 0,
     is_deleted INTEGER NOT NULL DEFAULT 0,
     last_sync_ts BIGINT NOT NULL DEFAULT 0,
     default_role_ids JSON,

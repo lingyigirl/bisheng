@@ -348,6 +348,7 @@ class KnowledgeDao(KnowledgeBase):
         filter_knowledge: list[int] = None,
         department_ids: list[int] = None,
         filter_department_ids: list[int] = None,
+        include_any_department: bool = False,
     ) -> Union[Select, SelectOfScalar]:
         # F057: department ownership is an ADDITIONAL visibility source
         # (visible = FGA grant OR own OR department-owned), so it joins the same
@@ -360,12 +361,27 @@ class KnowledgeDao(KnowledgeBase):
         # silently dropping ownership. That is exactly the population this
         # feature exists for, so nesting it under the truthy branch made the
         # whole rule a no-op for its primary audience.
-        if knowledge_id_extra or department_ids:
+        if knowledge_id_extra or department_ids or include_any_department:
             candidate_clauses = [Knowledge.user_id == user_id]
             if knowledge_id_extra:
                 candidate_clauses.append(Knowledge.id.in_(knowledge_id_extra))
             if department_ids:
                 candidate_clauses.append(Knowledge.department_id.in_(department_ids))
+            if include_any_department:
+                # F062: the candidate set must be a SUPER-SET of the visible set.
+                #
+                # F057's `department_ids` (the caller's ANCESTOR chain) was a
+                # sufficient candidate set only because its rule was
+                # "ancestors flow down". F062 lets a user see libraries owned by
+                # departments that are NOT on that chain — siblings inside the
+                # same 机构 domain — so narrowing here would DROP those rows
+                # before the (correct) per-row rule ever ran, and the feature
+                # would silently not work for exactly the case it exists for.
+                #
+                # "Every department-owned library" is the cheap super-set;
+                # `_scan_visible_knowledge` already filters per row, so
+                # precision belongs there, not here (design 决策 7).
+                candidate_clauses.append(Knowledge.department_id.is_not(None))
             statement = statement.where(or_(*candidate_clauses))
         else:
             statement = statement.where(Knowledge.user_id == user_id)
@@ -436,6 +452,7 @@ class KnowledgeDao(KnowledgeBase):
         cursor: Sequence | None = None,
         department_ids: list[int] = None,
         filter_department_ids: list[int] = None,
+        include_any_department: bool = False,
     ) -> list[Knowledge]:
         """List user-visible knowledge bases.
 
@@ -447,6 +464,12 @@ class KnowledgeDao(KnowledgeBase):
         F057: ``department_ids`` widens the candidate OR with libraries owned by
         those departments (the caller passes the ids on the current user's
         ancestor chain). It is additive — omit it to keep pre-F057 behaviour.
+
+        F062: ``include_any_department`` widens it further to EVERY
+        department-owned library. Required because the org-domain rule can reach
+        departments outside the caller's ancestor chain (siblings within the same
+        机构), which ``department_ids`` alone would filter out before the rule
+        ran. Off by default so every existing caller keeps its exact SQL.
         """
         statement = select(Knowledge)
 
@@ -463,6 +486,7 @@ class KnowledgeDao(KnowledgeBase):
             filter_knowledge,
             department_ids,
             filter_department_ids,
+            include_any_department,
         )
         if cursor is not None:
             # Cursor mode: append keyset WHERE and LIMIT only.

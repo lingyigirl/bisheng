@@ -15,6 +15,7 @@ from bisheng.department.domain.schemas.department_schema import (
     DepartmentLocalMemberCreate,
     DepartmentLocalMemberCreateWithDeptId,
     DepartmentMoveRequest,
+    DepartmentNodeTypeBatchUpdate,
     DepartmentUpdate,
 )
 from bisheng.department.domain.services.department_service import DepartmentService
@@ -171,6 +172,69 @@ async def get_department(
     try:
         data = await DepartmentService.aget_department(dept_id, login_user)
         return resp_200(data)
+    except BaseErrorCode as e:
+        return e.return_resp_instance()
+
+
+@router.get("/{dept_id}/node-type-impact")
+async def get_node_type_impact(
+    dept_id: str,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """F062 (AC-05): preview how many departments / libraries a marker flip touches.
+
+    Read-only, and gated by the SAME permission as the flip itself — a caller who
+    cannot change the marker has no business learning the blast radius of doing
+    so, and the count reveals the shape of the tree.
+
+    Returns `{affected_departments, affected_libraries}`. Both may legitimately be
+    zero. `unavailable: true` means the tenant is too large to evaluate; the UI
+    should fall back to a warning rather than display 0 as if it were a fact.
+    """
+    try:
+        impact = await DepartmentService.aget_node_type_impact(dept_id, login_user)
+        return resp_200(impact)
+    except BaseErrorCode as e:
+        return e.return_resp_instance()
+
+
+@router.put("/node-type/batch")
+async def batch_set_node_type(
+    data: DepartmentNodeTypeBatchUpdate,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """F062 (AC-08): annotate several nodes as 部门 / 机构 in one action.
+
+    All-or-nothing: if any node is unauthorised, archived, or missing, nothing is
+    written. Declared BEFORE the `/{dept_id}` routes below so the literal path
+    wins — the same ordering constraint `department_member` documents in
+    `api/router.py`.
+    """
+    try:
+        result = await DepartmentService.abatch_set_node_type(data, login_user)
+        return resp_200(result)
+    except BaseErrorCode as e:
+        return e.return_resp_instance()
+
+
+@router.get("/{dept_id}/move-impact")
+async def get_move_impact(
+    dept_id: str,
+    new_parent_id: int = Query(..., description="Target parent department id (internal PK, as `DepartmentMoveRequest` uses)"),
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """F062 (AC-05): preview how many departments / libraries moving this node touches.
+
+    A move rewrites the materialized `path` of the whole subtree, so it relocates
+    every node in it between org domains — at least as disruptive as a marker
+    flip, and previously submitted with no confirmation at all.
+
+    Gated by the SAME check the move itself performs. Response shape matches
+    `/{dept_id}/node-type-impact`, `unavailable` included.
+    """
+    try:
+        impact = await DepartmentService.aget_move_impact(dept_id, new_parent_id, login_user)
+        return resp_200(impact)
     except BaseErrorCode as e:
         return e.return_resp_instance()
 

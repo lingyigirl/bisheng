@@ -4,6 +4,7 @@ import { Button } from "@/components/bs-ui/button"
 import { Checkbox } from "@/components/bs-ui/checkBox"
 import { Input } from "@/components/bs-ui/input"
 import { Label } from "@/components/bs-ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/bs-ui/radio-group"
 import MultiSelect from "@/components/bs-ui/select/multi"
 import { Separator } from "@/components/bs-ui/separator"
 import { QuestionTooltip } from "@/components/bs-ui/tooltip"
@@ -19,6 +20,8 @@ import {
   getDepartmentAssignableRolesApi,
   getDepartmentChildrenApi,
   getDepartmentPathTreeApi,
+  getMoveImpactApi,
+  getNodeTypeImpactApi,
   moveDepartmentApi,
   purgeDepartmentApi,
   restoreDepartmentApi,
@@ -28,9 +31,15 @@ import {
 import { isGuestDepartmentDeptId } from "@/pages/DepartmentPage/constants/systemDepartments"
 import { isSyncedSource } from "@/pages/DepartmentPage/constants/syncReadonly"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
-import type { DepartmentAdmin, DepartmentSearchResult, DepartmentTreeNode } from "@/types/api/department"
+import { userContext } from "@/contexts/userContext"
+import type {
+  DepartmentAdmin,
+  DepartmentSearchResult,
+  DepartmentTreeNode,
+  NodeTypeImpact,
+} from "@/types/api/department"
 import { Building2 } from "lucide-react"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useContext, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 interface DepartmentSettingsProps {
@@ -57,7 +66,13 @@ const FORM_CONTROL_WIDTH = "w-full max-w-md"
 
 export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: DepartmentSettingsProps) {
   const { t } = useTranslation()
+  const { user } = useContext(userContext) as {
+    user: { role?: string; is_department_admin?: boolean; is_child_admin?: boolean } | null
+  }
   const [name, setName] = useState(dept.name)
+  // F062 节点标记。用 "org"/"dept" 而非布尔：单选组的 value 是字符串，且
+  // 「机构」才是默认态，写成 true/false 会让「未设置」和「显式设为机构」难以区分。
+  const [nodeType, setNodeType] = useState<"org" | "dept">(dept.is_department ? "dept" : "org")
   const [adminSelectValue, setAdminSelectValue] = useState<DepartmentUserOption[]>([])
   const [defaultRoleIds, setDefaultRoleIds] = useState<string[]>([])
   const [applyDefaultRolesToExisting, setApplyDefaultRolesToExisting] = useState(false)
@@ -90,6 +105,24 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
   const canEditName = !isArchived && !isSynced
   const canEditPermissions = !isArchived
   const canEditParent = !isArchived && !isSynced && !isRootDept && visibleRootResolved
+  /**
+   * F062: the marker is gated ABOVE ordinary department admin (backend enforces
+   * this — see `_ensure_may_change_node_type`). The UI mirrors the rule so an
+   * admin is not offered a control that would 403.
+   *
+   * Best-effort only, and deliberately so: the backend is the authority. This
+   * mirrors the signal the platform uses for admin-console reach everywhere else
+   * — `is_child_admin` is the tenant-admin flag (see MainLayout / HeaderMenu /
+   * ModelPage.permissions); there is no `is_tenant_admin` field on the user
+   * payload, and testing for it would read `undefined` and permanently disable
+   * the control for the very people the backend admits.
+   *
+   * `is_department_admin` is NOT included: the backend refuses them (that is the
+   * escalation this feature closes), so offering the control would only produce
+   * a 403 after the confirmation dialog.
+   */
+  const canEditNodeType =
+    !isArchived && (user?.role === "admin" || Boolean(user?.is_child_admin))
 
   /** 最近一次从服务端加载成功的快照（父部门变更判断、保存后更新） */
   const baselineRef = useRef<{
@@ -97,6 +130,8 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
     admins: DepartmentUserOption[]
     defaultRoleIds: string[]
     parentId: number | null
+    /** F062: the marker as loaded, so a change can be detected and confirmed. */
+    isDepartment: boolean
   } | null>(null)
 
   useEffect(() => {
@@ -172,6 +207,14 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
         setDefaultRoleIds(dr)
         const pid = detailRes?.parent_id ?? dept.parent_id ?? null
         setParentIdValue(pid)
+        // F062: re-sync the marker with the node being loaded. This component is
+        // NOT remounted when the operator picks a different node in the tree
+        // (no `key` at the call site), so without this the previous node's marker
+        // persists — and `markerChanged` then reads as "the operator changed it"
+        // on a node they never touched. Saving a mere rename would submit
+        // `is_department: false` and silently flip that node to 机构, or (the
+        // other direction) widen visibility by flipping 机构 to 部门.
+        setNodeType((detailRes?.is_department ?? dept.is_department) ? "dept" : "org")
         setAssignableRoles(
           (rolesRes || []).map((r) => ({ value: String(r.id), label: r.role_name }))
         )
@@ -180,6 +223,7 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
           admins: adminOpts,
           defaultRoleIds: dr,
           parentId: pid,
+          isDepartment: Boolean(detailRes?.is_department ?? dept.is_department),
         }
       })
       .catch(() => {
@@ -197,7 +241,7 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
     return () => {
       cancelled = true
     }
-  }, [dept.dept_id, dept.name, dept.parent_id, t])
+  }, [dept.dept_id, dept.name, dept.parent_id, dept.is_department, t])
 
   const restoreBaseline = useCallback((b = baselineRef.current) => {
     if (!b) return
@@ -206,13 +250,94 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
     adminSelectValueRef.current = b.admins
     setDefaultRoleIds(b.defaultRoleIds)
     setParentIdValue(b.parentId)
+    // F062: the marker is part of the baseline too — leaving it out meant
+    // "discard my edits" kept the marker change and would resubmit it.
+    setNodeType(b.isDepartment ? "dept" : "org")
   }, [])
+
+  /**
+   * F062 (AC-05): show the blast radius before letting a marker change through.
+   *
+   * The value moves one bit; what it changes is who can read whose knowledge.
+   * Three distinct outcomes must be presented differently, because conflating
+   * them would mislead the operator:
+   *   - a count      → "N departments / M libraries"
+   *   - zero         → "changes nothing" (legitimate: flipping a leaf)
+   *   - unavailable  → "cannot estimate", NEVER rendered as 0, which would read
+   *                    as "harmless" for a tenant where we simply cannot say.
+   */
+  /**
+   * F062 (AC-05): shared confirm flow for the two tree changes that move nodes
+   * between org domains — flipping the marker and moving the node.
+   *
+   * `fetchImpact` is injected so both paths render an identical dialog from
+   * whichever preview applies; only the request differs. Both are read-only and
+   * both return the same shape, `unavailable` included.
+   */
+  const confirmImpact = useCallback(
+    async (fetchImpact: () => Promise<NodeTypeImpact | null>) => {
+      let impact: NodeTypeImpact | null = null
+      try {
+        impact = await fetchImpact()
+      } catch {
+        // Treated as "cannot estimate" below rather than aborting: the operator
+        // has already decided, and the backend still enforces permission.
+      }
+
+      let detail: string
+      if (!impact || impact.unavailable) {
+        detail = t("bs:department.impactUnavailable")
+      } else if (impact.affected_departments === 0 && impact.affected_libraries === 0) {
+        detail = t("bs:department.impactZero")
+      } else {
+        detail = t("bs:department.impactBody", {
+          departments: impact.affected_departments,
+          libraries: impact.affected_libraries,
+        })
+      }
+
+      return new Promise<boolean>((resolve) => {
+      // `bsConfirm` is callback-based and offers THREE ways out: ok, cancel,
+      // and close (the X / backdrop / Esc, which fire `onClose` only). Wiring
+      // just onOk/onCancel leaves the close path unresolved and the awaiting
+      // save handler hangs forever with the button stuck. `settle` makes every
+      // exit resolve exactly once.
+      let settled = false
+      const settle = (v: boolean) => {
+        if (settled) return
+        settled = true
+        resolve(v)
+      }
+        bsConfirm({
+          title: t("bs:department.impactTitle"),
+          desc: detail,
+          okTxt: t("bs:department.impactConfirm"),
+          onOk: () => settle(true),
+          onCancel: () => settle(false),
+          onClose: () => settle(false),
+        })
+      })
+    },
+    [t],
+  )
+
+  const confirmNodeTypeChange = useCallback(
+    () => confirmImpact(async () => (await getNodeTypeImpactApi(dept.dept_id)) as NodeTypeImpact),
+    [confirmImpact, dept.dept_id],
+  )
+
+  const confirmMove = useCallback(
+    (newParentId: number) =>
+      confirmImpact(async () => (await getMoveImpactApi(dept.dept_id, newParentId)) as NodeTypeImpact),
+    [confirmImpact, dept.dept_id],
+  )
 
   const hasUnsavedSettingsChanges = useCallback(() => {
     const b = baselineRef.current
     if (!b) return false
     if (canEditName && name !== b.name) return true
     if (canEditParent && parentIdValue !== b.parentId) return true
+    if (canEditNodeType && nodeType !== (b.isDepartment ? "dept" : "org")) return true
     if (
       !sameIdSet(
         adminSelectValue.map((o) => o.value),
@@ -221,7 +346,16 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
     ) return true
     if (!sameIdSet(defaultRoleIds, b.defaultRoleIds)) return true
     return false
-  }, [adminSelectValue, canEditName, canEditParent, defaultRoleIds, name, parentIdValue])
+  }, [
+    adminSelectValue,
+    canEditName,
+    canEditNodeType,
+    canEditParent,
+    defaultRoleIds,
+    name,
+    nodeType,
+    parentIdValue,
+  ])
 
   const handleCancel = useCallback(() => {
     const b = baselineRef.current
@@ -250,13 +384,23 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
       })
       return
     }
-    setSaving(true)
+    // F062: `setSaving` is deliberately NOT set before the confirm dialogs
+    // below. The shared `bsConfirm` resolves its Promise only through ok /
+    // cancel / the X icon — dismissing with Esc goes straight to Radix's
+    // `onOpenChange(setOpen)` (useConfirm.tsx:53) and fires NEITHER callback, so
+    // an `await` on it would never return. Setting the flag first would leave
+    // the save button disabled forever after an Esc; leaving it until after the
+    // dialogs means the worst case is "this save did not happen", which the
+    // operator can simply retry. (Fixing the shared component is out of scope
+    // for this feature — every bsConfirm caller has the same behaviour.)
     try {
       const body: {
         name?: string
         default_role_ids?: number[]
         admin_user_ids?: number[]
         apply_default_roles_to_existing_members?: boolean
+        /** F062: only set when the marker actually changed AND the impact dialog was confirmed. */
+        is_department?: boolean
       } = {}
       const baseline = baselineRef.current
       const nextName = name.trim()
@@ -280,6 +424,15 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
       if (applyDefaultRolesToExisting) {
         body.apply_default_roles_to_existing_members = true
       }
+      // F062: the marker change goes LAST and is gated by the impact dialog.
+      // Submitting it silently would be the one edit on this form whose effect
+      // is invisible in the UI but very visible in who can read what.
+      const markerChanged = canEditNodeType && baseline && nodeType !== (baseline.isDepartment ? "dept" : "org")
+      if (markerChanged) {
+        const confirmed = await confirmNodeTypeChange()
+        if (!confirmed) return
+        body.is_department = nodeType === "dept"
+      }
       const nextParentId = parentIdValue
       const parentChanged =
         canEditParent &&
@@ -291,7 +444,17 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
         return
       }
 
+      // Now that every confirm has been answered, this save is really going to
+      // issue requests — see the note above on why the flag waits until here.
+      setSaving(true)
+
       if (parentChanged) {
+        // F062 (AC-05): a move rewrites the subtree's materialized path, so it
+        // relocates every node under it between org domains — the same class of
+        // blast radius as a marker flip, and previously submitted with no
+        // confirmation at all.
+        const confirmed = await confirmMove(nextParentId)
+        if (!confirmed) return
         const moveRes = await captureAndAlertRequestErrorHoc(
           moveDepartmentApi(dept.dept_id, nextParentId)
         )
@@ -318,6 +481,7 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
         admins: adminOpts,
         defaultRoleIds: [...defaultRoleIds],
         parentId: nextParentId ?? baselineRef.current?.parentId ?? dept.parent_id ?? null,
+        isDepartment: nodeType === "dept",
       }
       onChanged()
     } finally {
@@ -326,13 +490,17 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
   }, [
     adminSelectValue,
     canEditName,
+    canEditNodeType,
     canEditParent,
     canEditPermissions,
     applyDefaultRolesToExisting,
+    confirmMove,
+    confirmNodeTypeChange,
     defaultRoleIds,
     dept.dept_id,
     dept.parent_id,
     name,
+    nodeType,
     onChanged,
     parentIdValue,
     t,
@@ -449,6 +617,39 @@ export function DepartmentSettings({ dept, onChanged, onMarkAsTenant }: Departme
             )}
           </div>
         )}
+        {/* F062: the 机构 / 部门 marker. Sits in the BASIC section because it
+            describes what the node IS, not what it may do — the permission
+            section below is about who may edit it. The two hints differ because
+            the choice is genuinely consequential in both directions: 机构 is a
+            visibility boundary, 部门 makes the node transparent to its ancestors. */}
+        <div className="space-y-1.5">
+          <Label>{t("bs:department.nodeTypeLabel")}</Label>
+          <RadioGroup
+            value={nodeType}
+            onValueChange={(v) => setNodeType(v as "org" | "dept")}
+            disabled={!canEditNodeType}
+            className="gap-2"
+          >
+            <div className="flex items-start gap-2">
+              <RadioGroupItem value="org" id="f062-node-type-org" className="mt-0.5" />
+              <div className="space-y-0.5">
+                <Label htmlFor="f062-node-type-org" className="font-normal">
+                  {t("bs:department.nodeTypeOrg")}
+                </Label>
+                <p className="text-xs text-text-3">{t("bs:department.nodeTypeOrgHint")}</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-2">
+              <RadioGroupItem value="dept" id="f062-node-type-dept" className="mt-0.5" />
+              <div className="space-y-0.5">
+                <Label htmlFor="f062-node-type-dept" className="font-normal">
+                  {t("bs:department.nodeTypeDept")}
+                </Label>
+                <p className="text-xs text-text-3">{t("bs:department.nodeTypeDeptHint")}</p>
+              </div>
+            </div>
+          </RadioGroup>
+        </div>
       </section>
 
       {/* 区块二：权限与角色 */}
