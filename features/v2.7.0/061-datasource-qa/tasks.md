@@ -1261,3 +1261,11 @@ AC-61 / AC-64 建议用静态断言（扫描 `KnowledgeTypeEnum` 无数据源成
    空/纯空白视为「不过滤」；`name` 字段已有索引（`datasource.py:48-49`），**无 DDL 变更**。
    前端在 `DatasourceListTab` 加 `SearchInput` + `useDebounce(300ms)`，防抖回调内 `setPage(1)`。
    本项属缺陷修复之外的**功能增补**，原 spec/design 未覆盖；不改变任何既有接口的入参出参语义（仅新增可选参数）。
+
+5. **【UI 调整】列表页去除「共 N 个数据源」，分页器改为右对齐。**
+   计数文案与分页器自带的 `showTotal`（「共 N 条，每页 20 条」）重复，故移除前者；
+   `datasource.list.total` 三语键随之删除（唯一引用点即此处）。
+   分页器右对齐**必须通过 `AutoPagination` 的 `className` 传入**：其内部 `Pagination` 自带
+   `mx-auto flex w-full justify-center`，外层容器的 `justify-end` 对它无效（子元素是 `w-full`）。
+   `cname` 基于 tailwind-merge，传入的 `justify-end` 会**替换**而非叠加 `justify-center`。
+   `AutoPagination` 另有约 20 处调用方，故未改其默认值，仅本页传参。

@@ -2359,7 +2359,6 @@
       "dm": "DM8"
     },
     "list": {
-      "total": "データソース {{total}} 件",
       "create": "データソース新規作成",
       "searchNamePlaceholder": "名前で検索",
       "colName": "名前",

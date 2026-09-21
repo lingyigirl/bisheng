@@ -2414,7 +2414,6 @@
       "dm": "DM8"
     },
     "list": {
-      "total": "{{total}} datasources",
       "create": "New Datasource",
       "searchNamePlaceholder": "Search by name",
       "colName": "Name",

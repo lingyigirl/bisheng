@@ -89,17 +89,12 @@ export function DatasourceListTab({ queries }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center justify-between pb-3">
-        <div className="flex items-center gap-3">
-          <SearchInput
-            className="w-[240px]"
-            defaultValue={queries.name}
-            placeholder={t("datasource.list.searchNamePlaceholder")}
-            onChange={(e) => debouncedSearch(e.target.value)}
-          />
-          <span className="text-sm text-muted-foreground">
-            {t("datasource.list.total", { total })}
-          </span>
-        </div>
+        <SearchInput
+          className="w-[240px]"
+          defaultValue={queries.name}
+          placeholder={t("datasource.list.searchNamePlaceholder")}
+          onChange={(e) => debouncedSearch(e.target.value)}
+        />
         <Button
           className="h-8 rounded-[6px] px-3 text-[14px]"
           onClick={() => {
@@ -202,8 +197,18 @@ export function DatasourceListTab({ queries }: Props) {
         )}
       </div>
 
-      <div className="flex shrink-0 justify-end border-t px-2 py-2">
-        <AutoPagination page={page} pageSize={pageSize} total={total} showTotal onChange={setPage} />
+      {/* `justify-end` is passed in rather than set by the wrapper: `Pagination`
+          carries `w-full justify-center` of its own, so the wrapper's alignment
+          never applies. `cname` is tailwind-merge based, so this overrides it. */}
+      <div className="flex shrink-0 border-t px-2 py-2">
+        <AutoPagination
+          className="justify-end"
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          showTotal
+          onChange={setPage}
+        />
       </div>
 
       <DatasourceFormDialog
