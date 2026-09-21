@@ -117,6 +117,21 @@ class RedisCallback(BaseCallback):
     def get_workflow_data(self) -> dict:
         return self.redis_client.get(self.workflow_data_key)
 
+    def _has_alive_worker(self) -> bool:
+        """Whether a live worker is consuming the workflow queue.
+
+        Imported lazily on purpose: ``bisheng.worker.workflow.tasks`` imports this
+        module back, so a top-level import would be circular.
+        """
+        from bisheng.worker.workflow.tasks import workflow_stateful_worker
+
+        return workflow_stateful_worker.has_alive_node_sync()
+
+    async def _has_alive_worker_async(self) -> bool:
+        from bisheng.worker.workflow.tasks import workflow_stateful_worker
+
+        return await workflow_stateful_worker.has_alive_node()
+
     def set_workflow_status(self, status: str, reason: str = None):
         self.redis_client.set(
             self.workflow_status_key,
@@ -253,10 +268,26 @@ class RedisCallback(BaseCallback):
                 status_info["status"] in [WorkflowStatus.WAITING.value, WorkflowStatus.INPUT_OVER.value]
                 and time.time() - status_info["time"] > 10
             ):
-                # 10No status update received in seconds, descriptionworkflowNot started, could becelery workerThreads full
-                self.set_workflow_status(WorkflowStatus.FAILED.value, "workflow task execute busy")
+                # 10s without a status update means the task was published but no
+                # worker has picked it up. Two causes need different fixes — no
+                # worker consuming the queue at all (start one) vs. every worker
+                # busy (retry later) — so classify before reporting.
+                if self._has_alive_worker():
+                    self.set_workflow_status(WorkflowStatus.FAILED.value, "workflow task execute busy")
+                    err_msg = WorkFlowTaskBusyError()
+                else:
+                    reason = "no alive workflow worker is consuming the queue"
+                    self.set_workflow_status(WorkflowStatus.FAILED.value, reason)
+                    err_msg = WorkFlowTaskOtherError(exception=Exception(reason))
+                # Mark the run stopped too: a worker that picks the task up in the
+                # window between the status read above and those writes would
+                # otherwise keep executing a run the client already reported failed.
+                # dispatch=False — see set_workflow_stop: the run was never picked up,
+                # so there is no cached workflow object to stop, and the dispatched
+                # task would only clobber the reason we just recorded.
+                self.set_workflow_stop(dispatch=False)
                 yield self.build_chat_response(
-                    WorkflowEventType.Error.value, "over", message=WorkFlowTaskBusyError().to_dict()
+                    WorkflowEventType.Error.value, "over", message=err_msg.to_dict()
                 )
                 break
             elif time.time() - status_info["time"] > 86400:
@@ -309,10 +340,19 @@ class RedisCallback(BaseCallback):
                 status_info["status"] in [WorkflowStatus.WAITING.value, WorkflowStatus.INPUT_OVER.value]
                 and time.time() - status_info["time"] > 10
             ):
-                # 10No status update received in seconds, descriptionworkflowNot started, could becelery workerThreads full
-                await self.async_set_workflow_status(WorkflowStatus.FAILED.value, "workflow task execute busy")
+                # See the sync variant: classify the stall before reporting, or
+                # "no worker is running at all" gets misreported as thread exhaustion.
+                if await self._has_alive_worker_async():
+                    await self.async_set_workflow_status(WorkflowStatus.FAILED.value, "workflow task execute busy")
+                    err_msg = WorkFlowTaskBusyError()
+                else:
+                    reason = "no alive workflow worker is consuming the queue"
+                    await self.async_set_workflow_status(WorkflowStatus.FAILED.value, reason)
+                    err_msg = WorkFlowTaskOtherError(exception=Exception(reason))
+                # dispatch=False — see set_workflow_stop for why.
+                await self.async_set_workflow_stop(dispatch=False)
                 yield self.build_chat_response(
-                    WorkflowEventType.Error.value, "over", message=WorkFlowTaskBusyError().to_dict()
+                    WorkflowEventType.Error.value, "over", message=err_msg.to_dict()
                 )
                 break
             elif time.time() - status_info["time"] > 86400:
@@ -470,17 +510,33 @@ class RedisCallback(BaseCallback):
             self.redis_client.delete(self.workflow_input_key)
         return ret
 
-    def set_workflow_stop(self):
-        from bisheng.worker.workflow.tasks import stop_workflow
+    def set_workflow_stop(self, dispatch: bool = True):
+        """Record the stop intent; optionally also dispatch ``stop_workflow``.
 
+        The stop key alone is what stops a run cooperatively — a running workflow
+        polls it in ``send_chat_response``. The dispatched task only adds a
+        busy-wait on a workflow object parked in this worker's ``_global_workflow``,
+        which does not exist for a run that was never picked up. Pass
+        ``dispatch=False`` when stopping a run that never started: the task would be
+        published to the very queue we just found nobody consuming, and once it
+        eventually runs it finds no cached workflow object and overwrites the
+        recorded failure reason with "workflow stop by user" — which
+        ``parse_workflow_failed`` maps to None, leaving the user a silent close
+        instead of the error we reported.
+        """
         self.redis_client.set(self.workflow_stop_key, 1, expiration=3600 * 24)
-        stop_workflow.delay(self.unique_id, self.workflow_id, self.chat_id, self.user_id)
+        if dispatch:
+            from bisheng.worker.workflow.tasks import stop_workflow
 
-    async def async_set_workflow_stop(self):
-        from bisheng.worker.workflow.tasks import stop_workflow
+            stop_workflow.delay(self.unique_id, self.workflow_id, self.chat_id, self.user_id)
 
+    async def async_set_workflow_stop(self, dispatch: bool = True):
+        """Async counterpart of :meth:`set_workflow_stop`. See it for ``dispatch``."""
         await self.redis_client.aset(self.workflow_stop_key, 1, expiration=3600 * 24)
-        stop_workflow.delay(self.unique_id, self.workflow_id, self.chat_id, self.user_id)
+        if dispatch:
+            from bisheng.worker.workflow.tasks import stop_workflow
+
+            stop_workflow.delay(self.unique_id, self.workflow_id, self.chat_id, self.user_id)
 
     def get_workflow_stop(self) -> bool | None:
         """In order to stop in timeworkflow, Do not cache memory"""

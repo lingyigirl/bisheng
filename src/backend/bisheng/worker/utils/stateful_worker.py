@@ -87,6 +87,25 @@ class StatefulWorker:
         all_nodes = self.consistent_hash.get_all_nodes()
         return node in all_nodes
 
+    async def has_alive_node(self) -> bool:
+        """Whether any queue with this prefix currently has a live worker.
+
+        Applies the same liveness rule as ``_base_get_all_alive_queues`` (last
+        heartbeat within ``alive_times``) but leaves the hash ring untouched, so
+        it is safe to call from a request path that only needs to classify a
+        stall — unlike ``update_alive_nodes``, which mutates dispatcher state.
+        """
+        redis_client = await get_redis_client()
+        all_queues = await redis_client.ahgetall(WORKER_ALIVE_KEY)
+        alive_nodes, _ = self._base_get_all_alive_queues(all_queues)
+        return bool(alive_nodes)
+
+    def has_alive_node_sync(self) -> bool:
+        redis_client = get_redis_client_sync()
+        all_queues = redis_client.hgetall(WORKER_ALIVE_KEY)
+        alive_nodes, _ = self._base_get_all_alive_queues(all_queues)
+        return bool(alive_nodes)
+
     async def _find_bound_node(self, hash_key: str) -> str | None:
         redis_client = await get_redis_client()
         return await redis_client.aget(f"{self.bound_nodes_prefix}{hash_key}")
