@@ -197,4 +197,5 @@
 
 | 日期 | 变更 | 触发 |
 |---|---|---|
-| 2026-09-21 | 初版（32 条 AC + 4 处已知缺口）。权限口径经用户订正为「与知识库一致」：读用 `knowledge`、写用 `create_knowledge`，管理页随之从工作台配置页挪到知识库区第三个 Tab（使页面门控与接口门控同集合） | Spec Discovery：用户需求 + 契约登记（`features/v2.8.0/release-contract.md` 表 1/2 + 错误码 115）+ 全链路盘点 + 逐项确认 + `/sdd-review spec` 一轮（4 条 findings，3 条已改） |
+| 2026-09-21 | 初版（32 条 AC + 4 处已知缺口）。权限口径经用户订正为「与知识库一致」：读用 `knowledge`、写用 `create_knowledge`，管理页随之从工作台配置页挪到知识库区第三个 Tab（使页面门控与接口门控同集合） | Spec Discovery：用户需求 + 契约登记（`features/v2.8.0/release-contract.md` 表 1/2 + 错误码 115）+ 全链路盘点 + 逐项确认 + `/sdd-review spec` 一轮（2 medium + 2 low，3 条已改、1 条留 design） |
+| 2026-09-21 | **`/sdd-review spec` 通过，用户确认** | 审查 14 项，13 项通过；权限 AC 缺口（medium）已补为 AC-16~19，§4 How 泄漏（medium）已改为纯可验收口径；2 条 low 中 1 条（部门筛选的分页语义）留待 design |
