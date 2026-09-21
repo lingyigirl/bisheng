@@ -61,6 +61,45 @@ class TermLibraryTermDao:
                 return _rows(result)
 
     @classmethod
+    async def alist_page(
+        cls,
+        *,
+        department_ids: list[int] | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[TermLibraryTerm], int]:
+        """One page of the admin list, narrowed by department when given.
+
+        `department_ids` is the caller's already-resolved id set. `None` means
+        "no filter"; an EMPTY list means "matches nothing" and must return empty
+        rather than falling through to the unfiltered read — the same contract
+        the datasource DAO documents for its `ids` argument, and the difference
+        between a scoped list and the whole tenant.
+        """
+        if department_ids is not None and not department_ids:
+            return [], 0
+
+        clauses = []
+        if department_ids is not None:
+            clauses.append(TermLibraryTerm.department_id.in_(department_ids))
+
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                count_stmt = select(func.count()).select_from(TermLibraryTerm)
+                rows_stmt = select(TermLibraryTerm)
+                for clause in clauses:
+                    count_stmt = count_stmt.where(clause)
+                    rows_stmt = rows_stmt.where(clause)
+
+                total = int((await session.exec(count_stmt)).one()[0])
+                rows_stmt = (
+                    rows_stmt.order_by(TermLibraryTerm.id.desc())
+                    .offset(max(0, (page - 1) * page_size))
+                    .limit(page_size)
+                )
+                return _rows(await session.exec(rows_stmt)), total
+
+    @classmethod
     async def acount(cls) -> int:
         """How many terms the current tenant has (spec AC-06's cap check)."""
         with strict_tenant_filter():
