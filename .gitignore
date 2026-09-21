@@ -225,7 +225,11 @@ ipython_config.py
 __pypackages__/
 
 # Celery stuff
-celerybeat-schedule
+# Beat's scheduler state is a per-machine, per-run artifact. The bare name was
+# not enough: Celery writes the same basename with a `.db` / `.bak` / `.dat` /
+# `.dir` suffix, and only the extensionless form matched here — one `.db` slipped
+# into a commit that way (8749bf50a) and was untracked only later.
+celerybeat-schedule*
 celerybeat.pid
 
 # SageMath parsed files
@@ -298,3 +302,6 @@ docs-ui-refactor/
 # CoAligne local state + sync config (per-developer; the tool rewrites them itself)
 .coaligne/
 .coaligneignore
+
+# CodeGraph index (per-developer; rebuilt locally by `codegraph init`, auto-syncs on edit)
+.codegraph/
