@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, text
+from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint, text
 from sqlmodel import Field
 
 from bisheng.common.models.base import SQLModelSerializable
@@ -35,13 +35,32 @@ class TermLibraryTerm(SQLModelSerializable, table=True):
     injection service for why the two must not be conflated (contract INV-17).
 
     Uniqueness spans `standard_term` AND every entry in `aliases`, per tenant
-    (spec AC-02 / AC-03). It is enforced in the service rather than by a DB
-    constraint because the alias side is inside a JSON column, which no index
-    can reach — `test/term_library/test_term_service.py` holds that rule down.
+    (spec AC-02 / AC-03). The ALIAS half is enforced in the service, because
+    aliases live inside a JSON column and no index can reach them —
+    `test/term_library/test_term_service.py` holds that rule down.
+
+    The `standard_term` half is enforced BOTH ways, and needs to be:
+    `_assert_unique` is a read-then-insert check, so two admins saving the same
+    term at the same moment would otherwise both pass it and both insert. The
+    unique index below is what makes the loser of that race fail (code review M3).
     """
 
     __tablename__ = 'term_library_term'
-    __table_args__ = ({'mysql_charset': 'utf8mb4', 'mysql_collate': 'utf8mb4_unicode_ci'},)
+    # The dialect kwargs dict must come LAST: SQLAlchemy reads a trailing dict as
+    # table options and every other entry as a schema item, so putting it first
+    # raises "'SchemaItem' object expected, got {'mysql_charset': ...}".
+    __table_args__ = (
+        # `(tenant_id, standard_term)`, not `standard_term` alone: the rule is
+        # per tenant, and a global index would let one tenant's term block
+        # another tenant's (contract INV-16).
+        #
+        # Case-SENSITIVE, which is what the collation gives for free. The service
+        # compares with `casefold()` and remains the authority for names that
+        # differ only in case — a portable functional index over the folded value
+        # is not expressible across MySQL and DM8.
+        UniqueConstraint('tenant_id', 'standard_term', name='uk_term_library_term_tenant_standard'),
+        {'mysql_charset': 'utf8mb4', 'mysql_collate': 'utf8mb4_unicode_ci'},
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     tenant_id: int = Field(
@@ -49,7 +68,7 @@ class TermLibraryTerm(SQLModelSerializable, table=True):
         sa_column=Column(Integer, nullable=False, index=True, comment='租户ID'),
     )
     standard_term: str = Field(
-        sa_column=Column(String(255), nullable=False, index=True, comment='标准词; 租户内唯一'),
+        sa_column=Column(String(255), nullable=False, comment='标准词; 租户内唯一'),
     )
     aliases: list[str] = Field(
         default_factory=list,
