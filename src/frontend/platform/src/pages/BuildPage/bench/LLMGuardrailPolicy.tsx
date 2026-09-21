@@ -149,6 +149,13 @@ function DirectionPolicySection({
                                     {t("build.builtinWordList")}
                                 </Label>
                             </div>
+                            {/* The built-in list and the platform word library are two
+                                independent sources (backend: `_resolve_words` reads the
+                                static words.txt, the platform layer queries
+                                `platform_sensitive_word`). Without this line the two sit
+                                side by side in the same tab under similar names and read
+                                as one library. */}
+                            <p className="ml-6 text-xs text-[#86909C]">{t("build.builtinWordListHint")}</p>
                             <div className="flex items-center space-x-2">
                                 <Checkbox
                                     id={`${businessType}-custom`}
@@ -326,11 +333,22 @@ function PlatformPolicySection() {
     );
 }
 
-export function LLMGuardrailPolicy() {
+interface LLMGuardrailPolicyProps {
+    /**
+     * Render the cross-tenant platform sections. False for anyone but a global
+     * super admin: those endpoints are guarded by `require_global_super_admin`,
+     * and the 403 interceptor answers a failed GET by navigating the whole page
+     * to /403. Rendering them anyway is not "an empty panel" — it is a redirect
+     * out of the admin console.
+     */
+    showPlatformSections: boolean;
+}
+
+export function LLMGuardrailPolicy({ showPlatformSections }: LLMGuardrailPolicyProps) {
     const { t } = useTranslation();
     return (
         <div>
-            <PlatformPolicySection />
+            {showPlatformSections && <PlatformPolicySection />}
             <DirectionPolicySection
                 title={t("guardrail.chatInput")}
                 desc={t("guardrail.chatInputDesc")}

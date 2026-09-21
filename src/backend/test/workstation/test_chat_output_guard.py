@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from bisheng.api.v1.schema.chat_schema import APIChatCompletion
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.workstation.domain.services import chat_service
 
 SERVICE_PATH = Path(chat_service.__file__)
@@ -77,9 +78,13 @@ def _agent_stream_source() -> str:
 
 
 def test_the_agent_stream_builds_an_output_guard():
-    """No guard means the stream is unfiltered; this is the line that changes."""
+    """No guard means the stream is unfiltered; this is the line that changes.
+
+    The second argument is asserted separately, below: it started as a
+    conversation id, which is the bug that second test describes.
+    """
     source = _agent_stream_source()
-    assert 'build_output_guard(login_user, conversation_id)' in source, (
+    assert 'build_output_guard(login_user, _WORKSTATION_FLOW_ID)' in source, (
         'the agent stream no longer builds an output guard -- the workstation '
         'entry would stream the model output unfiltered (H8)'
     )
@@ -205,3 +210,95 @@ async def test_allowed_input_dispatches_to_the_agent_branch():
 
     assert result == 'AGENT'
     assert dispatched == [True]
+
+
+# --- the hit log's `flow_id` on this entry point ------------------------------
+#
+# The daily chat is not bound to an application: `APIChatCompletion` carries no
+# app id and `MessageSession.flow_id` is `''` for workstation sessions, so this
+# entry point records the ENTRY-TYPE label instead. The ws entries pass a real
+# `assistant_id` / `workflow_id` into the same column.
+#
+# MEASURED, before this was fixed: the output guard was built with
+# `build_output_guard(login_user, conversation_id)` while the parameter is
+# `flow_id`, so every workstation OUTPUT row stored a chat id where the ws rows
+# store an app id -- 3 rows in the dev database had `flow_id == chat_id`, and
+# all 3 were output rows. The input path passed `flow_id=None` and wrote NULL.
+# Same column, three meanings, decided by direction.
+#
+# Both tests drive the real `check_chat_input`, so the `flow_id` under assertion
+# is the one production builds -- stubbing that method would replace the very
+# call that writes the log.
+
+_DAILY_CHAT_LABEL = 'daily_chat'
+
+
+def _workstation_flow_id() -> str:
+    return chat_service._WORKSTATION_FLOW_ID
+
+
+def test_no_workstation_guard_is_built_with_a_chat_id():
+    """The old bug, asserted directly."""
+    source = _agent_stream_source()
+    assert 'build_output_guard(login_user, conversation_id)' not in source, (
+        'the output guard is again built with a conversation id where the '
+        'parameter is the hit log origin -- output rows would record a chat id '
+        'as the app'
+    )
+    assert 'build_output_guard(login_user, _WORKSTATION_FLOW_ID)' in source, (
+        'the output guard no longer records the daily-chat entry label'
+    )
+
+
+def _recording_hit_log(monkeypatch, word: str = 'w') -> list[dict]:
+    """Capture hit-log writes, and force a platform-layer hit for `word`.
+
+    The platform layer is the one that SHORT-CIRCUITS input checking, and it is
+    the layer the reported bug was seen with. Patching it (rather than the
+    tenant matcher) also keeps the assertion on the real `check_chat_input`.
+    """
+    from bisheng.sensitive_word.domain.models.hit_log import SensitiveWordHitLogDao
+    from bisheng.sensitive_word.domain.schemas import (
+        SensitiveWordCheckResult,
+        SensitiveWordHit,
+    )
+
+    recorded: list[dict] = []
+
+    async def _record(**kwargs):
+        recorded.append(kwargs)
+
+    async def _platform_text(text):
+        return SensitiveWordCheckResult(
+            enabled=True, hits=[SensitiveWordHit(word=word, count=1)], auto_reply='命中'
+        )
+
+    monkeypatch.setattr(SensitiveWordHitLogDao, 'acreate_async_best_effort', _record)
+    monkeypatch.setattr(
+        'bisheng.sensitive_word.domain.services.platform_word_service.PlatformWordService.check_platform_text',
+        _platform_text,
+        raising=False,
+    )
+    return recorded
+
+
+async def test_blocked_input_records_the_daily_chat_entry_label(monkeypatch):
+    """Before: this wrote NULL, so the log page showed '-' for every hit."""
+    recorded = _recording_hit_log(monkeypatch)
+
+    response = await chat_service.stream_chat_completion(
+        SimpleNamespace(), _data(text='含敏感词的问题'), SimpleNamespace(user_id=1, tenant_id=1)
+    )
+    await response.body_iterator.__anext__()
+
+    assert recorded, 'a blocked input must be logged'
+    assert recorded[0]['direction'] == 'input'
+    assert recorded[0]['flow_id'] == _workstation_flow_id(), (
+        f"expected the entry-type label, got {recorded[0]['flow_id']!r}"
+    )
+
+
+def test_the_label_matches_the_enum_the_rest_of_the_service_uses():
+    """A hand-written string would drift from the telemetry label; this pins
+    them together so the log and the metrics cannot disagree."""
+    assert _workstation_flow_id() == ApplicationTypeEnum.DAILY_CHAT.value

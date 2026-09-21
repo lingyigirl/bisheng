@@ -10,6 +10,8 @@
  *   agent_tool_call / end     → update the matching tool_call event with results/error
  *   agent_answer / stream     → append delta to responseText
  *   agent_answer / end        → stamp final responseText
+ *   agent_answer / over       → a complete answer in one frame (guardrail
+ *                               close-out); no stream phase precedes it
  *
  * The hook maintains a single ordered `events` array (AgentEvent[]) that the
  * frontend renders directly — no segment_idx / after_segment cross-refs.
@@ -311,6 +313,36 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
                                 events.length = 0;
                                 for (const ev of message.events) events.push(ev);
                             }
+                            emitAgent({
+                                text: responseText,
+                                events: snapshot(),
+                                category: "agent_answer",
+                                finalised: true,
+                            });
+                            emitLegacy();
+                            return;
+                        } else if (type === "over") {
+                            // A COMPLETE answer arriving as a single frame, with
+                            // no `stream` phase before it. The workstation entry
+                            // sends exactly one of these when the input hits the
+                            // guardrail: the turn never runs, so the close-out
+                            // phrase IS the whole answer
+                            // (`workstation/.../chat_service.py::_blocked_input_stream`).
+                            // Without this branch the frame fell through to the
+                            // catch-all below, which emits the still-empty
+                            // `responseText` -- the phrase was dropped and the
+                            // user saw a blank bubble even though the hit had
+                            // been logged.
+                            if (typeof message?.msg === "string") {
+                                responseText = message.msg;
+                                events.length = 0;
+                                if (responseText) {
+                                    events.push({ type: "text", content: responseText });
+                                }
+                            }
+                            // Finalised on arrival: there is no stream left to
+                            // wait for, so leaving the row unfinished would
+                            // strand it on the "thinking" indicator.
                             emitAgent({
                                 text: responseText,
                                 events: snapshot(),

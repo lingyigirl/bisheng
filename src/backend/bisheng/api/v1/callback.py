@@ -122,7 +122,7 @@ class AsyncStreamingLLMCallbackHandler(AsyncCallbackHandler):
                 from bisheng.api.services.guardrail import build_output_guard_for_callback
 
                 self._output_guard = build_output_guard_for_callback(
-                    tenant_id=tenant_id, user_id=self.user_id, flow_id=self.flow_id
+                    tenant_id=tenant_id, user_id=self.user_id, origin=self.flow_id
                 )
         return self._output_guard
 

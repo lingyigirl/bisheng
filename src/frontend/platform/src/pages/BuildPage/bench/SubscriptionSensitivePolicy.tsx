@@ -163,6 +163,7 @@ function SubscriptionSensitivePolicy(_, ref) {
                                     {t("build.builtinWordList")}
                                 </Label>
                             </div>
+                            <p className="ml-6 text-xs text-[#86909C]">{t("build.builtinWordListHint")}</p>
                             <div className="flex items-center space-x-2">
                                 <Checkbox
                                     id="subscription-sensitive-custom"

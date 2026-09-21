@@ -171,6 +171,7 @@ function KnowledgeSpaceSensitivePolicy(_, ref) {
                                         {t("build.builtinWordList")}
                                     </Label>
                                 </div>
+                                <p className="ml-6 text-xs text-[#86909C]">{t("build.builtinWordListHint")}</p>
                                 <div className="space-x-2 flex items-center">
                                     <Checkbox
                                         id="knowledge-sensitive-custom"

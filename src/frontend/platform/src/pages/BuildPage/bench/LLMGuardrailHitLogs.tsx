@@ -14,6 +14,17 @@ import { useTranslation } from "react-i18next";
 
 const PAGE_SIZE = 20;
 
+/**
+ * The value the daily-chat entry writes into `flow_id`.
+ *
+ * That entry point has no application (its request carries no app id), so it
+ * records its entry TYPE instead — see `_WORKSTATION_FLOW_ID` in
+ * `workstation/domain/services/chat_service.py`. The ws entries put a real
+ * assistant/workflow id in the same column, so this is matched exactly rather
+ * than pattern-guessed: anything else renders as the raw id.
+ */
+const DAILY_CHAT_FLOW_ID = "daily_chat";
+
 function formatTime(value: string) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
@@ -161,7 +172,11 @@ export function LLMGuardrailHitLogs() {
                                         ? t("guardrail.directionInput")
                                         : t("guardrail.directionOutput")}
                                 </td>
-                                <td className="py-2 pr-4">{row.flow_id || "-"}</td>
+                                <td className="py-2 pr-4">
+                                    {row.flow_id === DAILY_CHAT_FLOW_ID
+                                        ? t("guardrail.appDailyChat")
+                                        : row.flow_id || "-"}
+                                </td>
                                 <td className="py-2 pr-4">
                                     <div className="flex flex-wrap gap-1">
                                         {(row.hits || []).map((hit) => (

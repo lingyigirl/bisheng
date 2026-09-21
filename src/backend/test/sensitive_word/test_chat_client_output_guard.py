@@ -207,7 +207,7 @@ async def test_output_guard_factory_flush_and_full_text(monkeypatch):
         pass
 
     monkeypatch.setattr(HIT_LOG_PATH, _no_log)
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
 
     # 跨分片 mask: '这是敏' 只发出 '这','感词结束' 冲刷尾部并收尾
     first = await guard('chat-1', '这是敏')
@@ -226,7 +226,7 @@ async def test_output_guard_factory_blocked_full_text_includes_reply(monkeypatch
         pass
 
     monkeypatch.setattr(HIT_LOG_PATH, _no_log)
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
 
     result = await guard('chat-1', '这是敏感词的内容')
 
@@ -241,7 +241,7 @@ async def test_output_guard_factory_reset_starts_fresh_round(monkeypatch):
         pass
 
     monkeypatch.setattr(HIT_LOG_PATH, _no_log)
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
 
     await guard('chat-1', '这是敏感词')
     await guard.reset()
@@ -283,7 +283,7 @@ async def test_whole_message_frames_are_masked(monkeypatch, category):
     monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
     monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
 
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
     client = _workflow_client(guard)
 
     result = await client._guard_output_event(_whole_message_event(category, '这是敏感词内容'))
@@ -304,7 +304,7 @@ async def test_whole_message_frames_are_blocked_when_action_is_block(monkeypatch
     monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'block'}))
     monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
 
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
     client = _workflow_client(guard)
 
     result = await client._guard_output_event(_whole_message_event(category, '这是敏感词内容'))
@@ -323,7 +323,7 @@ async def test_control_frames_are_not_rewritten(monkeypatch):
     monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
     monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
 
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
     client = _workflow_client(guard)
 
     event = ChatResponse(type='over', category='node_run', message={'unique_id': 'u', 'node_id': 'n', 'msg': '这是敏感词'})
@@ -351,7 +351,7 @@ async def test_close_out_phrase_is_appended_once_per_block(monkeypatch):
     monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='违规词', extra_config={'action': 'block'}))
     monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
 
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
 
     for chunk in ('先违规词', '后续内容', '更多内容'):
         await guard('chat-1', chunk)
@@ -371,7 +371,7 @@ async def test_close_out_phrase_is_emitted_again_after_reset(monkeypatch):
     monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='违规词', extra_config={'action': 'block'}))
     monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
 
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
 
     await guard('chat-1', '先违规词')
     assert (await guard.full_text()).count('命中敏感词') == 1
@@ -411,7 +411,7 @@ async def test_two_streaming_nodes_do_not_share_an_answer(monkeypatch):
     monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
     monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
 
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
     client = _workflow_client(guard)
 
     first = await _drive_node(client, 'nodeA', ['甲一', '甲二'], '甲final')
@@ -427,7 +427,7 @@ async def test_a_single_streaming_node_still_accumulates(monkeypatch):
     monkeypatch.setattr(POLICY_DAO_PATH, lambda **kwargs: _policy(custom_words='敏感词', extra_config={'action': 'mask'}))
     monkeypatch.setattr(HIT_LOG_PATH, _noop_log)
 
-    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), flow_id='flow-1')
+    guard = build_output_guard(SimpleNamespace(user_id=7, tenant_id=1), origin='flow-1')
     client = _workflow_client(guard)
 
     assert await _drive_node(client, 'nodeA', ['一', '二', '三'], 'final') == '一二三'

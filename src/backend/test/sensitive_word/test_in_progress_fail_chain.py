@@ -246,7 +246,7 @@ async def _build_guard_with(words):
     state.auto_reply = '[X]'
     state.matcher = _matcher(words)
 
-    guard = guardrail_module._build_output_guard(tenant_id=1, user_id=1, flow_id='f')
+    guard = guardrail_module._build_output_guard(tenant_id=1, user_id=1, origin='f')
     patcher = patch.object(ChatGuardService, 'start_output_guard', return_value=state)
     patcher.start()
     return guard, state, patcher

@@ -11,12 +11,21 @@ from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.sensitive_word.domain.services.chat_guard import ChatGuardService
 
 
-def build_input_guard(login_user: UserPayload, flow_id: str):
+def build_input_guard(login_user: UserPayload, origin: str):
     """Build an async ``(chat_id, text) -> auto_reply | None`` input guard.
 
     Returns the policy auto_reply when ``text`` hits the tenant's chat_input policy,
     None when allowed. Tenant/user context is captured at build time — the ws
     endpoints run in the API process where the tenant ContextVar is populated.
+
+    ``origin`` is what the hit log records as the originating application, and it
+    lands in that log's ``flow_id`` column: the ws endpoints pass their
+    assistant/workflow id, and the daily-chat entry passes an entry-type label
+    because it has no application at all. It is not the conversation — that is
+    ``chat_id``, which arrives per call. Named ``origin`` rather than ``flow_id``
+    so the parameter does not promise an app id on the one entry that has none —
+    reading ``origin``, nobody passes a conversation id into it, which is what
+    happened while it was called ``flow_id``.
     """
     tenant_id = get_current_tenant_id() or login_user.tenant_id
     user_id = login_user.user_id
@@ -25,7 +34,7 @@ def build_input_guard(login_user: UserPayload, flow_id: str):
         result = await ChatGuardService.check_chat_input(
             tenant_id=tenant_id,
             text=text,
-            flow_id=flow_id,
+            flow_id=origin,
             chat_id=chat_id,
             user_id=user_id,
         )
@@ -36,8 +45,11 @@ def build_input_guard(login_user: UserPayload, flow_id: str):
     return guard
 
 
-def build_output_guard(login_user: UserPayload, flow_id: str):
+def build_output_guard(login_user: UserPayload, origin: str):
     """Build an async ``(chat_id, chunk) -> OutputGuardResult`` stream guard.
+
+    ``origin`` is the hit log's originating application, recorded in that log's
+    ``flow_id`` column — see ``build_input_guard`` for the full story.
 
     Guard state lives in this closure for the lifetime of one ws connection.
     An empty ``chunk`` signals stream end and flushes the mask-mode hold-back tail.
@@ -46,15 +58,15 @@ def build_output_guard(login_user: UserPayload, flow_id: str):
     ``reset()`` starts a fresh round (new run after a blocked answer).
     """
     tenant_id = get_current_tenant_id() or login_user.tenant_id
-    return _build_output_guard(tenant_id=tenant_id, user_id=login_user.user_id, flow_id=flow_id)
+    return _build_output_guard(tenant_id=tenant_id, user_id=login_user.user_id, origin=origin)
 
 
-def build_output_guard_for_callback(*, tenant_id: int, user_id: int, flow_id: str):
+def build_output_guard_for_callback(*, tenant_id: int, user_id: int, origin: str):
     """Variant for the assistant stream callback (api layer, no ``login_user``)."""
-    return _build_output_guard(tenant_id=tenant_id, user_id=user_id, flow_id=flow_id)
+    return _build_output_guard(tenant_id=tenant_id, user_id=user_id, origin=origin)
 
 
-def _build_output_guard(*, tenant_id: int, user_id: int, flow_id: str):
+def _build_output_guard(*, tenant_id: int, user_id: int, origin: str):
     state = None
     accumulated: list[str] = []
     reply_emitted = False
@@ -63,7 +75,7 @@ def _build_output_guard(*, tenant_id: int, user_id: int, flow_id: str):
         nonlocal state, reply_emitted
         if state is None:
             state = ChatGuardService.start_output_guard(
-                tenant_id, flow_id=flow_id, chat_id=chat_id, user_id=user_id
+                tenant_id, flow_id=origin, chat_id=chat_id, user_id=user_id
             )
         if chunk == '' and state.enabled and state.tail:
             flushed = await ChatGuardService.flush_output(state)
