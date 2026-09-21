@@ -110,17 +110,23 @@ def _build_automaton(terms: list[TermLibraryTerm]) -> tuple[ACAutomaton, dict[st
     service forbids that collision anyway (AC-03), so this only decides what
     happens to a library that predates the rule.
 
-    **Patterns are lowercased here**, because the question is lowercased before
-    scanning (see `_match`). `ACAutomaton` lowercases neither side and leaves the
+    **Patterns are casefolded here**, because the question is casefolded before
+    scanning (see `_match`). `ACAutomaton` folds neither side and leaves the
     choice to its caller; doing it on both sides is what makes the match
     case-insensitive. Folding only the question — the obvious half — silently
     breaks every ASCII term: `AB` would never match `ab`, and the failure looks
     like "ASCII terms do not work" rather than like a case bug.
+
+    `casefold` (not `lower`) is also what `term_service._assert_unique` uses to
+    decide whether two names collide. The matcher and the uniqueness rule have
+    to agree on what "the same string" means: when they did not, `NPL` and `npl`
+    were both accepted (each looked unique to the service) and the `setdefault`
+    below silently dropped one of them, making that term unreachable.
     """
     folded_owner: dict[str, TermLibraryTerm] = {}
     for term in terms:
         for text in (term.standard_term, *(term.aliases or [])):
-            folded = text.lower()
+            folded = text.casefold()
             if folded not in folded_owner:
                 folded_owner[folded] = term
     return ACAutomaton(folded_owner.keys()), folded_owner
@@ -143,7 +149,7 @@ def _match(question: str, automaton: ACAutomaton, owner: dict[str, TermLibraryTe
     # Three values, not two: (state_after, matches, captured_state). `None` for
     # the scan state means "start fresh", and the captured state is only used by
     # masking callers — we are a one-shot scan.
-    _state_after, matches, _captured = automaton.find_all_matches(None, question.lower())
+    _state_after, matches, _captured = automaton.find_all_matches(None, question.casefold())
     first_position: dict[int, int] = {}
     for end_position, matched_text in matches:
         term = owner.get(matched_text)

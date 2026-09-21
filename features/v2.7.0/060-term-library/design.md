@@ -350,12 +350,13 @@
 
 ## 9. 待定项（实现期定稿）
 
-| # | 项 | 倾向 | 何时定 |
+| # | 项 | 定稿 | 落地位置 |
 |---|---|---|---|
-| 1 | 注入区块的**精确文案与格式** | 形如 `【本轮相关术语】
-- 标准词（别名：a、b）：释义`；需实测模型对格式的遵循度 | T-08 实现期 |
-| 2 | 单轮注入的**字符上限具体值** | 初值 2000 字符（可调常量）；实测对回答质量的影响后定 | T-08 实现期 |
-| 3 | 是否区分 `case_sensitive` | 倾向**否**：术语匹配大小写不敏感更符合「听懂行话」的意图（与 F059 拦词不同，那里大小写敏感与否是误拦/漏拦的取舍，且自动机本身**不做 lower，由调用方负责**——见坑 11） | T-08 实现期 |
+| 1 | 注入区块的**精确文案与格式** | **已定稿，按倾向实现**：区块头 `【本轮相关术语】`，每条一行 `- 标准词（别名：a、b）：释义`（无别名时省略括号段）。截断时追加一行 `（还有 N 条本轮命中的术语未展开）`。**注意**：模型遵循度未做实测（需真 LLM），属 §2.1 e2e 的观察项 | `injection.py` 的 `_BLOCK_HEADER` / `_ALIAS_TEMPLATE` / `_render` / `_render_capped` |
+| 2 | 单轮注入的**字符上限具体值** | **定为 2000 字符**（模块级常量 `MAX_BLOCK_CHARS`，可调）。**未实测**对回答质量的影响——实测需真 LLM，同上 | `injection.py: MAX_BLOCK_CHARS` |
+| 3 | 是否区分 `case_sensitive` | **定为不区分**（倾向落地）。实现上**两侧都 fold**：自动机构建时把标准词与别名 lower，提问也 lower 后再扫。**只 fold 提问是那个「看起来够用」的半吊子做法**——`AB` 永远匹配不到 `ab`，且症状表现为「ASCII 术语不生效」而不像大小写 bug（坑 11 的正面处理） | `injection.py` 的 `_build_automaton` / `_match` |
+
+> **⚠ 三项均未经真模型验证**：1 的「模型遵循度」和 2 的「上限对回答质量的影响」在设计里就写明要实测，而本机没有可用的 LLM 环境。当前取值是**合理初值**，定稿依据是「与设计倾向一致」而非「实测结论」。真栈验证见 [e2e-checklist.md](./e2e-checklist.md) §2.1。
 
 ---
 
@@ -363,12 +364,37 @@
 
 （实现期回填：与本文档不一致的落地、被推翻的决策、新增的坑）
 
+> 逐任务的完整记录（含每条变异验证结果）在 [tasks.md](./tasks.md) §实际偏差记录。此处只收**与本文档直接冲突、需要改设计**的部分。
+
+### 10.1 被推翻的设计结论
+
+| # | 设计原文 | 实现期结论 | 影响 |
+|---|---|---|---|
+| 1 | **§6 表下注**：「`prompt` 接受 callable 是 langgraph 的公开签名（**已验证** `_get_prompt_runnable` 的 callable 分支）」 | **结论正确但不充分**。`_get_prompt_runnable` 用 `inspect.iscoroutinefunction(prompt)` 区分同步/异步两种 callable：**同步 callable 返回协程会被直接丢弃**（`coroutine was never awaited` → 模型侧 `ValueError: Invalid input type <class 'coroutine'>`）。注入必须用**真正的 `async def`**，不能用 lambda 返回协程 | 落点实现改用 `term_prompt_callable` 工厂（`async def` 闭包）。§4.4 第一行「改为 callable」的表述需按此理解 |
+| 2 | **§4.4 第一/二行**：「`prompt` 由字符串改为 callable」（三处落点统一口径） | **只对两个 langgraph 分支成立**。助手与工作流节点各有一个 **ReAct 分支**走 `ConfigurableAssistant(assistant_message=str)`，其 `prompt.partial()` **本就接受零参 callable**（`BasePromptTemplate._merge_partial_and_user_variables` 的 `v if not callable(v) else v()`），但只能零参、且**在异步路径上不能做 I/O** | 最终形状改为**「块解析在知道本轮提问的那一层完成，prompt 层只做拼接」**。新增模块 `term_library/domain/services/prompt.py` |
+| 3 | **§4.3 模块职责表**：`injection.py` 列为「**纯函数**…无状态」 | `build_term_block` 有**单条记忆化缓存**（`_CACHE_KEY` / `_CACHE_VALUE`），并非无状态。这是决策 6「内容寻址缓存」的落地，设计表里写「无状态」与决策 6 自相矛盾——**以决策 6 为准** | 无 |
+| 4 | **§4.3**：`（改）sensitive_word/.../tabular_import.py`（T-05 新增共享函数） | T-05 已落盘；**T-09 未再改动该文件**（`git diff` 为空）。原计划让它多担「空文件判定」，实测该守卫**无法变异验证**（F059 侧本就自带空判定），故不写入已发布文件 | §10.2 新增坑 1 |
+| 5 | **§3 决策 2** 的权限口径 | 落地为**读查 `knowledge`、写查 `create_knowledge`**。补充事实：本仓 `knowledge` 键**在此之前没有任何调用方**（知识库的读接口不设门控，只有写接口查 `CREATE_KNOWLEDGE`）。故本特性读接口**比既有知识库更严** | 若出现「能读知识库列表却读不了术语库」的账号，原因在此 |
+
+### 10.2 实现期新增的坑
+
+| # | 坑 | 会怎样 | 在哪处理 |
+|---|---|---|---|
+| 1 | **共享读取层的「空文件」守卫无法变异验证** | 在 `tabular_import.read_rows` 里加空文件判定后，删掉它两个 importer 仍然一致（各自都有兜底）——**一条无法失败的断言等于没测**，而且它会改动 F059 已发布文件 | tasks.md §T-09 偏差 1；共享层**未改动** |
+| 2 | **ReAct 分支的 `assistant_message` 是「每次模型调用」重算** | 实测两次模型调用的回合里 builder 被调 2 次。对 F060 是**加强**（每步都拿到最新词表）；但若哪天把 I/O 放进 builder，一个回合会读两次库 | `prompt.py` 的设计前提；`build_term_block` 缓存兜底 |
+| 3 | **`agent_runnable` 在 ReAct 执行器里是 `RunnableSequence`，没有 `.llm`** | 曾试图在 executor 内部重建 agent 以注入每轮提示词，`AttributeError: 'RunnableSequence' object has no attribute 'llm'` | **该改动已整体回退**（`bisheng_langchain/` 零 diff）——原 executor 本就支持零参 callable，不需要改 |
+| 4 | **CSV 逗号列切分不能吞掉空列** | `[,，]+` 会把 `标准词,,释义`（别名留空的**最常见行**）的两个逗号并作一个，释义串进别名列 → 整行按「释义为空」被拒 | `term_importer.COLUMN_SEPARATOR_RE` 用不可重复的 `[,，]`；坑由**修正测试夹具**（原先用制表符拼「csv」，与共享层在制表符上切列**互相抵消**，真实 csv 路径一行未测）后才暴露 |
+| 5 | **`ast.FunctionDef` 抓不到 `async def`** | 静态扫描「注入路径不调写方法」时，DAO 全是 `async def` → writer 集合为空 → 断言**静默空转通过** | `test_invariants.py` 用 `ast.AsyncFunctionDef`，并加一条「集合必须非空」防再次空转 |
+| 6 | **文本级静态断言会被自己的 docstring 打红** | `'PermissionService' not in source` 对「文档里提了这个词」与「代码里调了它」不加区分 | 静态扫描一律走 AST，只认真实名字引用（`test_invariants.py`） |
+| 7 | **第一行释义恰好是「释义」会被当表头丢掉** | 表头识别是共享层既有规则（`HEADER_TOKENS` 含 `释义`/`别名`），命中即丢首行。无表头且首行释义写成「释义」的文件会**静默少一条** | 已知限制，未处理（共享层既有取舍）；见 tasks.md §T-09 偏差 7 |
+
 ---
 
 ## 11. 修订历史
 
 | 日期 | 改动 | 触发原因 |
 |---|---|---|
+| 2026-09-21 | **§9 三项待定项定稿**（区块格式 / 字符上限 2000 / 大小写不敏感且两侧 fold）；**§10 回填实现期偏差**：5 条被推翻的设计结论 + 7 条新增坑 | 实现骨架完成（T-01 ~ T-18）；由 T-12/13/14 实测 langgraph 的 `iscoroutinefunction` 分派、T-15 的静态扫描、T-09 的 CSV 夹具修正发现 |
 | 2026-09-21 | 初版（7 条决策 + 9 条坑 + 4 项待定） | 设计阶段；基于 Spec Discovery 的 7 项用户决策 + 全链路代码盘点（F056 缝合点、F059 自动机/缓存/解析器、F057 部门展开、langgraph callable prompt） |
 | 2026-09-21 | **新增决策 8（导入列语义与 txt 取舍）**：实现 T-05 时发现 spec/design **都没定义导入文件的列格式**，而契约要求复用 F059 的解析器——后者只抽词、没有释义列，**共享的前提不成立**。定 `标准词, 别名, 释义` 三列（csv/xlsx，表头可省），**不支持 txt**（写成三列的 txt 与 csv 同规则，无独立价值；写成一行一​​个词则必然被 AC-10 拒）。共享边界随之收窄为「只共用读成行那一层」。**同步修订 spec AC-07/AC-11 与 tasks T-05/T-09** | 实现期；由「要共享的解析器到底共享什么」这一步发现 |
 | 2026-09-21 | **补 §7 测试与可观测 / §8 后续改进 / Constitution Check**（`/sdd-review design` 前自检发现模板 §7/§8 缺失；C1–C7 结论显式补上）。同时把 §2 与 §4.2 的「登记租户白名单」改为真实机制名 `_TENANT_AWARE_MODEL_MODULES` 并说明「光有列不够」的静默失效 | 对照 `features/_templates/design.md` 与 `design-checklist.md` 自检 |

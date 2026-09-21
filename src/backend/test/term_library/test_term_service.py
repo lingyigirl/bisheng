@@ -283,3 +283,43 @@ async def test_without_subtree_the_filter_is_the_single_department():
         await term_service.list_terms(department_id=42, include_sub_departments=False)
 
     assert seen.get('department_ids') == [42]
+
+
+# ── AC-02/AC-03: uniqueness is case-INSENSITIVE, like the matcher ────────────
+#
+# These exist because the two rules disagreed. `_assert_unique` compared raw
+# strings while `injection._build_automaton` folds both sides before scanning,
+# so `NPL` and `npl` were both accepted here — and the automaton's `setdefault`
+# then kept only one of them, leaving the other term in the library but
+# unreachable from any conversation. Editing it appeared to do nothing.
+
+
+async def test_a_standard_term_differing_only_in_case_is_rejected():
+    existing = [_row(1, 'NPL')]
+
+    with pytest.raises(TermDuplicateError):
+        await _create(standard='npl', existing=existing)
+
+
+async def test_an_alias_differing_only_in_case_from_a_standard_term_is_rejected():
+    existing = [_row(1, 'NPL')]
+
+    with pytest.raises(TermDuplicateError):
+        await _create(standard='拨备覆盖率', aliases=['npl'], existing=existing)
+
+
+async def test_an_alias_differing_only_in_case_from_an_existing_alias_is_rejected():
+    existing = [_row(1, '不良贷款率', aliases=['NPL'])]
+
+    with pytest.raises(TermDuplicateError):
+        await _create(standard='拨备覆盖率', aliases=['npl'], existing=existing)
+
+
+async def test_names_differing_by_more_than_case_are_still_distinct():
+    """The counterpart, so the fix is not "reject everything": `NPL` and `NPLX`
+    are different terms and must both be creatable."""
+    existing = [_row(1, 'NPL')]
+
+    created = await _create(standard='NPLX', existing=existing)
+
+    assert created.standard_term == 'NPLX'

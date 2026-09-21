@@ -11,6 +11,7 @@ import { cn } from "@/utils";
 import { LazyDepartmentTree } from "@/components/bs-comp/department";
 import KnowledgeFile from "./KnowledgeFile";
 import KnowledgeQa from "./KnowledgeQa";
+import TermLibraryTab from "./TermLibraryTab";
 import { useKnowledgeDepartmentFilter } from "./useKnowledgeDepartmentFilter";
 
 
@@ -67,12 +68,24 @@ export default function KnowledgePage() {
                     <TabsList className="">
                         <TabsTrigger value="file">{t('lib.fileData')}</TabsTrigger>
                         <TabsTrigger value="qa" className="roundedrounded-xl">{t('lib.qaData')}</TabsTrigger>
+                        {/* F060: the term library, alongside the two libraries it
+                            is shared configuration for. It sits here rather than
+                            under a settings page so that its permission is the
+                            SAME `knowledge` menu this route already requires —
+                            page gate and API gate are one set (AC-18). */}
+                        <TabsTrigger value="term" className="roundedrounded-xl">{t('lib.termData')}</TabsTrigger>
                     </TabsList>
                     <TabsContent value="qa">
                         <KnowledgeQa departmentFilter={deptFilter} />
                     </TabsContent>
                     <TabsContent value="file">
                         <KnowledgeFile departmentFilter={deptFilter} />
+                    </TabsContent>
+                    <TabsContent value="term">
+                        <TermLibraryTab
+                            departmentId={deptFilter.selectedDepartmentId}
+                            includeSubDepartments={deptFilter.includeSubDepartments}
+                        />
                     </TabsContent>
                 </Tabs>
             </div>

@@ -436,5 +436,11 @@
   "11610": "The document exceeds the size limit",
   "11611": "Template not found or not accessible",
   "11301": "Import failed: the file could not be parsed or contains no valid words",
-  "11302": "The word does not exist"
+  "11302": "The word does not exist",
+  "11501": "Term not found or not accessible",
+  "11502": "Invalid term definition (the standard term or definition is empty, or the definition is too long)",
+  "11503": "Duplicate term: the standard term or an alias conflicts with an existing term",
+  "11504": "The term library has reached its size limit",
+  "11505": "Import failed: the file could not be parsed or contains no importable terms",
+  "11506": "The department does not exist or has been archived"
 }

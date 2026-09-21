@@ -89,21 +89,35 @@ async def _assert_unique(standard: str, aliases: list[str], *, exclude_id: int |
     — against BOTH sides of the incoming one. Four directions, one rule: after
     this, no string in the library maps to more than one term.
 
+    **Compared case-INSENSITIVELY**, because that is how the injection path
+    matches (`injection._build_automaton` folds both sides before scanning).
+    Comparing raw strings here let `NPL` and `npl` both be created — two terms
+    claiming one string, which is precisely what AC-02/AC-03 forbid — and the
+    matcher's `setdefault` then silently made the second one unreachable, so
+    editing it appeared to do nothing. The two rules have to agree on what
+    "the same name" means or the guarantee they each enforce is not the
+    guarantee the feature relies on.
+
+    `casefold` rather than `lower`: it is the Unicode-correct fold (it maps `ß`
+    to `ss`, which `lower` does not), and the matcher uses the same call.
+    The comparison key is only ever used for membership, never stored — the
+    name the admin typed is what gets persisted.
+
     Reads the whole library rather than querying by name: the alias side is
     inside JSON and unqueryable, the library is capped at 500 rows (AC-06), and
     a partial check would have to be repeated for the alias case anyway.
     """
     existing = await TermLibraryTermDao.alist_all()
-    taken: dict[str, int] = {}
+    taken: set[str] = set()
     for term in existing:
         if exclude_id is not None and term.id == exclude_id:
             continue
-        taken.setdefault(term.standard_term, term.id)
+        taken.add(term.standard_term.casefold())
         for alias in term.aliases or []:
-            taken.setdefault(alias, term.id)
+            taken.add(alias.casefold())
 
     for name in (standard, *aliases):
-        if name in taken:
+        if name.casefold() in taken:
             raise TermDuplicateError(msg=f'「{name}」已存在于其它词条')
 
 

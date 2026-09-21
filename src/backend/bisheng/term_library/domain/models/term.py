@@ -16,6 +16,11 @@ from bisheng.core.database.dialect_helpers import (
 #: the limit travels with the column it belongs to.
 MAX_DEFINITION_LENGTH = 200
 
+#: Mirrors the `standard_term` column width. A term longer than this cannot be
+#: stored, so an import drops the row and counts it rather than letting the
+#: INSERT fail halfway through a file (see `term_importer`).
+MAX_STANDARD_TERM_LENGTH = 255
+
 #: Library size cap per tenant (spec AC-06).
 MAX_TERMS_PER_TENANT = 500
 

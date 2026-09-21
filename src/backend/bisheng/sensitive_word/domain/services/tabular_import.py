@@ -29,6 +29,7 @@ feature reporting failures in its own error module.
 
 from __future__ import annotations
 
+import csv
 import io
 
 #: Extensions both importers accept. Deliberately excludes `txt`: the term
@@ -64,6 +65,20 @@ def file_extension(filename: str) -> str:
     return (filename or '').rsplit('.', 1)[-1].lower()
 
 
+def _pad(rows: list[list[str]]) -> list[list[str]]:
+    """Widen every row to the longest, so callers can index columns safely.
+
+    `csv.reader` yields variable-length rows: a spreadsheet omits trailing empty
+    cells rather than writing a comma for each, so `标准词,,释义` can arrive as
+    `['标准词', '', '释义']` while `标准词,别名,` arrives as `['标准词', '别名']`.
+    A caller indexing `row[2]` would then be reading a column that exists for
+    some rows and not others. Padding keeps "absent column" and "empty column"
+    the same thing, which is what the callers already assume.
+    """
+    width = max((len(row) for row in rows), default=0)
+    return [row + [''] * (width - len(row)) for row in rows]
+
+
 def read_rows(raw: bytes, filename: str, *, allowed: tuple[str, ...] = SUPPORTED_EXTENSIONS) -> list[list[str]]:
     """Decode an upload into rows of raw cells, without interpreting them.
 
@@ -78,11 +93,13 @@ def read_rows(raw: bytes, filename: str, *, allowed: tuple[str, ...] = SUPPORTED
 
     if extension == 'xlsx':
         return read_xlsx(raw)
+    if extension == 'csv':
+        return read_csv(raw)
     return read_text(raw)
 
 
-def read_text(raw: bytes) -> list[list[str]]:
-    """Decode a txt/csv blob into rows of raw cells (not yet split).
+def _decode(raw: bytes) -> str:
+    """The bytes as text, with the two encodings a Chinese desktop actually uses.
 
     `utf-8-sig` also strips a BOM, which Excel writes into "csv" exports and which
     would otherwise become part of the first word.
@@ -103,8 +120,35 @@ def read_text(raw: bytes) -> list[list[str]]:
     # NUL in a word list is never intended, so treat it as the decode failure it is.
     if '\x00' in text:
         raise TabularImportError('file contains NUL bytes (UTF-16 without BOM?)')
+    return text
 
-    return [line.split('\t') for line in text.splitlines()]
+
+def read_text(raw: bytes) -> list[list[str]]:
+    """Decode a txt blob into rows of raw cells (not yet split).
+
+    Tab-separated, because txt carries no column convention of its own and a tab
+    is the one separator a word list will not contain by accident.
+    """
+    return [line.split('\t') for line in _decode(raw).splitlines()]
+
+
+def read_csv(raw: bytes) -> list[list[str]]:
+    """Decode a csv blob with the standard quoting rules.
+
+    **Quoting is the whole point of this function existing separately from
+    `read_text`.** A cell whose own text contains a comma is quoted by every
+    spreadsheet that writes csv (`"a definition, with a comma"`); splitting on
+    commas naively cuts such a cell in half and silently keeps only the first
+    part. `csv.reader` handles quoting and escaped quotes, and its delimiter is
+    set to a comma so a fullwidth comma stays ordinary prose punctuation —
+    text already quoted, and text that legitimately contains only fullwidth
+    commas, both survive intact.
+
+    Rows are padded to a common width by `_pad`, so a row that simply omits
+    trailing empty cells still lines up with the others.
+    """
+    rows = list(csv.reader(io.StringIO(_decode(raw))))
+    return _pad([row for row in rows if row != []])
 
 
 def read_xlsx(raw: bytes) -> list[list[str]]:

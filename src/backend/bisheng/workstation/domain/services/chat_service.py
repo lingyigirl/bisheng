@@ -43,6 +43,7 @@ from bisheng.database.models.session import MessageSession, MessageSessionDao
 from bisheng.department.domain.services.department_flow_service import DepartmentFlowService
 from bisheng.llm.domain import LLMService
 from bisheng.sensitive_word.domain.services.answer_filter import filter_answer_text
+from bisheng.term_library.domain.services.prompt import append_block, resolve_term_block
 from bisheng.tool.domain.models.gpts_tools import GptsToolsDao
 from bisheng.tool.domain.services.executor import ToolExecutor
 
@@ -1361,7 +1362,13 @@ async def _agent_stream_chat_completion(
     # filtering; without this, the only thing standing between the model and
     # the user on this path was `filter_answer_text` at persistence time --
     # which protects what is STORED but not what is STREAMED.
-    output_guard = build_output_guard(login_user, conversation_id)
+    # `_WORKSTATION_FLOW_ID`, NOT `conversation_id`: the second parameter
+    # (`origin`) is what lands in the hit log's `flow_id` column, so passing the
+    # conversation here recorded a chat id where the ws entries record an app id
+    # -- and the input side passed None, so the same conversation produced three
+    # different values depending on direction (measured: every row with
+    # `flow_id == chat_id` in the dev database was an output row).
+    output_guard = build_output_guard(login_user, _WORKSTATION_FLOW_ID)
     output_blocked = False
 
     async def _guard_output_text(text: str) -> str:
@@ -1607,6 +1614,16 @@ async def _agent_stream_chat_completion(
                 isinstance(tool, DailyChatCitationToolWrapper) for tool in langchain_tools
             )
             llm_messages = list(history) + [HumanMessage(content=content_payload)]
+
+            # F060: this path assembles the prompt itself, per turn, so the term
+            # block is read and appended right here — no callable and no per-turn
+            # declaration, because the turn is in hand and we are on the loop. An
+            # empty block leaves `sys_prompt` exactly as it was, including `None`
+            # (spec AC-22 / AC-32).
+            if sys_prompt:
+                sys_prompt = append_block(
+                    sys_prompt, await resolve_term_block(login_user.tenant_id, llm_messages)
+                )
 
             logger.info(
                 f"[agent_chat] prepared messages user={login_user.user_id}"
@@ -2095,6 +2112,18 @@ async def stream_chat_completion(
     return await _agent_stream_chat_completion(request, data, login_user)
 
 
+# What this entry point records as the "application" in the guardrail hit log.
+#
+# The daily chat is not bound to an application: `APIChatCompletion` carries no
+# app id and `MessageSession.flow_id` is `''` for workstation sessions, while
+# the ws entries pass a real `assistant_id` / `workflow_id` into the same
+# column. Recording nothing is what made the log page show '-' for every
+# daily-chat hit, so this names the entry type instead -- the same label the
+# telemetry events from this service already use (`ApplicationTypeEnum`), so the
+# log and the metrics cannot disagree about what created the row.
+_WORKSTATION_FLOW_ID = ApplicationTypeEnum.DAILY_CHAT.value
+
+
 def _tenant_id_for(login_user: UserPayload) -> int | None:
     """The tenant whose policy applies, resolved the same way the guards do.
 
@@ -2121,8 +2150,10 @@ async def _check_input_policy(data: APIChatCompletion, login_user: UserPayload) 
     resolution and the "not enabled means allow" rule have one implementation.
     A second copy here is how the two paths would quietly diverge.
 
-    ``flow_id`` is None: this entry point spans conversations rather than one
-    bound application, and the guard already treats it as optional.
+    The second argument (``origin``) is the entry-type label (see
+    ``_WORKSTATION_FLOW_ID``), not an app id and deliberately not the
+    conversation: the output side used to pass a conversation id into that slot,
+    which put two different meanings in one column depending on direction.
     """
     text = (data.text or '').strip()
     if not text:
@@ -2131,7 +2162,7 @@ async def _check_input_policy(data: APIChatCompletion, login_user: UserPayload) 
     try:
         from bisheng.api.services.guardrail import build_input_guard
 
-        guard = build_input_guard(login_user, None)
+        guard = build_input_guard(login_user, _WORKSTATION_FLOW_ID)
         return await guard(data.conversationId, text)
     except Exception:
         logger.opt(exception=True).warning(

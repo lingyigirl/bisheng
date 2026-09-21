@@ -46,6 +46,7 @@ from bisheng.brand.api.router import router as brand_router
 from bisheng.datasource.api.router import router as datasource_router
 from bisheng.doc_extract.api.router import router as doc_extract_router
 from bisheng.sensitive_word.api.router import router as sensitive_word_policy_router
+from bisheng.term_library.api.router import router as term_library_router
 from bisheng.workstation.api.endpoints.conversation_export import router as conversation_export_router
 
 router = APIRouter(prefix='/api/v1', )
@@ -99,6 +100,7 @@ router.include_router(brand_router)
 router.include_router(sensitive_word_policy_router)
 router.include_router(doc_extract_router)
 router.include_router(datasource_router)
+router.include_router(term_library_router)
 
 router_rpc = APIRouter(prefix='/api/v2', )
 router_rpc.include_router(knowledge_router_rpc)

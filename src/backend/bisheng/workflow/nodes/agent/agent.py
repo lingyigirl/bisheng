@@ -1,7 +1,7 @@
 import json
 from typing import Annotated, Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import ArgsSchema, BaseTool
@@ -30,6 +30,14 @@ from bisheng.knowledge.domain.knowledge_rag import KnowledgeRag
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
 from bisheng.knowledge.domain.services.knowledge_utils import KnowledgeUtils
 from bisheng.llm.domain.services import LLMService
+from bisheng.term_library.domain.services.prompt import (
+    append_block,
+    current_turn_block,
+    reset_turn,
+    resolve_term_block_sync,
+    set_turn,
+    term_prompt_builder,
+)
 from bisheng.tool.domain.services.executor import ToolExecutor
 from bisheng.workflow.callback.event import StreamMsgOverData
 from bisheng.workflow.callback.llm_callback import LLMNodeCallbackHandler
@@ -350,15 +358,36 @@ class AgentNode(BaseNode):
         # Citation-rule backstop: only inject when the node has citation tools and its own
         # system prompt doesn't already carry the rules (the default template does), so
         # existing nodes keep citations and updated prompts aren't duplicated.
+        # F060: the node's system prompt carries this turn's term block. Two
+        # shapes, because the two executors differ — but BOTH end up reading the
+        # block `_run_once` declares, because this function runs at :599, long
+        # before the node's input exists:
+        #
+        #   * ReAct takes a prompt STRING, so it gets a zero-argument builder the
+        #     executor resolves per model call.
+        #   * the langgraph branch takes a callable invoked per model call — but
+        #     it is SYNCHRONOUS (this graph is run with `invoke`, not `ainvoke`),
+        #     so it cannot await a library read and reads the declared block
+        #     instead.
+        #
+        # `self.tenant_id` is the Flow owner's tenant, threaded in at task entry.
         if self._agent_executor_type == "ReAct":
             self._agent = ConfigurableAssistant(
                 agent_executor_type=agent_executor_dict.get(self._agent_executor_type),
                 tools=func_tools,
                 llm=self._llm,
-                assistant_message=system_prompt,
+                assistant_message=term_prompt_builder(self.tenant_id, system_prompt),
             )
         else:
-            self._agent = create_react_agent(self._llm, func_tools, prompt=system_prompt, checkpointer=False)
+            # `prompt` here is a plain callable, NOT the assistant's async one:
+            # this whole graph runs synchronously (see `_run_once_with_terms`),
+            # so it cannot await. It returns the base prompt plus whatever block
+            # the current run declared — `_run_once` resolves that before
+            # invoking, for this branch as well as the ReAct one.
+            def _term_prompt(state, _base=system_prompt):
+                return [SystemMessage(content=append_block(_base, current_turn_block())), *state.get('messages', [])]
+
+            self._agent = create_react_agent(self._llm, func_tools, prompt=_term_prompt, checkpointer=False)
 
     def _resolve_kb_name_by_id(self) -> dict[str, str]:
         """Map knowledge_id -> name for the agent's knowledge bases, used to fill
@@ -768,6 +797,24 @@ class AgentNode(BaseNode):
         logger.debug(f"agent invoke chat_history: {chat_history}")
         self._reset_citation_registry_items()
 
+        # F060: declare this run's turn for whichever branch runs. BOTH executors
+        # read it — the ReAct builder and the langgraph `_term_prompt` both call
+        # `current_turn_block()`, because `_init_agent` ran at :599, long before
+        # this turn existed. Declaring it on one branch only is how the langgraph
+        # branch silently kept injecting nothing: its prompt read a ContextVar
+        # that was never set, so the node behaved exactly as it did before F060.
+        #
+        # The block is resolved here via the sync bridge because the whole
+        # workflow graph runs synchronously and cannot await. Reset in `finally`
+        # so a later node run does not inherit a stale turn.
+        term_token = set_turn(chat_history, resolve_term_block_sync(self.tenant_id, chat_history))
+        try:
+            return self._run_once_with_terms(chat_history, human_message, config, llm_callback)
+        finally:
+            reset_turn(term_token)
+
+    def _run_once_with_terms(self, chat_history, human_message, config, llm_callback):
+        """The per-executor half of `_run_once`, inside the declared turn."""
         if self._agent_executor_type == "ReAct":
             result = self._agent.invoke(
                 {

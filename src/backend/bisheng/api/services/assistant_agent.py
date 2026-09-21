@@ -40,6 +40,13 @@ from bisheng.datasource.domain.services.executor import tables_from_statement
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
 from bisheng.knowledge.domain.services.knowledge_utils import KnowledgeUtils
 from bisheng.llm.domain.services import LLMService
+from bisheng.term_library.domain.services.prompt import (
+    reset_turn,
+    resolve_term_block,
+    set_turn,
+    term_prompt_builder,
+    term_prompt_callable,
+)
 from bisheng.tool.domain.services.executor import ToolExecutor
 from bisheng_langchain.gpts.assistant import ConfigurableAssistant
 from bisheng_langchain.gpts.auto_optimization import (
@@ -450,15 +457,37 @@ class AssistantAgent(AssistantUtils):
         # doesn't already carry them (e.g. seeded via auto-optimization), avoiding duplication.
         if self.current_agent_executor == "ReAct":
             # Inisialisasiagent
+            # F060: a zero-argument callable rather than the string.
+            # `assistant_message` is typed `str`, but it is fed to
+            # `PromptTemplate.partial()`, which accepts a callable and resolves
+            # it afresh on each model call — so the assistant's terms are
+            # re-read per step and AC-25 holds. See
+            # `test_injection_sites.py::test_the_react_executor_accepts_a_callable_assistant_message`
+            # for the framework behaviour this rests on, and `react_run` for the
+            # turn it reads.
             self.agent = ConfigurableAssistant(
-                agent_executor_type=agent_executor_type, tools=self.tools, llm=self.llm, assistant_message=prompt
+                agent_executor_type=agent_executor_type,
+                tools=self.tools,
+                llm=self.llm,
+                assistant_message=term_prompt_builder(self.assistant.tenant_id, prompt),
             )
         else:
             # function-callingpattern, but also add recursive constraints
             logger.info(f"Creating LangGraph agent with {len(self.tools)} tools, llm type: {type(self.llm)}")
             logger.info(f"LLM streaming capability: {getattr(self.llm, 'streaming', 'unknown')}")
 
-            self.agent = create_react_agent(self.llm, self.tools, prompt=prompt, checkpointer=False)
+            # F060: an async callable, not the string, so the term block tracks
+            # the turn. The assistant agent is reused across the turns of one
+            # session, so a prompt baked in here would freeze the terms at
+            # session start and AC-25 would be false. Async because the callable
+            # runs ON the event loop, and the library read must not block it
+            # (AC-28).
+            self.agent = create_react_agent(
+                self.llm,
+                self.tools,
+                prompt=term_prompt_callable(self.assistant.tenant_id, prompt),
+                checkpointer=False,
+            )
             logger.info(f"LangGraph agent created: {type(self.agent)}")
 
             # areagentAdd Recursive Limit Configuration
@@ -652,13 +681,23 @@ class AssistantAgent(AssistantUtils):
 
     async def react_run(self, inputs: list, callback: Callbacks = None):
         """react Mode input and execution"""
-        result = await self.agent.ainvoke(
-            {
-                "input": inputs[-1].content,
-                "chat_history": inputs[:-1],
-            },
-            config=RunnableConfig(callbacks=callback),
-        )
+        # F060: hand the term builder this turn. The ReAct agent message is
+        # resolved by `prompt.partial()`, which passes a callable nothing — so
+        # the turn is declared for the duration of the invoke and read from
+        # there. The block itself is resolved HERE, on the loop, because the
+        # builder has no loop to await on and must not block one (AC-28).
+        # Reset in `finally` so a concurrent turn in another task keeps its own.
+        token = set_turn(inputs, await resolve_term_block(self.assistant.tenant_id, inputs))
+        try:
+            result = await self.agent.ainvoke(
+                {
+                    "input": inputs[-1].content,
+                    "chat_history": inputs[:-1],
+                },
+                config=RunnableConfig(callbacks=callback),
+            )
+        finally:
+            reset_turn(token)
         logger.debug(f"react_run result: {result}")
         output = result["agent_outcome"].return_values["output"]
         if isinstance(output, dict):

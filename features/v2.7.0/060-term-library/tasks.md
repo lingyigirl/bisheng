@@ -14,9 +14,30 @@
 | spec.md | ✅ 已评审 | 2026-09-21 用户确认。`/sdd-review spec` 14 项检查 13 项通过；唯一未通过项（权限口径缺 AC）已补为 AC-16, AC-17, AC-18, AC-19，另 1 medium（§4 How 泄漏）+ 2 low 已处理/留待 design |
 | design.md | ✅ 已评审 | 2026-09-21 `/sdd-review design` 24 项：**5 条 findings 全部已修**（3 high：§7 测试与可观测 / §8 后续改进 / Constitution Check 三处整块缺失；1 medium：无可操作验证路径；1 medium：「租户白名单」表述不准确）。**Constitution Check PASS**（C1–C7 逐条结论见 design §2） |
 | tasks.md | ✅ 已拆解 | 2026-09-21 拆解完成：**20 个任务 / 7 个 Wave**，32 条 AC 全覆盖（追溯矩阵见文末）。`/sdd-review tasks` 21 项检查：**2 条已修**（T-04 补回滚说明；AC 范围写法归一为逐条列举） |
-| 实现 | 🔲 未开始 | — |
-| e2e-test | 🔲 未开始 | — |
+| 实现 | 🟡 **T-01 ~ T-18 完成** | 2026-09-21。**T-19 / T-20 见下**。逐任务偏差记录见文末「实际偏差记录」 |
+| e2e-test | 🟡 **已编写，未跑通** | `test/e2e/test_e2e_f060_term_library.py` 已写并 lint 通过；**本机 admin 口令未知（`admin123` / `Bisheng@top1` 均返回 10600），一次都没在真后端上跑过**。人工清单：[e2e-checklist.md](./e2e-checklist.md) |
 | code-review | 🔲 未开始 | — |
+
+### 任务完成明细
+
+| Wave | 任务 | 状态 | 主要产出 |
+|---|---|---|---|
+| 0 | T-01 错误码 115 | ✅ | `common/errcode/term_library.py`（先前已提交） |
+| 0 | T-02 词条表 ORM | ✅ | `domain/models/term.py`（+ `MAX_STANDARD_TERM_LENGTH`） |
+| 0 | T-03 租户过滤登记 | ✅ | 先前已提交 |
+| 0 | T-04 迁移 | ✅ | 先前已提交 |
+| 0 | T-05 共享解析抽取 | ✅ | 先前已提交；**T-09 未再改动该文件** |
+| 1 | T-06 `build_term_block` | ✅ | 先前已提交 |
+| 1 | T-07 降级 + callable 契约 | ✅ | 先前已提交 |
+| 1 | **T-08 词条 CRUD 与校验** | ✅ | 先前已提交 |
+| 1 | **T-09 批量导入** | ✅ | `domain/services/term_importer.py` + `test_term_importer.py`（26 用例 / 8 变异） |
+| 2 | **T-10 术语库 API 与门控** | ✅ | `api/endpoints/terms.py` + `api/router.py` + 注册（8 用例 / 4 变异） |
+| 2 | **T-11 错误码三语** | ✅ | `packages/locales` 11501~11506 三语 + 生成产物；`pnpm check-i18n` **OK** |
+| 3 | **T-12/13/14 三处注入落点** | ✅ | `domain/services/prompt.py`（新）+ 3 文件 5 个调用点；`test_injection_sites.py`（23 用例 / 变异覆盖 5 个落点） |
+| 4 | **T-15 不变量与合规** | ✅ | `test_invariants.py`（12 用例 / 6 变异） |
+| 5 | **T-16/17/18 平台管理页** | ✅ | `TermLibraryTab.tsx`（新）+ `controllers/API/termLibrary.ts`（新）+ 第三个 Tab；typecheck 全绿 |
+| 6 | T-19 e2e | 🟡 | 已写 **未跑**（缺口令） |
+| 6 | T-20 文档回写 | ✅ | design §9 定稿 + §10 偏差；本文件 |
 
 ---
 
@@ -480,6 +501,78 @@
 ## 实际偏差记录
 
 （实现期回填：与 design/spec 不一致的落地、被推翻的决策、测试降级、新增的坑）
+
+### T-09 批量导入（2026-09-21 完成）
+
+| # | 偏差 | 说明 |
+|---|---|---|
+| 1 | **「空文件」的判定放在 term 侧，未下沉到共享读取层** | 设计原意是把它算作「两个 importer 必须一致判决」的那种情况。实测：把守卫加进 `tabular_import.read_rows` 后**无法变异验证**——F059 侧本就自带「parsed 为空则抛 11301」，删掉共享守卫两个 importer 仍然一致。**一条无法失败的断言等于没测**，而它会改动 F059 已发布文件。故共享层**未改动**（`git diff` 为空），F060 侧自行判定 |
+| 2 | **csv 列切分修正：`[,，]+` → `[,，]`** | 测试夹具改为**逗号分隔**（原来用制表符拼「csv」，而共享读取层正是在制表符上切列——两边互相抵消，真实 csv 的列切分路径**一行都没被测到**）。改正夹具后立刻暴露真 bug：`标准词,,释义` 这类**别名留空的常见行**被 `+` 吞掉空列，释义串到别名列，整行按「释义为空」被拒。已修 |
+| 3 | **测试夹具修正 2 处**（`test_term_importer.py`） | ① `_patch_dao` 原表里有一个 `term_importer.DepartmentDao` 补丁目标，实现里并不存在（导入器不碰部门），且用了**位置索引**取值——改为按名字取，去掉该行；② `test_the_preview_writes_nothing` 原来是**空断言**（先算一个三元的真值分支再丢弃，只断言一个刚建的空 list）——改为断言 stub 的 `created` |
+| 4 | **新增 11505 的一种触发：≥500 条整单拒绝** | `_plan` 里当「导入后规模 > 500」抛 `TermLibraryLimitExceededError`（11504），与 AC-06 一致；同文件内标准词超 255 字符 / 释义超 200 字的行则**丢弃并计入 `dropped_overlong`**（AC-07 要求预览报「超长丢弃数」）。**偏差**：手工录入路径给 11502，导入路径给 11505 —— 与 spec AC-09 一致（没有表单可看，报「文件不可用」） |
+| 5 | **`term_importer` 不校验 `department_id`** | 任务书写「导入遵守与手工录入同一套校验」，但导入文件**没有部门列**（设计决策 8 定了三列）。导入的词条 `department_id` 一律为空，由管理员事后在列表里改归属 |
+| 6 | **覆盖模式非原子** | 行是一条一条 INSERT（DAO 的既有形态），覆盖中途失败会留下**部分库**。已在模块 docstring 里显式记录为已知限制：文件还在管理员手里，重导即可恢复。F059 的导入是单事务的，本特性不是 |
+| 7 | **已知限制：首行含「释义/别名」等词会被当表头丢掉** | 表头识别是共享层既有规则（`HEADER_TOKENS` 含 `释义`/`别名`），命中即丢首行。一份**不带表头**且首行释义恰好写成「释义」的文件会静默少一条。属共享层的既有取舍，本特性未改；如客户反馈再收紧 |
+| 8 | **代码风格：新文件用单引号，未跑 `ruff format`** | `pyproject.toml` 的 `[tool.ruff.format] quote-style = "double"` 与已提交的 F060 全部文件（单引号）**互相矛盾**。CI 无 `ruff format --check` 门禁，PostToolUse 钩子写的是 `.venv/bin/ruff`（POSIX 路径，Windows 上不生效）。按「对齐项目现有规范」取**单引号**，与同目录既有文件一致；如需统一格式化，应作为独立改动一次性铺开 |
+| 9 | **T-05 未被本次改动触碰** | 上表第 1 条的直接结论：`tabular_import.py` 保持 HEAD 原样 |
+
+### T-10 术语库 API 与门控（2026-09-21 完成）
+
+| # | 偏差 | 说明 |
+|---|---|---|
+| 1 | **读门控取更严的 `knowledge` 键** | 任务书写「读 `get_login_user` + `assert_effective_web_menu_contains(..., 'knowledge')`」。查既有先例：知识库的**读接口一个门控都没有**，只有写接口查 `CREATE_KNOWLEDGE`（F011 迁移注释：「POST /knowledge/create checks this flag」）。即 `knowledge` 键**在本仓没有调用方**。按任务书**照做**（读查 `knowledge`），后果：平台「知识库」一级菜单已被授予时该键必然在集合内，不会误伤；副作用是它比既有知识库更严，可能有账号能调 `/knowledge/list` 却调不了本接口。**已按任务书落地，此处标注为口径差异供复核** |
+| 2 | **写门控复用既有 `assert_effective_web_menu_contains` + `CREATE_KNOWLEDGE`** | 与 `knowledge/api/endpoints/knowledge.py` 的创建接口完全同形 |
+| 3 | **`/{term_id:int}` 数字约束 + 字面路由前置** | 直接借用 F061 的教训（`query-failures` 被 id 路由抢占，返回 200 静默走错处理器）。T-10 的测试把它写成**对全部路由的属性断言**——先按单条 id 路由写时，变异只改一条路由**测不出来**（另加一条 `_assert_...` 读门控）。修正后：任一条 id 路由丢失 `:int`、或字面路由排到 id 路由之后，均转红 |
+| 4 | **AC-31（包内无 `PermissionService`）留给 T-15** | 本任务先写了个文本级 `'PermissionService' not in source` 断言，被**自己模块 docstring 里的该词**打红——文本扫描分不清调用与文档。且该断言是**包级**的，与 T-15 的 AC-31 重复。已从 T-10 移除，交由 T-15 用 AST 做（只认 `ast.Name` / `ast.Attribute` 等**调用点**，不认注释与文档串） |
+
+### T-12 / T-13 / T-14 三处注入落点（2026-09-21 完成）
+
+> **本任务推翻了任务书的「改 callable」前提，并推翻了 design §6 的一行「已验证」。**
+
+| # | 偏差 | 说明 |
+|---|---|---|
+| 1 | **两条注入链路的形状被重新设计（T-12 原文只覆盖一半）** | 任务书说「`prompt` 由字符串改为 callable」。实测：助手与工作流节点各有**两个分支**，`callable` 只对 langgraph 分支成立。另一分支走 `ConfigurableAssistant(assistant_message=str)` → `prompt.partial(...)`。**用户裁决：扩展共享 executor**（见第 2 条）。最终形状：**块解析在知道本轮提问的那一层完成，prompt 层只做拼接** |
+| 2 | **`bisheng_langchain` 的改动被全部回退（净改动 = 0）** | 先按用户方案扩展了 `create_agent_executor`，实测后**推翻**：`BasePromptTemplate._merge_partial_and_user_variables` 的 `v if not callable(v) else v()` **本来就接受零参 callable**，所以原 executor **无需任何改动**即可接受 builder。我新增的「每 run 渲染一次」不但与既有行为**完全等价**，还多传了参数 → 改动无收益，已 `git checkout` 回退，`bisheng_langchain/` 零 diff |
+| 3 | **推翻了 design §6 表下注的「已验证 `_get_prompt_runnable` 的 callable 分支」** | 该结论正确但**不充分**：`inspect.iscoroutinefunction` 才是 langgraph 选同步/异步路径的依据（`prebuilt/chat_agent_executor.py:683`）。**同步 lambda 返回协程会被直接丢弃**（`coroutine was never awaited` → 模型侧 `ValueError`）。故 `term_prompt_callable` 必须是真正的 `async def` 工厂，不能用 lambda |
+| 4 | **`run_async_safe` 不能用于异步路径** | langgraph 的 prompt callable 在**事件循环上**执行（实测 `RuntimeError: run_async_safe cannot be called from a running event loop`）。故助手/工作台两条路径改为 **`await` 解析**；只有工作流 Agent 节点（`async_mode` 全仓无调用方，实为同步执行）用 `run_async_safe` |
+| 5 | **T-13 的「节点已有 `self.tenant_id`」成立；但 langgraph 分支只能是同步 callable** | 该分支 `prompt=lambda state: ...` 由 langgraph 走**同步** `RunnableCallable(prompt)` 调用，不能 await → 用 `current_turn_block()` 读已解析好的块，不自己读库 |
+| 6 | **ReAct 分支需要「声明本轮」** | builder 零参，拿不到本轮提问 → 用 **ContextVar**（非模块全局：并发 run 会串租户，违反 INV-16）声明 `(messages, block)`，`finally` 重置。已测「上一轮的声明不会泄漏到下一轮」 |
+| 7 | **注入落点的测试分两层，两层都必要** | ① **机制层**：真 langgraph agent + 假模型，断言**模型实际收到的 system message**（不是图输出 state——prompt 在调模型时才应用，断言 state 会**假绿**）；② **接线层**：对 5 个调用点做源码断言。**只有机制层时，把任一调用点改回旧写法整套测试仍然全绿**（实测 M11/M13/M14/M15/M16 五条变异全部只被接线层抓住） |
+| 8 | **`prompt.partial()` 对 callable 是「每次模型调用都重算」** | 实测两次模型调用的回合里 builder 被调 2 次。对 F060 是**加强**（每步都拿到最新词表），故 ReAct 分支不需要 langgraph 分支那样的「每轮重算」保证；代价是单轮内每步各读一次库（`build_term_block` 有缓存兜底） |
+
+### T-15 不变量与合规（2026-09-21 完成）
+
+| # | 偏差 / 要点 | 说明 |
+|---|---|---|
+| 1 | **静态扫描必须走 AST，不能扫文本** | 本任务首版若照 T-10 的写法用 `'X' not in source` 会**被自己的 docstring 打红**（`terms.py` 的模块说明里就写着 `PermissionService`）。改为解析 AST 只认**真实名字引用**（`ast.Name` / `ast.Attribute` / `ast.alias`），文档与注释里的词不算。变异验证确认：真加一次 `PermissionService.check` 调用会被抓住（M19） |
+| 2 | **`ast.FunctionDef` 抓不到 `async def`** | AC-27 的「注入路径不调写方法」扫描，首版用 `FunctionDef` 拿到的 writer 集合是**空的**（DAO 全是 `async def`）——断言「集合非空」这一条正是为了防止这种**静默空转**。改 `ast.AsyncFunctionDef` 后恢复正常 |
+| 3 | **每条断言都做了变异验证** | INV-17（注入读部门）/ INV-18（写回 assistant.prompt）/ AC-31（调 `PermissionService`）/ AC-27（调写方法）/ AC-32（空库仍返回区块）/ AC-28（读失败不降级而是抛出）——**6 条全部转红** |
+| 4 | **AC-30 用 AST 而非 import 图** | 「`bisheng/knowledge/` 对 `term_library` 零引用」用 AST 名字扫描 + 源码 import 行双重判定；实测当前**零引用**（未变异，因为该断言一旦为真就是真） |
+
+### T-16 / T-17 / T-18 平台管理页（2026-09-21 完成）
+
+| # | 偏差 / 要点 | 说明 |
+|---|---|---|
+| 1 | **任务书里的两个「参照」路径都要修正** | ① 「部门筛选仿 `useKnowledgeDepartmentFilter.ts`」— 该文件存在，但**不是** `departmentFilter.filterDataParams`，真实字段是 `apiParams`（`KnowledgeFile.tsx:363` 的注释也写错成 `filterDataParams`）；② 「仿 `PlatformSensitiveWords.tsx`」的路径在 `pages/BuildPage/bench/` 下，任务书未写全。按实际接口接线：`deptFilter.selectedDepartmentId` + `deptFilter.includeSubDepartments` |
+| 2 | **部门选择器用 `TreeDepartmentSelect`，`modal={false}`** | 该组件注释明确：嵌在 Dialog 里必须传 `modal={false}`，否则多层焦点陷阱导致树节点点不动。编辑弹窗里正是这种嵌套 |
+| 3 | **导入默认「追加」而非「覆盖」** | 与平台敏感词库（默认覆盖）**不同**：术语带释义，是有内容成本的资产，覆盖必须被主动选中，不能顺带就发生 |
+| 4 | **不新增 `eslint-suppressions.json` 条目** | 新文件首版有 2 条 lint 错误（未用的 `toast`、未用的 `_node`）。suppressions 是**只减不增**的遗留冻结台账，仓库明确禁止新增条目（「never hand-edit the suppressions file」），故**改代码**而非加抑制：删掉重复的 toast（成功提示归父组件，否则一次保存弹两次）、`onChange` 只取第一个参数（与 `CreateDepartmentDialog.tsx:88` 的既有写法一致） |
+| 5 | **验证止步于 typecheck + lint + dev 编译** | `pnpm typecheck` **全绿**（389 个 strict 文件）；`pnpm lint` 剩余 53 个错误**全部**在 `dashboard.ts` / `finetune.ts` / `workflow.ts` 三个**我没有改动**的文件里（`git diff` 为空，错误来自它们的既有提交）。另起 dev server 确认 `TermLibraryTab.tsx` 与 `termLibrary.ts` 均被 Vite 正常编译、页面正确 import。**未做真实点击验证**——那需要一个带 `knowledge` 权限的后端账号与运行中的后端；列为待办 |
+
+### T-21（追加）代码审查与修复（2026-09-21）
+
+`/code-review` 跑出 **3 HIGH + 6 MEDIUM**（报告见 [code-review.md](./code-review.md)），其中 **4 条已修并变异验证**：
+
+| 编号 | 问题 | 修复 | 验证 |
+|---|---|---|---|
+| **H1** | 工作流 Agent 节点的 **langgraph 分支从未注入**（`set_turn` 只在 ReAct 分支里）——AC-24 静默不成立 | `set_turn`/`reset_turn` 提到两个分支之外 | 重放原 bug → 新断言转红 |
+| **H2** | **OVERWRITE 在全行被丢弃时清空词库且零写入**（永久数据丢失） | 删除前判 `planned` 为空则抛 11505 | 删守卫 → 转红 |
+| **M2** | 唯一性校验大小写敏感 / 匹配不敏感 → `NPL` 与 `npl` 都能建但只有一条可匹配 | 两侧统一 `casefold()` | 退回原串比较 → 2 条转红 |
+| **M1** | 释义含逗号被**静默截断** | 共享层新增 `read_csv()`（stdlib `csv.reader`，引号生效）；`_split_columns` 只对单格行再切 | 退回朴素 `split(',')` → 2 条转红；F059 全套 228 条仍全绿 |
+
+**未修**：H3（超管租户范围，需跨特性改前缀表；单租户默认不受影响）、M3/M4/M5/M6、L1~L6。
+
+> **本次审查的方法学教训（值得记入）**：H1 之所以能上线，是因为我给工作流落点写的断言是**源码文本包含**（`'current_turn_block()' in source`）——`set_turn` 有没有被调用它根本不管。**「断言某个符号出现过」不等于「断言接线成立」**；能驱动真实对象时就不要退化成文本匹配。H2 则是「守卫只覆盖了想得到的那一种输入」。
 
 ---
 
