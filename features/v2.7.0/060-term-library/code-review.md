@@ -8,7 +8,8 @@
 > | **H2** | ✅ **已修** | `term_importer.import_terms`：覆盖模式在删除前判 `planned` 为空则抛 11505；补 2 条测试（含 append 反向用例） | 删掉守卫 → 转红 |
 > | **M2** | ✅ **已修** | `term_service._assert_unique` 与 `injection._build_automaton`/`_match` **统一改用 `casefold()`**；补 4 条测试 | 见下方「修复后复核」 |
 > | **M1** | ✅ **已修** | 共享读取层新增 `read_csv()`（标准库 `csv.reader`，引号生效）+ `_pad()`；`term_importer._split_columns` 只对**单格行**（tab 分隔）再切；补 3 条测试 | 退回朴素 `split(',')` → 2 条转红；**F059 全套 228 条仍全绿** |
-> | M3 ~ M6、L1 ~ L6 | 🔲 未修 | 见下方「未修项」 | — |
+> | **M3** | ✅ **已修** | 见表级 `UniqueConstraint('tenant_id','standard_term')` + 迁移 `v2_7_0_f063` | 模型层约束断言；`alembic heads` 单 head |
+> | H3 / M4 / M5 / M6、L1 ~ L6 | 🔲 未修 | 见文末：**H3 已定「另立特性」** | — |
 >
 > 修复后：`test/term_library/ + test/sensitive_word/ + test/datasource/test_workflow_compat.py` = **368 passed**；ruff 干净（3 条 RUF/UP 为 `sensitive_word` 既有文件，非本次改动）。
 >
@@ -18,8 +19,8 @@
 >
 > | 编号 | 为何未修 |
 > |---|---|
-> | **H3**（超管租户范围） | 需与 `/api/v1/datasource`、`/api/v1/platform-sensitive-words` 一起改 `MANAGEMENT_API_PREFIXES`，属跨特性决策，不宜在 F060 单独动。**单租户部署（`multi_tenant.enabled=False`，默认）不受影响。** |
-> | M3 唯一索引 | 需新增迁移（改已提交的 `v2_7_0_f060_term_library.py` 或加新版本），且要处理存量重复数据 |
+> | **H3**（超管租户范围） | **已定另立特性**，见文末 H3 段（原判「platform-sensitive-words 同样受影响」是错的，已更正） |
+> | ~~M3 唯一索引~~ | ✅ **已修**（见文末「M3 修复」） |
 > | M4 `create_user_id` 外泄 | 一行改动，但会动前端类型定义；建议与 M3 一起做 |
 > | M5 其余落点的机制层测试 | 助手/工作台两个落点已有机制层覆盖；工作流节点本次已补 |
 > | M6 design §4.3/§4.4 未同步 | 尚未回写 |
@@ -197,3 +198,50 @@ spec §3 明写「以租户内唯一约束为准，冲突方失败并明示，�
 3. **M2 / M1**（都是「静默给出错误结果」，且都在核心匹配/导入路径上）
 4. **H3**（需与 F059/F061 一起决定前缀表策略）
 5. M3 → M6，再 LOW
+
+---
+
+## M3 修复（2026-09-21）
+
+**改动**
+- `term.py`：`standard_term` 的 `index=True` 换成表级 `UniqueConstraint('tenant_id', 'standard_term')`，名 `uk_term_library_term_tenant_standard`
+- 新增迁移 `v2_7_0_f063_term_standard_term_unique.py`：drop 旧的**非唯一** `ix_term_library_term_standard_term`，建上述唯一约束；两条 DDL 均按 AGENTS 要求做存在性守卫
+
+**为什么是 `(tenant_id, standard_term)` 而不是 `standard_term`**：规则是**租户内**唯一；全局唯一索引会让一个租户的词挡住另一个租户（INV-16）。
+
+**两个必须写明的取舍**
+
+1. **索引大小写敏感**。MySQL/DM8 的 collation 给什么就是什么。服务层 `casefold()` 仍是「只有大小写不同」那类冲突的**唯一**权威——跨 MySQL 与 DM8 可移植的「折叠值函数索引」写不出来。所以本次只关掉了**完全同名**这条竞态，**M2 那条没有 DB 层兜底**。
+2. **未做重复数据预检**。本仓有更早的先例（`v2_5_1_f020_llm_tenant.py`，2026-05-09）在迁移内 `SELECT ... HAVING cnt > 1` 预检并抛可读错误；但 `alembic/AGENTS.md` 的「Migrations are DDL-only — no data migration」提交于 **2026-07-06**（`0b8fd3a53`），**晚于**该先例，且全仓只有那一个迁移这么做。**规则晚于先例 → 按规则走**。代价：存量若有重复，部署时 `CREATE UNIQUE INDEX` 直接失败（MySQL 报错不如预检可读）。本机开发库 `term_library_term` 有 **0 行**，无影响。
+
+**验证**：模型层断言 `__table__.constraints` 含 `uk_term_library_term_tenant_standard`；`alembic heads` 单一 head；`test/term_library/` 132 passed。
+
+> ⚠ **`down_revision` 是 `f062_department_node_type`，该文件属 F062 工作流且尚未提交。** `f063` 不能单独提交——F062 未落地时 alembic 找不到父 revision，单 head 会断。
+>
+> **2026-09-21 用户决定：等 F062 落地后一起提交。** 在此之前，M3 的这四处改动**停留在工作区**（`term.py`、`v2_7_0_f063_...py`、本报告），且本机 alembic head 已指向 `f063`。**若在此期间有人单独提交 F062 而漏掉 `f063`，或反过来，单 head 都会断**——接手时先跑 `uv run alembic heads` 确认。
+
+---
+
+## H3 调查结论（2026-09-21）——比原判更严重
+
+原判只说 term-library 受影响。实测（静态追踪，未执行请求）**范围大得多**：
+
+**机制**：`admin_scope.py:63-71` 是一张 7 条前缀的 `startswith` 白名单；命中才 `set_admin_scope_tenant_id()`。而所有**不在**表内的路径，对超管而言并非「不做租户过滤」，而是**被钉死在 JWT 租户**——因为超管的 `visible_tenant_ids` 是 `None`（`http_middleware.py:220-222`），`tenant_filter` 于是走 `_resolve_tenant_id()` → JWT 叶子租户。
+
+**因此同样受影响的路径**（已核对各自的 `tenant_id` 列与 DAO）：`/api/v1/term-library`、`/api/v1/datasource`、`/api/v1/doc_extract`、`/api/v1/sensitive-word-*`，以及未逐条核对的 `assistant` / `workflow` / `approval` / `user` / `tenants` 等一大批。
+
+**`/api/v1/platform-sensitive-words` 是清白的**：`platform_sensitive_word` 表**故意没有 `tenant_id` 列**（`platform_word.py:11-22`），租户过滤器根本碰不到它，且它 `require_global_super_admin`——本来就是全局资源，作用域对它无意义。原判把它列为「同样受影响」是**错的**。
+
+**单租户不受影响**：`multi_tenant.enabled` 默认 `False`（`core/config/multi_tenant.py:9`），一切都在 `DEFAULT_TENANT_ID`。
+
+**处置（2026-09-21 用户决定）：另立特性统一处理，F060 不动前缀表。**
+
+理由：修法就是往白名单里加前缀，但加哪些、以及是否改为「默认跟随、按需排除」，是**全仓行为面**的产品决策，不是 F060 的局部补丁。在 F060 里单点加 `/api/v1/term-library` 只会把缺口从「全部不一致」变成「部分不一致」，并制造新的「相邻 Tab 行为不同」。且 H3 只在多租户部署显现，`multi_tenant.enabled` 默认 `False`。
+
+**遗留动作**（不属 F060）：
+
+1. 盘点全部租户级接口，定下白名单（或改判定策略）；
+2. 决定是否同时修正 `tenant.py:30-32` 那段过期 docstring（称 `_is_management_api` 被 tenant_filter 读取——实际没有）；
+3. 决定 `get_is_management_api()` 这个无生产调用方的函数是删还是接上。
+
+**顺带发现的死代码**：`_is_management_api` 只被测试读，`get_is_management_api()` 无生产调用方；`tenant.py:30-32` 的 docstring 声称它「被 tenant_filter 读来决定是否尊重 admin scope」——**该描述是过期的**，`tenant_filter` 从不 import 它。

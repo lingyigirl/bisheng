@@ -270,6 +270,29 @@ PathRateGlobalFilter → Backend → 响应       响应 → 返回浏览器
 
 每条配置绑定到一个具体资源（`resource_id` + `resource_type`），支持按应用/助手粒度独立配置。
 
+### 6.5 与后端 `sensitive_word` 模块的分工（重要：三套「内置词表」同名）
+
+**本仓库并存两套完全独立的敏感词实现，共用「内置词表」这个名字，但数据、接口、生效链路互不相干。改任一处都不会影响另一处。**
+
+| | 网关侧（本节） | 后端侧（`bisheng/sensitive_word/`） |
+|---|---|---|
+| 代码位置 | `bisheng-gateway`（**不在本仓库**） | `src/backend/bisheng/sensitive_word/` |
+| 接口 | `/api/sensitive/*`（Gateway 自处理，见 §1.2） | `/api/v1/sensitive-word-policies/{business_type}`、`/api/v1/platform-sensitive-words` |
+| 词条存储 | 表 `gt_sensitive_words` | 表 `sensitive_word_policy` / `platform_sensitive_word` |
+| 「内置词表」的线上取值 | `words_types` 含 **`"1"`** | `words_types` 含 **`"builtin"`** |
+| 内置词来源 | 网关自己的 `words.txt`（预置词表 `auto_words`） | `bisheng/sensitive_word/domain/data/words.txt` |
+| 自定义词 | 行内文本，`\|` 分隔，取值 `"2"` | `custom_words` 字段，换行/逗号/分号分隔，取值 `"custom"` |
+| 作用域 | 按资源（`resource_id` + `resource_type`，应用/助手粒度） | 租户级（`business_type`：对话输入/输出、知识库文件解析、订阅文章） |
+| 触发条件 | 商业版网关模式（`VITE_PROXY_TARGET` 指向 :8180） | 始终（开源版亦可用） |
+| 平台强制层 | 无 | `platform_sensitive_word` + `platform_sensitive_word_policy`（跨租户，超管维护，租户不可关） |
+
+前端对应两个入口，**不要互相参照改文案或字段**：
+
+- 网关侧：`platform/src/components/Pro/security/`（`AssistantSetting` → `FormSet`/`FormView`），走 `controllers/API/pro.ts` 的 `/api/sensitive/saveWords`、`/api/sensitive/wordsDetail`，`wordsType` 用**数字** `1`/`2`。入口受 `appConfig.isPro` 保护（`pages/BuildPage/assistant/editAssistant/Setting.tsx`）。
+- 后端侧：`platform/src/pages/BuildPage/bench/LLMGuardrailPolicy.tsx` 等，走 `controllers/API/sensitiveWordPolicy.ts`，`words_types` 用**字符串** `builtin`/`custom`。
+
+> ⚠️ 排查「敏感词不生效」时先确认走的是哪一条链路：开源版（无网关）下 `FormSet` 的保存请求会 404，因为 `/api/sensitive/*` 由网关实现，后端从未注册该路由（`bisheng/api/router.py:51` 仅挂载 `/api/v1`）。
+
 ---
 
 ## 7. 流量控制
