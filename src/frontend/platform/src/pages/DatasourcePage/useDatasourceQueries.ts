@@ -23,19 +23,31 @@ export function useDatasourceQueries() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
 
+  /** The name filter box. Kept here rather than in the list tab because
+   *  `refetch` lives here, and two sources of truth for one request is how
+   *  the filter and the reload button drift apart. */
+  const [name, setName] = useState("");
+
   /** Which datasource the table editor is open on; null = list view. */
   const [tablesDatasourceId, setTablesDatasourceId] = useState<number | null>(null);
 
   const refetch = useCallback(async () => {
     setLoading(true);
+    const keyword = name.trim();
     const res = await captureAndAlertRequestErrorHoc(
-      listDatasourcesApi({ page, page_size: PAGE_SIZE }),
+      listDatasourcesApi({
+        page,
+        page_size: PAGE_SIZE,
+        // Omitted rather than sent empty: the backend treats a blank `name` as
+        // "no filter", and not sending it keeps that one rule in one place.
+        ...(keyword === "" ? {} : { name: keyword }),
+      }),
     );
     setLoading(false);
     if (!res) return;
     setRows(res.data);
     setTotal(res.total);
-  }, [page]);
+  }, [page, name]);
 
   useEffect(() => {
     void refetch();
@@ -52,6 +64,8 @@ export function useDatasourceQueries() {
     page,
     pageSize: PAGE_SIZE,
     loading,
+    name,
+    setName,
     setPage,
     refetch,
     findRow,

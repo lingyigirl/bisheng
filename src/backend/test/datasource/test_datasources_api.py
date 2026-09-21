@@ -14,12 +14,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.datasource import (
     DatasourceNameDuplicateError,
     DatasourceNotFoundError,
     DatasourceUnsupportedEngineError,
 )
 from bisheng.datasource.api.endpoints import datasources as ep
+from bisheng.datasource.api.endpoints import failures as failures_module
+from bisheng.datasource.api.router import router as datasource_router
 
 
 def _payload(**overrides):
@@ -264,32 +267,92 @@ async def test_deleting_without_permission_is_not_found_not_forbidden():
 
 
 def test_no_route_can_be_shadowed_by_the_id_route():
-    """`/datasource/{datasource_id}` matches ANY single segment.
+    """No literal sibling under `/datasource/` may be matched by the id route.
 
-    So `/datasource/tables/{table_id}` was reachable as `datasource_id="tables"`
-    depending on registration order -- measured while adding it, and it is the
-    kind of bug that only shows up against a live server. Every literal segment
-    directly under `/datasource/` must therefore be distinguishable from an id.
+    This test INSPECTS the route table, and it was green while
+    `/datasource/query-failures` was in fact shadowed -- the previous version
+    only asserted that each literal segment contained a hyphen, and only looked
+    at the routes in `datasources.py`, so it never compared anything against the
+    id route at all. It now encodes the property directly, over all three
+    modules that share the `/datasource` prefix.
+
+    The request-level counterpart is
+    `test_the_failure_list_route_is_reachable_not_shadowed_by_the_id_route`;
+    this one is the guard that covers a route added later.
     """
-    from bisheng.datasource.api.endpoints import datasources as module
+    from bisheng.datasource.api.endpoints import datasources, failures, test_connection
 
-    literal_first_segments = []
-    for route in module.router.routes:
-        path = getattr(route, 'path', '')
-        # Only the single-segment case is ambiguous; anything with a second
-        # segment cannot collide with `{datasource_id}`.
-        remainder = path.removeprefix('/datasource/')
-        if not remainder or '/' in remainder or remainder.startswith('{'):
-            continue
-        literal_first_segments.append(remainder)
+    # Matched on `path_format` (Starlette's conversion-free spelling) so this
+    # keeps working whichever convertor the id route declares.
+    id_routes = [
+        route
+        for route in datasources.router.routes
+        if getattr(route, 'path_format', getattr(route, 'path', '')) == '/datasource/{datasource_id}'
+    ]
+    assert id_routes, 'the id route moved; this test is no longer checking anything'
 
-    # `query-failures` and `test-connection` are hyphenated, and no datasource id
-    # can contain a hyphen -- which is exactly what makes them safe.
-    for segment in literal_first_segments:
-        assert '-' in segment, (
-            f'/datasource/{segment} can be shadowed by /datasource/{{datasource_id}}; '
-            'give it a hyphenated (unmatchable-as-id) or nested path'
-        )
+    literals = set()
+    for module in (datasources, test_connection, failures):
+        for route in module.router.routes:
+            # Only the single-segment case is ambiguous; anything with a second
+            # segment cannot collide with `{datasource_id}`.
+            remainder = getattr(route, 'path', '').removeprefix('/datasource/')
+            if not remainder or '/' in remainder or remainder.startswith('{'):
+                continue
+            literals.add(remainder)
+
+    # Without this, a rename that moved every literal elsewhere would leave the
+    # loop below asserting nothing while still passing.
+    assert literals, 'no literal siblings found; this test is no longer checking anything'
+
+    for route in id_routes:
+        for segment in literals:
+            assert not route.path_regex.match(f'/datasource/{segment}'), (
+                f'/datasource/{segment} is matched by {route.path}, which is declared '
+                'before it -- the request reaches the id handler and fails as an '
+                'unparseable integer. Constrain the id route to digits, or move the '
+                'literal route to a nested path.'
+            )
+
+
+def test_the_failure_list_route_is_reachable_not_shadowed_by_the_id_route():
+    """A request to `/datasource/query-failures` must reach the failure list.
+
+    Regression, and this one shipped broken. `/datasource/{datasource_id}` with
+    Starlette's default `str` convertor matches ANY single segment, and the
+    router resolves against the first route whose path regex and method both
+    match -- so the id route, declared earlier, answered this path with
+    `int_parsing: input "query-failures"`, which the platform UI surfaced as the
+    raw pydantic message. Constraining the id route to `:int` is the fix.
+
+    Asserted by CALLING the path rather than by reading the route table, because
+    the route-table version of this test was green the whole time it was broken.
+    """
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    # The datasource router mounted exactly as `api/router.py` mounts it, minus
+    # the app's middleware and lifespan: those are not what this test is about.
+    app = FastAPI()
+    app.include_router(datasource_router, prefix='/api/v1')
+    # A plain callable, not `MagicMock`: FastAPI introspects the override's
+    # signature and would read the mock's own `*args, **kw` as required query
+    # params, answering 422 before the route is ever reached.
+    app.dependency_overrides[UserPayload.get_tenant_admin_user] = _admin
+
+    with patch.object(
+        failures_module.DbQueryFailureDao, 'alist', AsyncMock(return_value=([], 0))
+    ) as alist:
+        with TestClient(app) as client:
+            response = client.get('/api/v1/datasource/query-failures')
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload['status_code'] == 200, payload
+    # The failure list's own envelope -- proof the handler ran rather than
+    # merely that no 422 came back.
+    assert payload['data'] == {'data': [], 'total': 0, 'page': 1, 'page_size': 20}
+    alist.assert_awaited_once()
 
 
 def test_the_table_endpoints_exist_and_are_nested_or_prefixed():

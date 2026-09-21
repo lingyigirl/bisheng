@@ -119,6 +119,7 @@ async def _reject_duplicate_name(name: str, *, exclude_id: int | None = None) ->
 @router.get('')
 async def list_datasources(
     *,
+    name: str | None = Query(None, description='按名称模糊筛选'),
     enabled_only: bool = Query(False, description='仅显示启用中的数据源'),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -131,8 +132,14 @@ async def list_datasources(
     CHAT picker, where `conversation_service` does the per-user check. Showing
     an admin only the datasources they personally created would make the
     management page useless to the person responsible for them.
+
+    `name` filters by substring, not by identity -- the filter box is how an
+    admin finds one datasource among many, and a blank box must list everything
+    rather than match a datasource literally named "".
     """
-    rows, total = await DbDatasourceDao.alist(enabled_only=enabled_only, page=page, page_size=page_size)
+    rows, total = await DbDatasourceDao.alist(
+        name=name, enabled_only=enabled_only, page=page, page_size=page_size
+    )
     return resp_200(
         {
             'data': [to_safe_dict(row) for row in rows],
@@ -186,11 +193,12 @@ async def list_available_datasources(
     list: the flow editor at `/flow/:id` has no permission gate, so plenty of
     people who can open it cannot call the admin endpoint at all.
 
-    The path is hyphenated so it cannot be shadowed by `/{datasource_id}`, which
-    matches any single segment — the same reason `test-connection` and
-    `query-failures` are, and what `test_no_route_can_be_shadowed_by_the_id_route`
-    enforces. Declaring it first would also work but would make correctness
-    depend on registration order.
+    The path is hyphenated, the same as `test-connection` and `query-failures`,
+    and `test_no_route_can_be_shadowed_by_the_id_route` enforces that every
+    literal segment under `/datasource/` stays that way. The id route also
+    constrains itself to digits now (see the note above the id routes), so the
+    two defences overlap — deliberately: a hyphenated path is safe even if
+    someone later relaxes the convertor, and vice versa.
 
     Returns id and name only. A picker needs nothing else, and the connection
     details — including the encrypted password — must not reach a chat-side
@@ -234,7 +242,27 @@ async def list_available_datasources(
     )
 
 
-@router.get('/{datasource_id}')
+# --- the id routes -----------------------------------------------------------
+#
+# `:int`, not a bare `{datasource_id}`, and it is load-bearing. Starlette's
+# default `str` convertor matches ANY single segment, and the router resolves a
+# request against the FIRST route whose path regex and method both match — so a
+# bare id route swallows every later sibling declared below it. That is not
+# hypothetical: `/datasource/query-failures` was declared after these three and
+# answered 422 `int_parsing: input "query-failures"` for as long as it shipped.
+# Constraining the id to digits makes the two impossible to confuse, rather than
+# making correctness depend on registration order (which the module registers as
+# datasources -> test-connection -> failures, but a reorder would silently undo).
+#
+# `/{datasource_id:int}/...` sub-routes keep the bare form on purpose: the
+# convertor only affects how the *last* segment is matched when it is the id,
+# and a trailing literal segment already disambiguates those.
+#
+# Only the id routes carry it. The literal ones rely on being hyphenated
+# (`test_no_route_can_be_shadowed_by_the_id_route` asserts the property directly).
+
+
+@router.get('/{datasource_id:int}')
 async def get_datasource(
     datasource_id: int,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
@@ -246,7 +274,7 @@ async def get_datasource(
     return resp_200(to_safe_dict(datasource))
 
 
-@router.put('/{datasource_id}')
+@router.put('/{datasource_id:int}')
 async def update_datasource(
     datasource_id: int,
     payload: DatasourceUpdatePayload,
@@ -281,7 +309,7 @@ async def update_datasource(
     return resp_200(to_safe_dict(datasource))
 
 
-@router.delete('/{datasource_id}')
+@router.delete('/{datasource_id:int}')
 async def delete_datasource(
     datasource_id: int,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),

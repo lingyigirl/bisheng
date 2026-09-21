@@ -120,6 +120,8 @@ export async function listDatasourcesApi(params: {
   page?: number;
   page_size?: number;
   enabled_only?: boolean;
+  /** Substring match on the name; blank/omitted means "no filter". */
+  name?: string;
 }): Promise<PagedResult<DatasourceRow>> {
   return await axios.get(`/api/v1/datasource`, { params });
 }

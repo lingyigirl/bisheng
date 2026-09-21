@@ -163,6 +163,39 @@ async def test_enabled_only_filters():
     assert 'enabled = 1' in ' '.join(session.sql)
 
 
+@pytest.mark.asyncio
+async def test_name_filters_by_substring():
+    """The admin list's filter box. Substring, not identity -- `aget_by_name`
+    is the exact-match lookup and the two must not be confused."""
+    session = _Session(rows=[], scalar_value=0)
+    with _patch(session):
+        await DbDatasourceDao.alist(name='订单')
+
+    sql = ' '.join(session.sql)
+    assert 'db_datasource.name LIKE' in sql, sql
+    # `literal_binds` inlines the pattern too, and SQLAlchemy escapes a literal
+    # `%` as `%%` when rendering a bound parameter -- hence the doubled form.
+    # The wrapping is what makes it a substring match rather than an equality.
+    assert "db_datasource.name LIKE '%%订单%%'" in sql, sql
+
+
+@pytest.mark.asyncio
+async def test_a_blank_name_applies_no_predicate():
+    """A blank box must list everything.
+
+    Asserted as an absence because the two plausible mistakes are both silent:
+    matching a datasource literally named "" would empty the list as soon as the
+    admin clears the box, and a `%`-wrapped empty string (`LIKE '%%'`) returns
+    the right rows while quietly meaning something else.
+    """
+    for blank in ('', '   ', None):
+        session = _Session(rows=[], scalar_value=0)
+        with _patch(session):
+            await DbDatasourceDao.alist(name=blank)
+        sql = ' '.join(session.sql)
+        assert 'LIKE' not in sql, f'name={blank!r} produced a predicate: {sql}'
+
+
 # --- pagination --------------------------------------------------------------
 
 

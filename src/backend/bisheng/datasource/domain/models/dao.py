@@ -82,6 +82,7 @@ class DbDatasourceDao:
         cls,
         *,
         ids: list[int] | None = None,
+        name: str | None = None,
         enabled_only: bool = False,
         page: int = 1,
         page_size: int = 20,
@@ -93,6 +94,11 @@ class DbDatasourceDao:
         resolves the id set and passes it in. ``ids=[]`` is a valid, meaningful
         input meaning "authorized for nothing" and must return empty rather
         than falling through to "no filter".
+
+        ``name`` is a substring match for the admin list's filter box, not an
+        identity lookup (that is ``aget_by_name``, which the duplicate-name
+        check uses and which must stay exact). Empty/blank means "no filter",
+        so the caller can pass a raw query param through.
         """
         if ids is not None and not ids:
             return [], 0
@@ -100,6 +106,8 @@ class DbDatasourceDao:
         clauses = []
         if ids is not None:
             clauses.append(DbDatasource.id.in_(ids))
+        if name and name.strip():
+            clauses.append(DbDatasource.name.like(f'%{name.strip()}%'))
         if enabled_only:
             clauses.append(DbDatasource.enabled == 1)
 

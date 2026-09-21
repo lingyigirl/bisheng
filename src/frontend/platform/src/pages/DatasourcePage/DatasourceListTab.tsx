@@ -8,13 +8,15 @@ import {
   TableRow,
 } from "@/components/bs-ui/table";
 import { Badge } from "@/components/bs-ui/badge";
+import { SearchInput } from "@/components/bs-ui/input";
 import AutoPagination from "@/components/bs-ui/pagination/autoPagination";
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
 import { PermissionDialog } from "@/components/bs-comp/permission/PermissionDialog";
 import { deleteDatasourceApi, updateDatasourceApi, type DatasourceRow } from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
+import { useDebounce } from "@/util/hook";
 import { Plus, Shield } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DatasourceFormDialog } from "./DatasourceFormDialog";
 import { DatasourceTablesView } from "./DatasourceTablesView";
@@ -27,11 +29,27 @@ interface Props {
 
 export function DatasourceListTab({ queries }: Props) {
   const { t } = useTranslation();
-  const { rows, total, page, pageSize, loading, setPage, refetch, findRow } = queries;
+  const { rows, total, page, pageSize, loading, setName, setPage, refetch, findRow } = queries;
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<DatasourceRow | null>(null);
   const [permissionTarget, setPermissionTarget] = useState<DatasourceRow | null>(null);
+
+  // Debounced because the list is server-paged: without it every keystroke is
+  // a request, and on a slow link the results land out of order. `handleSearch`
+  // is wrapped in `useCallback` on purpose -- `useDebounce` memoises on the
+  // function identity, so an inline arrow here would rebuild the debouncer each
+  // render and degrade to one request per keystroke.
+  const handleSearch = useCallback(
+    (value: string) => {
+      // Back to page 1 first: staying on page 3 while the result set shrinks
+      // shows an empty table that looks like "no matches".
+      setPage(1);
+      setName(value);
+    },
+    [setPage, setName],
+  );
+  const debouncedSearch = useDebounce(handleSearch, 300, false);
 
   const handleDelete = (row: DatasourceRow) => {
     bsConfirm({
@@ -71,9 +89,17 @@ export function DatasourceListTab({ queries }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center justify-between pb-3">
-        <span className="text-sm text-muted-foreground">
-          {t("datasource.list.total", { total })}
-        </span>
+        <div className="flex items-center gap-3">
+          <SearchInput
+            className="w-[240px]"
+            defaultValue={queries.name}
+            placeholder={t("datasource.list.searchNamePlaceholder")}
+            onChange={(e) => debouncedSearch(e.target.value)}
+          />
+          <span className="text-sm text-muted-foreground">
+            {t("datasource.list.total", { total })}
+          </span>
+        </div>
         <Button
           className="h-8 rounded-[6px] px-3 text-[14px]"
           onClick={() => {

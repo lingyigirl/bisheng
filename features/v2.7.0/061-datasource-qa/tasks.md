@@ -1239,3 +1239,25 @@ AC-61 / AC-64 建议用静态断言（扫描 `KnowledgeTypeEnum` 无数据源成
    F058 已由 v2.8.0 移入 v2.7.0，但该文件名未随之重命名。**迁移链本身不受影响**——其 `revision = "f058_doc_extract"`、`down_revision = "f059_hit_log_source"`，与其他迁移的引用关系不依赖文件名。
    是否重命名待用户决定（重命名会与既有 git 历史冲突；不重命名则保留一处易误导的命名）。**在决定前，任何按文件名推断版本归属的做法都会出错。**
 2. **F058 design.md §2 的 C5 落点仍写「错误码模块 114」**（`features/v2.7.0/058-doc-extract-template/design.md:35`），而实际与契约均为 **116**。该文件的变更历史（`:487`）已记录 114→116 的改判，但正文未同步。属既有文档漂移，非本次搬迁引入。
+
+### 上线后修复与增补（2026-09-21）
+
+3. **【已发布缺陷】`GET /datasource/query-failures` 被 `/datasource/{datasource_id}` 抢占，接口返回 422。**
+   平台「数据源 → 失败提问」页报 `逻辑异常 :>> Input should be a valid integer, unable to parse string as an integer`。
+   根因：Starlette 默认 `str` 转换器匹配**任意**单段路径，路由解析取「第一条路径正则与方法都匹配」的路由，
+   而 id 路由（GET/PUT/DELETE）声明在 `query-failures` 之前，于是 `datasource_id` 收到字面量 `"query-failures"`，
+   Pydantic 报 `int_parsing`。全站扫描确认 680 条路由中仅此一条被阻断。
+   **修复**：三处 id 路由改用 `{datasource_id:int}`（仓库既有先例见 `channel_manager.py:254`、`department.py:108`），
+   使字面量段与 id 在类型上不可能混淆，而非依赖注册顺序（顺序一改即复发）。
+   **注意**：`test_no_route_can_be_shadowed_by_the_id_route` 此前是**恒真**的——它只断言「字面量段含连字符」，
+   且因 `startswith('{')` 跳过了 id 路由，从未把两者放在一起比较，因此缺陷上线时该测试是绿的。
+   现改为直接断言 id 路由的 `path_regex` 不匹配每个字面量兄弟路由（跨 `datasources` / `test_connection` / `failures` 三个模块），
+   并新增一条**发起真实请求**的回归测试 `test_the_failure_list_route_is_reachable_not_shadowed_by_the_id_route`。
+   两条新测试均已做变异验证（还原 `:int` 即变红）。
+
+4. **【增补】`GET /datasource` 新增 `name` 查询参数（名称模糊筛选）。**
+   列表页缺按名称过滤的输入框；列表是服务端分页，故过滤须下推到 DAO。
+   实现：`DbDatasourceDao.alist(name=...)` 加 `LIKE '%kw%'`（沿用仓库既定的 `.like(f'%{kw}%')` 写法），
+   空/纯空白视为「不过滤」；`name` 字段已有索引（`datasource.py:48-49`），**无 DDL 变更**。
+   前端在 `DatasourceListTab` 加 `SearchInput` + `useDebounce(300ms)`，防抖回调内 `setPage(1)`。
+   本项属缺陷修复之外的**功能增补**，原 spec/design 未覆盖；不改变任何既有接口的入参出参语义（仅新增可选参数）。
