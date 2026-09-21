@@ -80,6 +80,13 @@ _TENANT_AWARE_MODEL_MODULES = (
     "bisheng.datasource.domain.models.datasource_table",
     "bisheng.datasource.domain.models.query_log",
     "bisheng.datasource.domain.models.query_failure",
+    # F060: the term library. Same reasoning again. This one is the easiest of
+    # the three to miss, because the feature has no other startup reason to
+    # import the module -- unregistered, the table still works and the tests
+    # still pass; one tenant's terms simply get injected into another tenant's
+    # conversations, and nothing reports it. (Same silent class as F061's
+    # consequence above, minus the root-tenant write.)
+    "bisheng.term_library.domain.models.term",
     # Previously *not* on any auto-imported chain — silent tenant-id leaks.
     "bisheng.database.models.failed_tuple",
     "bisheng.database.models.flow_version",
