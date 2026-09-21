@@ -222,6 +222,10 @@
 
 **验证**：`uv run python -m pytest test/term_library/test_term_importer.py -q`。须覆盖：csv/xlsx 各一（**含带表头与不带表头**）/ 空文件 / **txt 被明确拒绝** / 释义列缺失或为空 / 别名列可空 / 与既有词条冲突 / 第 501 条被拒 / 覆盖模式的破坏性。
 
+**另须承接 T-05 挪来的两条跨侧断言**（T-05 实现期发现它需要两个 importer 都存在，故落在本任务）：
+- **「同一份文件在两个 importer 里要么都能读、要么都读不了」**——用同一组坏输入（空文件 / GBK 损坏 / 无 BOM 的 UTF-16 / 损坏 xlsx）分别喂 F059 与 F060，断言 verdict 相同（**错误码不同是对的**：11301 vs 11505）。
+- **F060 确实走共享读取层**——patch `tabular_import.read_rows` 并断言 term importer 观察到它（防两侧重新各自实现）。
+
 **覆盖 AC**: AC-07, AC-08, AC-09, AC-10
 
 ---

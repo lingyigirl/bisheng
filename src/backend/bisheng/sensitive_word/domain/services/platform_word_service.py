@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -16,28 +15,22 @@ from bisheng.sensitive_word.domain.models.platform_policy import (
 from bisheng.sensitive_word.domain.models.platform_word import PlatformSensitiveWordDao
 from bisheng.sensitive_word.domain.schemas import SensitiveWordCheckResult, SensitiveWordHit
 from bisheng.sensitive_word.domain.services.ac_automaton import ACAutomaton
+from bisheng.sensitive_word.domain.services.tabular_import import (
+    HEADER_EXTENSIONS,
+    SUPPORTED_EXTENSIONS,
+    TabularImportError,
+    looks_like_header,
+    read_rows,
+)
 
 if TYPE_CHECKING:
     from bisheng.sensitive_word.domain.services.sensitive_word_policy_service import WordMatcher
 
 MAX_WORD_LENGTH = 255
-"""Matches the `platform_sensitive_word.word` column width."""
+"""Matches the `platform_sensitive_word.word` column width.
 
-_SUPPORTED_EXTENSIONS = ('txt', 'csv', 'xlsx')
-_HEADER_EXTENSIONS = ('csv', 'xlsx')
-"""Only tabular formats carry a header convention; a txt first line is data."""
-
-_HEADER_TOKENS = frozenset(
-    {
-        'word', 'words', 'keyword', 'keywords', 'term', 'terms',
-        '敏感词', '敏感词库', '关键词', '词条', '词表',
-    }
-)
-"""First-row cells that identify a header row. Matched case-insensitively.
-
-A first row counts as a header when ANY of its cells is one of these — real
-exports label the word column and may carry other columns beside it (`敏感词,备注`),
-so requiring every cell to be a known token would miss the common case.
+Stays here rather than moving to `tabular_import`: it is a property of THIS
+library's column width, not of reading a file.
 """
 
 
@@ -101,63 +94,21 @@ class PlatformWordService:
         Raises `PlatformWordFileParseError` (11301) when the file cannot be read
         or yields nothing usable — the caller must leave the library untouched in
         that case (spec AC-05).
-        """
-        extension = (filename or '').rsplit('.', 1)[-1].lower()
-        if extension not in _SUPPORTED_EXTENSIONS:
-            raise PlatformWordFileParseError(msg=f'Unsupported file type: {extension or "(none)"}')
 
-        if extension == 'xlsx':
-            cells = cls._read_xlsx(raw)
-        else:
-            cells = cls._read_text(raw)
-
-        return cls._cells_to_parsed(cells, strip_header=extension in _HEADER_EXTENSIONS)
-
-    @staticmethod
-    def _read_text(raw: bytes) -> list[list[str]]:
-        """Decode a txt/csv blob into rows of raw cells (not yet split).
-
-        `utf-8-sig` also strips a BOM, which Excel writes into "csv" exports and
-        which would otherwise become part of the first word.
+        The reading half is delegated to `tabular_import` (F060 decision 8), which
+        the term library also uses: same extension list, same encoding fallback,
+        same NUL trap, so a file that reads there cannot fail to read here. This
+        method keeps two things of its own — the 11301 error code callers expect,
+        and the word-per-cell column semantics. The shared reader's exception is
+        translated, so callers of THIS service see exactly what they always did.
         """
         try:
-            text = raw.decode('utf-8-sig')
-        except UnicodeDecodeError:
-            # GBK is the realistic alternative for files exported on a Chinese
-            # Windows desktop; failing outright on them would be unhelpful.
-            try:
-                text = raw.decode('gbk')
-            except UnicodeDecodeError as exc:
-                raise PlatformWordFileParseError(exception=exc) from exc
-
-        # A UTF-16 file WITHOUT a BOM decodes "successfully" as UTF-8 (every other
-        # byte is NUL), so it would import as NUL-laden words that can never match
-        # anything — reporting SUCCESS and polluting the library instead of
-        # failing with 11301 (spec AC-05). A NUL in a word list is never intended,
-        # so treat it as the decode failure it actually is.
-        if '\x00' in text:
-            raise PlatformWordFileParseError()
-
-        return [line.split('\t') for line in text.splitlines()]
-
-    @staticmethod
-    def _read_xlsx(raw: bytes) -> list[list[str]]:
-        try:
-            from openpyxl import load_workbook
-
-            workbook = load_workbook(filename=io.BytesIO(raw), read_only=True, data_only=True)
-        except Exception as exc:
-            # Any workbook error (bad zip, corrupt sheet, missing dependency) means
-            # the same thing to the caller, so they all collapse to 11301.
+            cells = read_rows(raw, filename, allowed=SUPPORTED_EXTENSIONS)
+        except TabularImportError as exc:
             raise PlatformWordFileParseError(exception=exc) from exc
 
-        rows: list[list[str]] = []
-        try:
-            for row in workbook.active.iter_rows(values_only=True):
-                rows.append(['' if cell is None else str(cell) for cell in row])
-        finally:
-            workbook.close()
-        return rows
+        extension = (filename or '').rsplit('.', 1)[-1].lower()
+        return cls._cells_to_parsed(cells, strip_header=extension in HEADER_EXTENSIONS)
 
     @classmethod
     def _cells_to_parsed(cls, rows: list[list[str]], *, strip_header: bool) -> ParsedWordFile:
@@ -189,15 +140,11 @@ class PlatformWordService:
     def _looks_like_header(cls, row: list[str]) -> bool:
         """True when the first row is a header rather than data.
 
-        Cells are split by the word separators FIRST: a csv line `敏感词,备注` arrives
-        as a single cell (only tabs separate cell boundaries at read time), so a
-        whole-cell comparison would never see the `敏感词` token inside it.
+        Delegates to the shared detector, passing THIS feature's cell splitter —
+        the header question is answered with the same rules that will later read
+        the values (see `tabular_import.looks_like_header`).
         """
-        return any(
-            token.lower() in _HEADER_TOKENS
-            for cell in row
-            for token in cls._split_cell(cell)
-        )
+        return looks_like_header(row, split_cell=cls._split_cell)
 
     @staticmethod
     def _split_cell(cell: str) -> list[str]:
