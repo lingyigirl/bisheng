@@ -55,6 +55,35 @@ class KnowledgeUtils(BaseService):
         chunk = chunk.split("</paragraph_content>")[0]
         return chunk
 
+    @staticmethod
+    def qa_answer_from_metadata(meta: dict) -> str:
+        """The stored answer of a QA hit, or '' when this is not one.
+
+        A QA knowledge base stores its answer in the chunk metadata
+        (`QA_save_knowledge` writes `extra.answer`) and the QUESTION as the
+        document's `page_content`, because the question is what gets embedded and
+        matched. So for a QA hit, `page_content` alone is half the record: the
+        model is asked "银行的电话" and never told the number.
+
+        `extra` is a JSON STRING (`QAKnowledgeMetadata.extra` is `Optional[str]`),
+        and of unknown provenance, so every failure mode — absent, not JSON, not
+        an object, no `answer` key, empty answer — degrades to '' rather than
+        raising. This runs inside retrieval, where an exception would cost the
+        whole conversation its context, and a document chunk (the common case)
+        legitimately has no `extra` at all.
+        """
+        raw = meta.get("extra")
+        if not raw:
+            return ""
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            return ""
+        if not isinstance(parsed, dict):
+            return ""
+        answer = parsed.get("answer")
+        return answer.strip() if isinstance(answer, str) else ""
+
     @classmethod
     def format_retrieved_chunk(cls, doc, kb_name: str = "") -> str:
         """Format a retrieved Document into the tool-output chunk string shared by
@@ -69,6 +98,12 @@ class KnowledgeUtils(BaseService):
         wrapper so we don't nest it again. annotate_rag_documents_with_citations may
         have appended a "\n\ncitation_key: ..." tail; peel it off so paragraph_content
         holds only the bare body (the id now lives in <chunk_id>, not the tail).
+
+        A QA hit additionally carries `<qa_answer>` — see `qa_answer_from_metadata`
+        for why `page_content` alone is not the record. The field is emitted ONLY
+        when an answer exists, so a document chunk renders exactly as it always
+        has (three retrieval paths share this function; a document-library change
+        here would be silent).
         """
         meta = getattr(doc, "metadata", {}) or {}
         file_title = meta.get("document_name") or meta.get("source") or meta.get("file_name") or ""
@@ -82,6 +117,9 @@ class KnowledgeUtils(BaseService):
         content = cls.split_chunk_metadata(raw_content).strip()
         kb_id_raw = meta.get("knowledge_id") or meta.get("kb_id") or ""
         kb_id = str(kb_id_raw) if kb_id_raw not in (None, "") else ""
+
+        answer = cls.qa_answer_from_metadata(meta)
+        answer_line = f"\n<qa_answer>{answer}</qa_answer>" if answer else ""
         return (
             "{"
             f"<chunk_id>{citation_key}</chunk_id>\n"
@@ -90,6 +128,7 @@ class KnowledgeUtils(BaseService):
             f"<file_title>{file_title}</file_title>\n"
             f"<file_abstract>{file_abstract}</file_abstract>\n"
             f"<paragraph_content>{content}</paragraph_content>"
+            f"{answer_line}"
             "}"
         )
 
