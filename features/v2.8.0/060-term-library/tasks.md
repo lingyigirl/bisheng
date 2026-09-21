@@ -11,9 +11,9 @@
 
 | 步骤 | 状态 | 备注 |
 |------|------|------|
-| spec.md | ✅ 已评审 | 2026-09-21 用户确认。`/sdd-review spec` 14 项检查 13 项通过；唯一未通过项（权限口径缺 AC）已补为 AC-16~19，另 1 medium（§4 How 泄漏）+ 2 low 已处理/留待 design |
+| spec.md | ✅ 已评审 | 2026-09-21 用户确认。`/sdd-review spec` 14 项检查 13 项通过；唯一未通过项（权限口径缺 AC）已补为 AC-16, AC-17, AC-18, AC-19，另 1 medium（§4 How 泄漏）+ 2 low 已处理/留待 design |
 | design.md | ✅ 已评审 | 2026-09-21 `/sdd-review design` 24 项：**5 条 findings 全部已修**（3 high：§7 测试与可观测 / §8 后续改进 / Constitution Check 三处整块缺失；1 medium：无可操作验证路径；1 medium：「租户白名单」表述不准确）。**Constitution Check PASS**（C1–C7 逐条结论见 design §2） |
-| tasks.md | 🚧 拆解中 | 本文件 |
+| tasks.md | ✅ 已拆解 | 2026-09-21 拆解完成：**20 个任务 / 7 个 Wave**，32 条 AC 全覆盖（追溯矩阵见文末）。`/sdd-review tasks` 21 项检查：**2 条已修**（T-04 补回滚说明；AC 范围写法归一为逐条列举） |
 | 实现 | 🔲 未开始 | — |
 | e2e-test | 🔲 未开始 | — |
 | code-review | 🔲 未开始 | — |
@@ -123,6 +123,8 @@
 
 **为什么**：design §4.2；契约表 1 的 Owner 声明。
 
+**回滚**：`downgrade()` 写 `op.drop_table('term_library_term')`（及其索引）。**可逆且无数据损失顾虑**——本特性是新表、无外部引用、无 FK 从别表指进来（术语被删除只影响后续注入，历史不受影响，见 spec §3）。**注意**：`drop_table` 用 `alembic_helpers` 的存在性守卫，避免半途失败后重跑报错。
+
 **验证**：`uv run alembic heads` 打印**恰好一个** revision；`uv run python -m pytest test/database/test_alembic_single_head.py -q` 通过。
 
 **覆盖 AC**: AC-01, AC-05
@@ -231,7 +233,7 @@
 **改动**：
 - 新增 `src/backend/bisheng/term_library/api/endpoints/terms.py` + `router.py`，并在 `bisheng/api/router.py` 注册
 - 端点：`GET /api/v1/term-library`（列表 + 部门筛选 + 分页）/ `POST`（创建）/ `PUT /{id}`（更新）/ `DELETE /{id}` / `POST /import/preview` / `POST /import`
-- **门控**（spec AC-16~18）：**读** `get_login_user` + `assert_effective_web_menu_contains(..., 'knowledge')`；**写**（POST/PUT/DELETE/import 两个）另加 `create_knowledge`
+- **门控**（spec AC-16, AC-17, AC-18）：**读** `get_login_user` + `assert_effective_web_menu_contains(..., 'knowledge')`；**写**（POST/PUT/DELETE/import 两个）另加 `create_knowledge`
 - **不调用 `PermissionService`**（INV-17 / 决策 2）；**不新增 FGA 资源类型**
 
 **为什么**：design §3 决策 2、§4.1 数据流、§6 Outgoing。门控口径与知识库一致，是本特性权限设计的全部内容。
@@ -314,7 +316,7 @@
 
 ### Wave 4 — 不变量与合规（依赖 W3）
 
-#### T-15 不变量验证（AC-26 / INV-17 / INV-18 / AC-29~32）
+#### T-15 不变量验证（AC-26, AC-29, AC-30, AC-31, AC-32 + INV-17, INV-18）
 
 **依赖**: T-12, T-13, T-14
 
@@ -327,7 +329,7 @@
   - **AC-31**：`bisheng/term_library/` **不出现 `PermissionService`**、不出现 FGA 资源类型
   - **AC-32**：租户无术语时，对话行为与加本特性前一致
 
-**为什么**：design §7.1/§7.2、spec AC-29~32 + INV-17/18。这几条都是「**不做破坏**」类断言，**容易被默认成「显然成立」而完全不测**——F058 曾因缺同类测试留下缺口，F061 T-44 已确立了本仓的写法（静态 + 行为双层）。
+**为什么**：design §7.1/§7.2、spec AC-29, AC-30, AC-31, AC-32 + INV-17/18。这几条都是「**不做破坏**」类断言，**容易被默认成「显然成立」而完全不测**——F058 曾因缺同类测试留下缺口，F061 T-44 已确立了本仓的写法（静态 + 行为双层）。
 
 **验证**：`uv run python -m pytest test/term_library/test_invariants.py -q`。**每条断言须变异验证**（例如给注入路径加一次 `department_id` 读取，INV-17 的静态断言应转红）。
 
@@ -383,7 +385,7 @@
 - 无 `create_knowledge` 时：**新建 / 编辑 / 删除 / 导入入口不可用**（隐藏或禁用），但**列表可读**（有 `knowledge` 即可进 Tab）
 - 403 由响应拦截器统一处理，**不加业务 403 分支**（仓库硬规则）
 
-**为什么**：spec AC-16~18；design §3 决策 2。**前端隐藏不是安全边界**——后端已拒（T-10 的用例），此处只是体验。
+**为什么**：spec AC-16, AC-17, AC-18；design §3 决策 2。**前端隐藏不是安全边界**——后端已拒（T-10 的用例），此处只是体验。
 
 **验证**：`pnpm typecheck && pnpm lint`；手动：用只有 `knowledge` 的账号登录 → 能看列表、不能写。
 
