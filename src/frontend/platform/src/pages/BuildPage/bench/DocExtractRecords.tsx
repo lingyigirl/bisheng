@@ -1,13 +1,15 @@
+import LoadMore from "@/components/bs-comp/loadMore";
 import { Button } from "@/components/bs-ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/bs-ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/bs-ui/table";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import {
-    listRecordsApi,
+    listRecordsPageApi,
     listTemplatesApi,
     type DocExtractRun,
     type DocExtractTemplate,
 } from "@/controllers/API/docExtract";
+import { useInfiniteCursorTable } from "@/util/hook";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -24,27 +26,31 @@ const ALL = "__all__";
 export function DocExtractRecords() {
     const { t } = useTranslation();
 
-    const [rows, setRows] = useState<DocExtractRun[]>([]);
     const [templates, setTemplates] = useState<DocExtractTemplate[]>([]);
     const [templateId, setTemplateId] = useState<string>(ALL);
     const [status, setStatus] = useState<string>(ALL);
-    const [cursor, setCursor] = useState<number | null>(null);
-    const [nextCursor, setNextCursor] = useState<number | null>(null);
     const [expanded, setExpanded] = useState<number | null>(null);
 
-    const load = async (nextPage?: number | null) => {
-        const res = await captureAndAlertRequestErrorHoc(
-            listRecordsApi({
-                templateId: templateId === ALL ? undefined : Number(templateId),
-                status: status === ALL ? undefined : Number(status),
-                cursor: nextPage ?? undefined,
+    // F027: cursor-based infinite scroll, matching every other list in the
+    // platform (知识库 / 知识空间 / 应用). The previous implementation exposed
+    // 上一页 / 下一页 buttons, but a cursor is one-directional — "上一页"
+    // simply re-fetched the first page and could never walk back through
+    // history, so it was a no-op beyond page 2.
+    const { data: rows, loading, hasMore, loadMore, filterData } = useInfiniteCursorTable<DocExtractRun>(
+        // `unInitData` suppresses the hook's own mount-time fetch: the filter
+        // effect below runs on mount too and resets the cursor, so leaving the
+        // hook's initial load on would fire two identical requests per mount.
+        { pageSize: 20, unInitData: true },
+        (param) =>
+            listRecordsPageApi({
+                templateId: param.template_id,
+                status: param.status,
+                // The hook's cursor is an opaque string; this endpoint's cursor is
+                // a numeric row id, so it is parsed back here.
+                cursor: param.cursor == null ? null : Number(param.cursor),
+                limit: param.pageSize,
             }),
-        );
-        if (res) {
-            setRows(res.data ?? []);
-            setNextCursor(res.next_cursor ?? null);
-        }
-    };
+    );
 
     useEffect(() => {
         captureAndAlertRequestErrorHoc(listTemplatesApi()).then((res) => {
@@ -52,12 +58,14 @@ export function DocExtractRecords() {
         });
     }, []);
 
+    // Any filter change restarts from the first page (cursor reset to null).
+    // This is also the ONLY initial fetch — see `unInitData` above.
     useEffect(() => {
-        setCursor(null);
-        load(null);
-        // `load` closes over templateId/status, which are the actual triggers;
-        // listing it would refetch on every render since it is re-created each
-        // time. The filter values are the real dependency.
+        filterData({
+            template_id: templateId === ALL ? undefined : Number(templateId),
+            status: status === ALL ? undefined : Number(status),
+        });
+        setExpanded(null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [templateId, status]);
 
@@ -137,40 +145,21 @@ export function DocExtractRecords() {
                 </TableBody>
             </Table>
 
+            {/* F027 sentinel: must stay inside the same scroll container as the
+                table, otherwise it never intersects on in-container scroll. */}
+            {hasMore && <LoadMore onScrollLoad={loadMore} />}
+
             {expanded != null && (
                 <pre className="max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs">
                     {JSON.stringify(rows.find((r) => r.id === expanded), null, 2)}
                 </pre>
             )}
 
-            {rows.length === 0 && (
+            {!loading && rows.length === 0 && (
                 <p className="py-6 text-center text-sm text-gray-500">
                     {t("docExtract.noRecord", { ns: "bs" })}
                 </p>
             )}
-
-            <div className="flex justify-end gap-2">
-                <Button
-                    variant="outline"
-                    disabled={cursor === null}
-                    onClick={() => {
-                        setCursor(null);
-                        load(null);
-                    }}
-                >
-                    {t("docExtract.prevPage", { ns: "bs" })}
-                </Button>
-                <Button
-                    variant="outline"
-                    disabled={nextCursor === null}
-                    onClick={() => {
-                        setCursor(nextCursor);
-                        load(nextCursor);
-                    }}
-                >
-                    {t("docExtract.nextPage", { ns: "bs" })}
-                </Button>
-            </div>
         </div>
     );
 }

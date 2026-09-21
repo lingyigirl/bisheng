@@ -86,6 +86,36 @@ export interface DocExtractRecordPage {
     next_cursor: number | null;
 }
 
+/**
+ * F027 cursor envelope used by `useInfiniteCursorTable`.
+ *
+ * The backend's `next_cursor` here is a plain row id (numeric), whereas the
+ * F027 convention and the shared hook deal in opaque STRING cursors. Adapting
+ * at the API layer — rather than loosening the hook's type — keeps every
+ * caller of the hook on one contract. `has_more` is not returned by this
+ * endpoint, so it is derived from the cursor: a cursor is present exactly when
+ * another page exists (the DAO returns None on the last page).
+ */
+export interface DocExtractRecordsEnvelope {
+    data: DocExtractRun[];
+    page_size: number;
+    has_more: boolean;
+    next_cursor: string | null;
+}
+
+export async function listRecordsPageApi(
+    params: ListRecordsParams = {},
+): Promise<DocExtractRecordsEnvelope> {
+    const res = await listRecordsApi(params);
+    const next = res?.next_cursor ?? null;
+    return {
+        data: res?.data ?? [],
+        page_size: params.limit ?? 20,
+        has_more: next != null,
+        next_cursor: next != null ? String(next) : null,
+    };
+}
+
 // --- templates --------------------------------------------------------------
 
 export function listTemplatesApi(enabledOnly = false) {

@@ -32,6 +32,13 @@ export default function DialogueWork() {
   const showDocExtractTab =
     user?.role === "admin" || Boolean(user?.is_child_admin);
 
+  // The platform word library / platform policy endpoints are super-admin only
+  // (`require_global_super_admin` → 403). The 403 interceptor redirects the
+  // WHOLE PAGE to /403 for a failed GET (`controllers/request.ts:160-166`), so
+  // rendering those sections for anyone else navigates them off the page rather
+  // than showing an empty panel. Gate on role instead of relying on the server.
+  const isSuperAdmin = user?.role === "admin";
+
   return (
     <div className="w-full h-full px-2 pt-4 relative">
       <Tabs defaultValue={defaultValue} className="w-full mb-[40px]">
@@ -71,13 +78,38 @@ export default function DialogueWork() {
           <AppCenter scopeVersion={scopeVersion} />
         </TabsContent>
         <TabsContent value="guardrail">
-          {/* F059: the platform-wide library sits above the tenant policy. Only a
-              global super admin sees this tab's platform sections; the endpoints
-              behind them reject everyone else. */}
-          <PlatformSensitiveWords />
-          <LLMGuardrailPolicy />
-          <LLMGuardrailHitLogs />
-          <FeedbackEventLogs />
+          {/* Three sub-tabs split the page by what the admin is doing: changing
+              rules, reading enforcement, reading ratings. They used to be four
+              stacked sections on one long scroll, which mixed the config
+              surfaces with two ever-growing record tables.
+
+              Radix unmounts the inactive panel, so switching re-fetches and
+              resets that tab's filters — deliberate, it keeps the records fresh. */}
+          <Tabs defaultValue="wordsPolicy" className="w-full">
+            {/* Styling intentionally matches DocExtractSection's nested tabs —
+                same page, same outer Tabs, so the two nested tab bars should
+                not look like two different components. */}
+            <TabsList>
+              <TabsTrigger value="wordsPolicy">{t("guardrail.tabWordsPolicy")}</TabsTrigger>
+              <TabsTrigger value="hitLogs">{t("guardrail.tabHitLogs")}</TabsTrigger>
+              <TabsTrigger value="feedback">{t("guardrail.tabFeedback")}</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="wordsPolicy" className="pt-4">
+              {/* F059: the platform-wide library and its policy sit above the
+                  tenant policy. Both are super-admin only — see `isSuperAdmin`. */}
+              {isSuperAdmin && <PlatformSensitiveWords />}
+              <LLMGuardrailPolicy showPlatformSections={isSuperAdmin} />
+            </TabsContent>
+
+            <TabsContent value="hitLogs" className="pt-4">
+              <LLMGuardrailHitLogs />
+            </TabsContent>
+
+            <TabsContent value="feedback" className="pt-4">
+              <FeedbackEventLogs />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
         {showDocExtractTab && (
           <TabsContent value="docExtract">
