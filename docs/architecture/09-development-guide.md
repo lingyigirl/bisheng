@@ -6,13 +6,27 @@
 
 ### 后端环境
 
-> **系统依赖**：`ffmpeg`（含 `ffprobe`）。知识库音视频解析在送 ASR 前会用 ffmpeg 将音频转成 16kHz 单声道 wav，
-> 缺失时上传音视频会直接报 `ffmpeg is not installed`。Docker 镜像已内置，源码部署需自行安装：
+**系统依赖**（非 Python 包，源码部署需单独安装；Docker 镜像已内置）：
+
+| 依赖 | 用途 | 缺失时的表现 | 安装 |
+|---|---|---|---|
+| `ffmpeg`（含 `ffprobe`） | 知识库音视频解析：先转成 16kHz 单声道 wav 再送 ASR | 上传音视频报 `ffmpeg is not installed` | `sudo apt install -y ffmpeg` |
+| Playwright Chromium | 会话/消息导出 PDF（headless Chromium 渲染） | 导出 PDF 报 `BrowserType.launch: Executable doesn't exist` | `sudo .venv/bin/playwright install-deps chromium` 然后 `.venv/bin/playwright install chromium` |
+| `pandoc` | 导出 DOCX（`pypandoc` 调用系统 pandoc） | 导出 Word 失败 | `sudo apt install -y pandoc` |
+| LibreOffice（`soffice`） | 知识库解析 .doc / .ppt / .xls 等 Office 格式 | 对应格式解析失败 | `sudo apt install -y libreoffice` |
 
 ```bash
-sudo apt install -y ffmpeg
-which ffmpeg ffprobe   # 确认安装成功
+# 一次性安装（Ubuntu / Debian）：系统程序
+sudo apt install -y ffmpeg pandoc libreoffice
+
+# Playwright 的 Chromium 二进制需在装完 Python 依赖后单独下载（不要用 sudo，否则装到 root 的缓存）
+cd src/backend
+.venv/bin/playwright install-deps chromium   # 装 Chromium 需要的系统库（需 root）
+.venv/bin/playwright install chromium        # 下载浏览器到当前用户缓存
+which ffmpeg ffprobe                          # 确认 ffmpeg 可执行文件存在
 ```
+
+> 上面的 Playwright / pypandoc **Python 包**由下一节的 `uv sync` 安装；浏览器二进制和系统程序不在其中，必须单独装。
 
 ```bash
 # 1. 创建 Python 3.11 虚拟环境（pyproject 要求 requires-python >=3.11）
