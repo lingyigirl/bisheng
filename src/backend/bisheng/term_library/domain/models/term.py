@@ -51,7 +51,7 @@ class TermLibraryTerm(SQLModelSerializable, table=True):
         sa_column=Column(
             JsonType,
             nullable=True,
-            comment='别名数组; 与标准词一同参与租户内唯一性校验',  # noqa: RUF001 (fullwidth punctuation in a Chinese column comment)
+            comment='别名数组; 与标准词一同参与租户内唯一性校验',
         ),
     )
     definition: str = Field(

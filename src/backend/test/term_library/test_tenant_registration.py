@@ -1,3 +1,6 @@
+# ruff: noqa: RUF002 -- Chinese terms/questions under test;
+# fullwidth punctuation is correct in them.
+
 """F060 T-03: the term library's tenant filter is actually wired up.
 
 Tenant filtering is DISCOVERED, not declared: `_discover_tenant_aware_tables`
