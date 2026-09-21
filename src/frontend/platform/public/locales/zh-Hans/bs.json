@@ -2361,6 +2361,7 @@
     "list": {
       "total": "共 {{total}} 个数据源",
       "create": "新建数据源",
+      "searchNamePlaceholder": "按名称搜索",
       "colName": "名称",
       "colEngine": "引擎",
       "colAddress": "地址",

@@ -2416,6 +2416,7 @@
     "list": {
       "total": "{{total}} datasources",
       "create": "New Datasource",
+      "searchNamePlaceholder": "Search by name",
       "colName": "Name",
       "colEngine": "Engine",
       "colAddress": "Address",
