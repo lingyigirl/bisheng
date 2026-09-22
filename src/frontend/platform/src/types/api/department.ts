@@ -79,6 +79,21 @@ export interface DepartmentCreateForm {
   sort_order?: number
   default_role_ids?: number[]
   admin_user_ids?: number[]
+  /**
+   * F062 node marker: true = 部门 (transparent to its ancestors), false = 机构
+   * (a visibility boundary). Defaults to false and is NEVER inherited from the
+   * parent (AC-03) — "transparent" is the permissive state, so inheriting it
+   * would widen visibility as a side effect of where "create" was clicked.
+   *
+   * Unlike the same-named field on `DepartmentUpdateForm`, creation is NOT gated
+   * above the ordinary create permission (the backend's `acreate_department` has
+   * no `_ensure_may_change_node_type`, unlike `aupdate_department`). A new node
+   * holds no libraries, and being 部门 only joins it to the CREATOR's own org
+   * domain — so it cannot push existing content across a boundary the way a flip
+   * can. What it does decide up front is that whatever is placed under this node
+   * later is transparent within that domain.
+   */
+  is_department?: boolean
 }
 
 export interface DepartmentUpdateForm {
