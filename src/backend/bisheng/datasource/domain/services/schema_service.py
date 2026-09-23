@@ -121,6 +121,37 @@ async def update_description(table_id: int, description: str | None) -> None:
     await DbDatasourceTableDao.aupdate_human_fields(table_id, business_desc=description)
 
 
+def _normalise_overrides(overrides: dict[str, str] | None) -> dict[str, str] | None:
+    """Strip each value and drop the ones that stripped to nothing (决策 5).
+
+    An empty string and an absent key behave identically on the INJECTION side
+    (`render_table` tests truthiness), but not in the UI: an empty value would
+    read as "订正过、订正为空", where AC-09 requires "从未订正、回落库内注释".
+    Normalising at the closest point to the write is what keeps that ambiguity
+    out of the database, so no reader ever has to guess between the two.
+
+    Returns `None` rather than `{}` when nothing is left: NULL is the stored
+    form of "no overrides", and `{}` would be indistinguishable from "cleared"
+    further downstream.
+    """
+    if not overrides:
+        return None
+    cleaned = {name: value.strip() for name, value in overrides.items() if value.strip()}
+    return cleaned or None
+
+
+async def update_column_overrides(table_id: int, overrides: dict[str, str] | None) -> None:
+    """Set one table's per-field overrides (F064 AC-01).
+
+    Normalises first (see above), then writes through the human-columns DAO
+    writer -- the same one `update_description` uses. Two service functions, one
+    writer: each names exactly one column, so neither can clear the other.
+    """
+    await DbDatasourceTableDao.aupdate_human_fields(
+        table_id, column_overrides=_normalise_overrides(overrides)
+    )
+
+
 async def list_tables_for_admin(datasource_id: int) -> list[dict[str, Any]]:
     """What the admin UI shows: the collected structure plus the description.
 
@@ -136,6 +167,11 @@ async def list_tables_for_admin(datasource_id: int) -> list[dict[str, Any]]:
             'table_comment': row.table_comment,
             'structure_snapshot': row.structure_snapshot or [],
             'business_desc': row.business_desc,
+            # F064: the admin UI resolves each field's EFFECTIVE comment from
+            # this plus the snapshot. Defaulting to {} rather than None keeps
+            # the front end from having to nil-check before indexing, and is
+            # read-only either way -- the stored form stays NULL (决策 5).
+            'column_overrides': row.column_overrides or {},
             'enabled': row.enabled,
         }
         for row in rows

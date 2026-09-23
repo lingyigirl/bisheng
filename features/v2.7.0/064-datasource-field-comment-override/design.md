@@ -159,7 +159,7 @@
 | 契约 | 变更 | 兼容性 |
 |---|---|---|
 | `PUT /api/v1/datasource/table-metadata/{table_id}` | 请求体新增**可选** `column_overrides: dict[str,str] \| null` | **向后兼容**：不提交该键即不写该列 |
-| `GET /api/v1/datasource/{id}/tables` | 响应每行新增 `column_overrides` | 纯新增字段，旧前端忽略即可 |
+| `GET /api/v1/datasource/{id}/tables` | 响应每行新增 `column_overrides`。**存储形态是 `NULL`，响应里恒为对象**（无订正 ⇒ `{}`） | 纯新增字段，旧前端忽略即可。`{}`/`NULL` 的差异**不出现在对外契约上**：调用方只需处理对象形态，不必判空 |
 | 注入给模型的 schema 文本 | 字段说明可能来自人工订正 | 文本形态不变（仍是 `-- 说明` 后缀） |
 
 ### 6.2 我依赖别人的（Incoming）

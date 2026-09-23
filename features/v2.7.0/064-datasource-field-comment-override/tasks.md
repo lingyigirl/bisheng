@@ -18,9 +18,9 @@
 
 | ID | 任务 | 覆盖 AC | 验证标准 | 状态 |
 |---|---|---|---|---|
-| T-04 | `schema_service.update_column_overrides`：`strip()` + 丢弃空值键（决策 5） | AC-09 | 单测：`{"a":" ","b":"x"}` 落库为 `{"b":"x"}`；全空 → `None` | ☐ |
-| T-05 | `schema_service.list_tables_for_admin` 返回 `column_overrides` | AC-08 | 单测：返回字典含该键 | ☐ |
-| T-06 | `areplace_snapshot` 的 UPDATE 列表**不含**新列（回归确认，非改动） | AC-04 | 单测：重采集后订正仍在 | ☐ |
+| T-04 | `schema_service.update_column_overrides`：`strip()` + 丢弃空值键（决策 5），再经 `aupdate_human_fields` 写入（**不再有独立的 DAO 入口**，见偏差记录） | AC-09 | 单测：`{"a":" ","b":"x"}` → `{"b":"x"}`；全空 → `None`；`"  含税金额  "` → 存 trim 后的值 | ☑ |
+| T-05 | `schema_service.list_tables_for_admin` 返回 `column_overrides`（存的是 NULL，**读出去归一化为 `{}`**，前端免 null-check） | AC-08 | 单测：有订正 ⇒ 原样返回；存 NULL ⇒ 返回 `{}` | ☑ |
+| T-06 | `areplace_snapshot` 的 UPDATE 列表**不含**新列（回归确认，非改动） | AC-04 | 两半：DAO 侧既有 `test_snapshot_refresh_updates_only_the_collected_columns` 断言列清单恰为 `{structure_snapshot, table_comment}`（加新列即红）；服务侧新增「重采集**从不**触达人工写入者」 | ☑ |
 
 ## Wave C — 注入与召回
 
@@ -61,6 +61,16 @@
 
 （实现过程中按 Wave 追加：做了什么、踩了什么坑、偏差与处理。）
 
+### Wave B（2026-09-23）
+
+**三个任务按设计实现，无偏差**（形态受 Wave A 的决策 2 变更影响，见上）。
+
+- **T-04**：`update_column_overrides` 先归一化再写。两条决策 5 的语义各有一例：`{"a":" ","b":"x"}` → `{"b":"x"}`；全空 / 空入参 → `None`（**不是 `{}`** —— `{}` 会让下游多出一个「订正过、订正为空」态，而 AC-09 只承认两个态）。另加一例「padded 值存的是 trim 后的」：只断言「非空键存活」是抓不住 padding 被原样存下的。
+- **T-05**：读路径把存储形态 `NULL` 归一化为 `{}`，前端免 null-check。**存的是 NULL、读的是 `{}`**，两个方向各有一条用例，这个默认值因此是决策而非巧合。
+- **T-06**：**非改动，是回归护栏**。DAO 侧已有的 `test_snapshot_refresh_updates_only_the_collected_columns` 断言列清单**恰为** `{structure_snapshot, table_comment}` —— 往 `areplace_snapshot` 里加一行新列就会红。服务侧补了另一半：重采集**从不触达**人工写入者（那是唯一能命名 `column_overrides` 的方法）。
+- **变异验证（4/4 捕获）**：① 归一化失效原样存；② 只 strip 不丢弃空白（全空存成 `{}`）；③ 读路径不归一化 `None`；④ 在重采集路径插一次人工写入调用。文件逐字节还原、无残留。
+- **验证**：`test/datasource/` **473 passed**；`ruff` 干净。
+
 ### Wave A（2026-09-23）
 
 **T-01 / T-02 按设计实现，无偏差。**
@@ -73,5 +83,5 @@
 - **处置（选定 C，用户确认）**：**扩展** `aupdate_business_desc` → `aupdate_human_fields(table_id, *, business_desc=…, column_overrides=…)`，成为**人工列的唯一写入者**；`areplace_snapshot` 仍是机器列的唯一写入者。**扩展既有入口不是新增入口**，C1 字面合规。
 - **随之而来的实现约束**：人工列上 `None` 是**合法值**（表示清空，决策 5），所以默认值**不能**是 `None`，必须用哨兵 `_UNSET` —— 否则「只保存业务描述」会把全表字段订正清空且不报错。已作为 **design 坑 8** 记录，并写进 `test_datasource` 的一对用例（`test_an_empty_call_writes_nothing_at_all` / `test_explicit_none_clears_rather_than_being_treated_as_unset`）——**只有哨兵正确时这两条才会同时通过**。
 - **同步范围**：design 决策 2（重写）+ §2 新增 C1 约束行 + §4.3 `dao.py` 行 + 新增坑 8 + 修订历史；`schema_service.update_description` 改调新方法；3 处既有测试引用改名。
-- **对后续 Wave 的影响**：**T-04 / T-10 的形态随之改变** —— `schema_service` 不再有独立的 `update_column_overrides` 写入路径（归一化后交给同一个 `aupdate_human_fields`），端点仍按 `model_fields_set` 决定「传哪些字段」。**决策 3（一次提交、presence-based）不受影响**，反而与 DAO 层的哨兵同构。
+- **对后续 Wave 的影响**：**T-04 / T-10 的形态随之改变** —— 变的不是 service 的函数个数（`update_column_overrides` / `update_description` 两个都保留，各自只写一列），而是**它们下面只有一个 DAO 入口**：`aupdate_human_fields`。端点仍按 `model_fields_set` 决定调用哪一个（T-10 原文「分别写入」正是这个意思）。**决策 3 不受影响**，且与 DAO 层的哨兵同构：API 判「有没有提交」、DAO 判「有没有传」，同一条规则两层各把一次关。
 - **验证**：`test/datasource/` **467 passed**；`arch-guard.sh` exit 0；`ruff` 干净；`alembic heads` 单行。
