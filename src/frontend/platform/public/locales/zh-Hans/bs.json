@@ -2471,7 +2471,14 @@
       "placeholder": "例如：订单主表，一行一笔订单，status=1 表示已支付",
       "dbComment": "库内注释",
       "cancel": "取消",
-      "save": "保存"
+      "save": "保存",
+      "fieldsLabel": "字段说明",
+      "fieldsHint": "为单个字段补充或修正说明。清空输入框即移除该字段的订正，回落为库内注释。",
+      "fieldOverridden": "已订正",
+      "fieldNotInDatabase": "已不在库中",
+      "fieldDbComment": "库内原值",
+      "fieldNoDbComment": "未采集到注释",
+      "fieldOverridePlaceholder": "为此字段填写说明"
     },
     "failures": {
       "total": "共 {{total}} 条",

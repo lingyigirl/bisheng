@@ -90,6 +90,14 @@ export interface DatasourceTableRow {
   table_comment?: string | null;
   structure_snapshot: DatasourceColumn[];
   business_desc?: string | null;
+  /**
+   * F064 — the admin's per-field corrections, keyed by FIELD NAME.
+   *
+   * The server always sends an object (`{}` when nothing is overridden), so
+   * callers never have to branch on null; the optionality here is only for
+   * rows built by hand in tests.
+   */
+  column_overrides?: Record<string, string>;
   enabled: number;
 }
 
@@ -211,12 +219,23 @@ export async function collectDatasourceTablesApi(
   });
 }
 
+/**
+ * Save a table's human-authored metadata (F061 AC-11; F064 AC-01).
+ *
+ * `columnOverrides` is OMITTED from the body when the caller does not pass it,
+ * and that is not cosmetic: the server writes a field only when the key is
+ * present, so sending `column_overrides: null`/`{}` from a caller that never
+ * meant to touch the overrides would clear them. Callers that only edit the
+ * description keep sending exactly what they used to.
+ */
 export async function updateTableDescriptionApi(
   tableId: number,
   businessDesc: string,
+  columnOverrides?: Record<string, string>,
 ): Promise<{ id: number }> {
   return await axios.put(`/api/v1/datasource/table-metadata/${tableId}`, {
     business_desc: businessDesc,
+    ...(columnOverrides === undefined ? {} : { column_overrides: columnOverrides }),
   });
 }
 

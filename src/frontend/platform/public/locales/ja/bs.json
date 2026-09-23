@@ -2471,7 +2471,14 @@
       "placeholder": "例：受注テーブル。1行1注文、status=1 は支払済み",
       "dbComment": "DBコメント",
       "cancel": "キャンセル",
-      "save": "保存"
+      "save": "保存",
+      "fieldsLabel": "フィールドの説明",
+      "fieldsHint": "個々のフィールドの説明を補足・修正します。空欄にすると訂正が解除され、DB のコメントに戻ります。",
+      "fieldOverridden": "訂正済み",
+      "fieldNotInDatabase": "データベースに存在しません",
+      "fieldDbComment": "DB の値",
+      "fieldNoDbComment": "コメント未取得",
+      "fieldOverridePlaceholder": "このフィールドの説明"
     },
     "failures": {
       "total": "{{total}} 件",

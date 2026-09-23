@@ -2526,7 +2526,14 @@
       "placeholder": "e.g. Orders, one row per order; status=1 means paid",
       "dbComment": "DB comment",
       "cancel": "Cancel",
-      "save": "Save"
+      "save": "Save",
+      "fieldsLabel": "Field descriptions",
+      "fieldsHint": "Correct or add a description for an individual field. Clearing the box removes the correction and falls back to the DB comment.",
+      "fieldOverridden": "Corrected",
+      "fieldNotInDatabase": "No longer in the database",
+      "fieldDbComment": "In the database",
+      "fieldNoDbComment": "No comment collected",
+      "fieldOverridePlaceholder": "Describe this field"
     },
     "failures": {
       "total": "{{total}} records",

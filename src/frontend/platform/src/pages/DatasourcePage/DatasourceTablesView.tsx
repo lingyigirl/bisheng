@@ -10,6 +10,7 @@ import {
   listDatasourceTablesApi,
   selectDatasourceTablesApi,
   type AvailableTableRow,
+  type DatasourceColumn,
   type DatasourceTableRow,
 } from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
@@ -315,6 +316,7 @@ export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: P
                       comment: t("datasource.tables.colFieldComment"),
                     }}
                     commentMissingText={t("datasource.tables.commentUnavailable")}
+                    overriddenText={t("datasource.description.fieldOverridden")}
                     businessDescLabel={t("datasource.tables.businessDesc")}
                     noBusinessDescText={t("datasource.tables.noBusinessDesc")}
                   />
@@ -348,6 +350,47 @@ interface ColumnTableProps {
   commentMissingText: string;
   businessDescLabel: string;
   noBusinessDescText: string;
+  overriddenText: string;
+}
+
+/**
+ * The comment the MODEL is given for this column: the admin's correction when
+ * there is one, the collected comment otherwise (F064 AC-06 / AC-10).
+ *
+ * Showing the collected value here instead would be the worse kind of wrong —
+ * the admin would be checking their corrections against a screen that does not
+ * display them, and the "no comment collected" warning would sit next to a
+ * field the model describes perfectly well.
+ *
+ * The override is tested for truthiness, matching the injection path: the write
+ * side never stores a blank, and `render_table` treats `None` and `""` alike
+ * (F064 坑 2), so the screen and the prompt agree by the same rule.
+ */
+function EffectiveComment({
+  column,
+  override,
+  missingText,
+  overriddenText,
+}: {
+  column: DatasourceColumn;
+  override?: string;
+  missingText: string;
+  overriddenText: string;
+}) {
+  if (override) {
+    return (
+      <>
+        <span>{override}</span>
+        <span className="ml-1.5 rounded bg-blue-500/[0.08] px-1 py-0.5 text-caption text-blue-600">
+          {overriddenText}
+        </span>
+      </>
+    );
+  }
+  if (column.comment === undefined || column.comment === null) {
+    return <span className="italic text-amber-600">{missingText}</span>;
+  }
+  return <>{column.comment}</>;
 }
 
 /**
@@ -366,8 +409,10 @@ function CollapsibleColumns({
   commentMissingText,
   businessDescLabel,
   noBusinessDescText,
+  overriddenText,
 }: ColumnTableProps) {
   const columns = table.structure_snapshot ?? [];
+  const overrides = table.column_overrides ?? {};
   return (
     <div className="rounded-md bg-muted/40 p-2 text-xs">
       <div className="mb-1">
@@ -393,11 +438,12 @@ function CollapsibleColumns({
                 <td className="py-0.5 pr-3">{column.name}</td>
                 <td className="py-0.5 pr-3 text-muted-foreground">{column.type}</td>
                 <td className="py-0.5">
-                  {column.comment === undefined || column.comment === null ? (
-                    <span className="italic text-amber-600">{commentMissingText}</span>
-                  ) : (
-                    column.comment
-                  )}
+                  <EffectiveComment
+                    column={column}
+                    override={overrides[column.name ?? ""]}
+                    missingText={commentMissingText}
+                    overriddenText={overriddenText}
+                  />
                 </td>
               </tr>
             ))}
