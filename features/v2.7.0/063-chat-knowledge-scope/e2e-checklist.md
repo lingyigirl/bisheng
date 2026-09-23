@@ -45,9 +45,18 @@
 
 ---
 
-## 自动化 E2E 实跑结果（2026-09-22）
+## 自动化 E2E 实跑结果（2026-09-23 复跑）
 
-`test/e2e/test_e2e_f063_chat_knowledge_scope.py` — **8 passed / 0 failed / 0 skipped**（38s，真后端 `:7860` + 远端中间件 `172.19.70.189` + 真模型 `deepseek-v4-flash`）。
+`test/e2e/test_e2e_f063_chat_knowledge_scope.py` — **10 passed / 0 failed / 0 skipped**（70s，真后端 `:7860` + 远端中间件 `172.19.70.189` + 真模型）。
+
+> 2026-09-22 首跑为 8 passed（38s）。本次**没有重启后端**：:7860 的进程启动于 09-23 09:20，
+> 而 F063 源码最后修改于 09-22 18:58，进程加载的就是当前代码 —— 原先记录的「需重启」前提不成立。
+>
+> **新增的 2 条**（`no_llm`，6s）补的是**任务模式落地页**这条链：原先 8 条全部走日常漏斗
+> （`POST /workstation/chat/completions`），**没有一条经过** `POST /api/v1/linsight/workbench/submit`，
+> 于是 `submit_user_question` 的提交期物化 —— 本特性**唯一一处对外行为变化** —— 当时零全链路覆盖。
+> 断言落在**具体 id 列表**上（布尔是死字段，坑 16），且与**列表入口**（`GET /knowledge?type=0`）比对，
+> 与 AC-10 同一锚点；两条互为对照，不认档位的实现必然挂其中一条。
 
 运行方式（口令只走环境变量，不落文件）：
 
@@ -134,8 +143,9 @@ E2E_ADMIN_PASSWORD='<口令>' uv run python -m pytest test/e2e/test_e2e_f063_cha
 - [ ] **独立对话页**：同上
 - [ ] **分享页**：同上（若分享页为只读，则确认只读且显示口径一致）
 - [ ] **任务模式落地页**（`/linsight/new`）：默认显示 `全部组织知识库` 汇总卡；不选任何东西直接发起任务 ⇒ 提交体 `org_knowledge_enabled=true`
-- [ ] **（H1' 新增，本次唯一一处对外行为变化）** 上一条发起后，到库里读**新建会话版本**：`linsight_session_version.organization_knowledge_ids` 必须是**该用户有权限的全部组织库 id**（不是 `NULL`、不是 `[]`）。这是「落地页的『全部』真的生效」的**唯一有效断言** —— 只断言提交体的 `org_knowledge_enabled` 是无效的，该布尔在任务执行期**不被读取**（坑 16；落地页档位曾经因此纯属显示，会话一生不查任何组织库）。非管理员账号跑一遍以确认走的是收口后的集合，管理员账号跑一遍以确认 `is_admin` 分支
-- [ ] 另起一个新会话，把卡片移除成 `不使用` 后再发起 ⇒ 落库的 `organization_knowledge_ids` 为 `NULL`/空（**「不使用」的落库证据同样是 id 列表，不是布尔**）
+- [x] **（H1' 新增，本次唯一一处对外行为变化）—— 已由自动化覆盖（2026-09-23）** 新建会话版本里 `linsight_session_version.organization_knowledge_ids` 必须是**该用户有权限的全部组织库 id**（不是 `NULL`、不是 `[]`）。这是「落地页的『全部』真的生效」的**唯一有效断言** —— 只断言提交体的 `org_knowledge_enabled` 是无效的，该布尔在任务执行期**不被读取**（坑 16）。
+  > 用例 `test_landing_page_all_tier_materialises_the_same_set_as_the_list_entry`：从**提交响应**读该字段（端点把同一对象紧接着 `insert_one`，响应即落库内容，无需连库），并与**列表入口** `GET /knowledge?type=0` 比对。**仍是管理员账号**——非管理员那半（确认走的是收口后的集合、`is_admin` 分支正确）**尚未覆盖**，需要另配一个「部分授权」账号
+- [x] 卡片移除成 `不使用` 后再发起 ⇒ `organization_knowledge_ids` 为 `NULL`/空 —— **已由自动化覆盖**：`test_landing_page_none_tier_stores_no_ids`。它与上一条**互为对照**（不认档位的实现必然挂其一）
 - [ ] 取消卡片提示：**同一次提交**的提交体里 `org_knowledge_enabled=false`（旧实现在此处会**误报 true**——M1 修掉的那个 bug），且附件条上不留空白 chip
 
 ### AC-25: 任务模式执行态零改动（保护范围）

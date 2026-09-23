@@ -57,6 +57,7 @@ granted nothing, so a leftover can never widen anyone's visibility — and it is
 also the very state the case asserts on.
 """
 
+import json
 import os
 import pathlib
 import re
@@ -74,6 +75,10 @@ pytestmark = pytest.mark.e2e
 CHAT_URL = f"{API_BASE}/workstation/chat/completions"
 KNOWLEDGE_URL = f"{API_BASE}/knowledge"
 DEPT_STATS_URL = f"{API_BASE}/knowledge/department_stats"
+# The task-mode landing page's submit. A different entry with its own chain
+# (`LinsightWorkbenchImpl.submit_user_question`), which is exactly why it needs
+# its own case: nothing else in this file goes through it.
+SUBMIT_URL = f"{API_BASE}/linsight/workbench/submit"
 
 # Everything this suite creates is prefixed so a re-run and a parallel suite
 # never collide, and so cleanup can be scoped to its own data (>=5 chars).
@@ -407,6 +412,83 @@ def test_ac12_a_none_tier_turn_leaves_every_visibility_entry_untouched(client, a
 
     assert _visible_org_ids(client, admin_token) == before_list
     assert _dept_badges(client, admin_token) == before_badges
+
+
+def _submit_landing_page(client: httpx.Client, token: str, body: dict) -> dict:
+    """Submit the task-mode landing page and return the session version it built.
+
+    The endpoint answers with SSE, but the event this suite needs carries no
+    incremental token: `linsight_workbench_submit` holds the whole
+    `linsight_session_version` the handler is about to persist — the same object
+    goes to `insert_one` on the very next line (endpoints/linsight.py). So the
+    event IS the stored row, and no DB connection is needed to observe it.
+    """
+    with client.stream(
+        "POST",
+        SUBMIT_URL,
+        json={"question": f"{PREFIX}landing page scope", **body},
+        headers=auth_headers(token),
+        timeout=120,
+    ) as resp:
+        assert resp.status_code == 200, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        for line in resp.iter_lines():
+            if not line.startswith("data:"):
+                continue
+            event = json.loads(line[len("data:") :].strip())
+            if isinstance(event, dict) and "linsight_session_version" in event:
+                return event["linsight_session_version"]
+    raise AssertionError("the submit stream ended without a linsight_workbench_submit event")
+
+
+# ---------------------------------------------------------------------------
+# no_llm — the task-mode landing page (the feature's only outward change)
+# ---------------------------------------------------------------------------
+
+
+def test_landing_page_all_tier_materialises_the_same_set_as_the_list_entry(client, admin_token):
+    """The landing page's 「全部」 must resolve to the same libraries as everywhere else.
+
+    This is the claim that had no test at all: the 8 sibling cases all drive the
+    daily funnel (`POST /workstation/chat/completions`), and none of them touches
+    `submit_user_question`, which is the ONE place this feature changed outward
+    behaviour (设计决策 10 / 14). A regression here makes the landing page's tier
+    purely cosmetic — the prompt and the retrieval both read the id lists, so the
+    coarse boolean it also sends is a dead field (坑 16).
+
+    Ground truth is the LIST entry, the same anchor the AC-10 case uses: for an
+    admin the expansion skips narrowing, so 「全部」 is exactly what the platform
+    list reports. Unit tests cannot make this comparison — both sides would be
+    the same mock.
+    """
+    listed = _visible_org_ids(client, admin_token)
+    assert listed, "no organization libraries in this deployment — the case would pass vacuously"
+
+    version = _submit_landing_page(client, admin_token, {"organization_knowledge_all": True})
+    stored = version.get("organization_knowledge_ids")
+
+    assert stored, (
+        "the landing page accepted organization_knowledge_all but stored "
+        f"{stored!r} — the tier never reached the task run (坑 16: the task reads "
+        "the id lists, never the booleans)"
+    )
+    assert set(stored) == listed, (
+        "the landing page materialised a different set than the list entry: "
+        f"extra={sorted(set(stored) - listed)} missing={sorted(listed - set(stored))}"
+    )
+
+
+def test_landing_page_none_tier_stores_no_ids(client, admin_token):
+    """The other side of the same field: 「不使用」 must store nothing, not everything.
+
+    Without this the case above would pass for an implementation that always
+    expanded — the assertion would never see the tier being consulted at all.
+    """
+    version = _submit_landing_page(client, admin_token, {"organization_knowledge_all": False})
+
+    assert not version.get("organization_knowledge_ids"), (
+        f"the none tier stored {version.get('organization_knowledge_ids')!r} — "
+        "a task run would search libraries the user explicitly refused"
+    )
 
 
 # ---------------------------------------------------------------------------
