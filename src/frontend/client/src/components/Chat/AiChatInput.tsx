@@ -34,6 +34,8 @@ import { useFileDropAndPaste } from "~/pages/appChat/useFileDropAndPaste";
 import { bishengConfState } from "~/pages/appChat/store/atoms";
 import { checkIfScrollable, cn, removeFocusRings } from "~/utils";
 import {
+    hasPickedKnowledge,
+    onlyOrgScopeMarker,
     removeSelectedOrgKb,
     showsOrgKbSummary,
     withoutOrgScopeMarker,
@@ -451,7 +453,11 @@ const AiChatInput = memo(
                                 // Legacy mutex: adding files clears kb + tools.
                                 // Agent mode keeps them independent so the model can use everything.
                                 if (files && files.length > 0 && !agentMode) {
-                                    onSelectedOrgKbsChange?.([]);
+                                    // F063 review M1 — clear the PICKED KBs only. The org
+                                    // tier is a standing setting, not a pick, so dropping
+                                    // its marker would let the AC-02 fallback answer again
+                                    // and re-open 「全部」 for a user who chose 「不使用」.
+                                    onSelectedOrgKbsChange?.(onlyOrgScopeMarker(selectedOrgKbs));
                                     onSearchTypeChange?.("");
                                 }
                             }}
@@ -502,7 +508,11 @@ const AiChatInput = memo(
                                     onChange={(val) => {
                                         onSelectedOrgKbsChange(val);
                                         // Legacy mutex only; agent mode keeps concurrent selections.
-                                        if (val.length > 0 && !agentMode) {
+                                        // F063 review H1 — `val.length` counted the tier marker as
+                                        // a picked KB (坑 13), so choosing 「不使用」 — or dropping the
+                                        // last space, which leaves the marker alone — wiped the
+                                        // attachments the user had just added.
+                                        if (hasPickedKnowledge(val) && !agentMode) {
                                             setChatFiles(null);
                                             onSearchTypeChange?.("");
                                         }
@@ -550,7 +560,9 @@ const AiChatInput = memo(
                                     value={selectedOrgKbs}
                                     onChange={(val) => {
                                         onSelectedOrgKbsChange(val);
-                                        if (val.length > 0 && !agentMode) {
+                                        // F063 review H1 — the tier marker is not a picked
+                                        // KB; see the `plus` variant above.
+                                        if (hasPickedKnowledge(val) && !agentMode) {
                                             setChatFiles(null);
                                             onSearchTypeChange?.("");
                                         }
@@ -575,7 +587,9 @@ const AiChatInput = memo(
                                         // Legacy mutex: clear files + kb when tool activated
                                         if (type === "netSearch") {
                                             setChatFiles(null);
-                                            onSelectedOrgKbsChange?.([]);
+                                            // Same as the file-added mutex above: the tier
+                                            // marker outlives it (F063 review M1).
+                                            onSelectedOrgKbsChange?.(onlyOrgScopeMarker(selectedOrgKbs));
                                         }
                                     }}
                                     disabled={toolsDisabled}

@@ -13,7 +13,7 @@
 
 **关联**: [spec.md](./spec.md) · [tasks.md](./tasks.md)
 **版本**: v2.7.0
-**最后更新**: 2026-09-22（初版，实现尚未开工）
+**最后更新**: 2026-09-23（实现已合入 `455e69c20`；同日经实现后 code-review 复审，§4.1 全量刷新）
 
 > ✅ **已裁决（2026-09-22，需求方）：存量数据不做迁移，一律按全新口径处理** —— 见 §3 决策 8。
 > 连带影响：spec 的 **AC-21** 原字面是「升级即按『全部』口径迁移」，已按此裁决**同步改写**（原字面会让「只选过知识空间」的用户升级后静默开始检索全公司知识库）。读旧版 spec 的人请注意这一处口径变更。
@@ -266,27 +266,62 @@ ChatKnowledge（输入区 + 菜单）
        └─ AttachmentBar 渲染 src/KbCard（每库一张 148px 卡）→ 移除 = onRemoveKb
 
 点击发送 → useAiChat.sendMessage
-  └─ 构造 payload.use_knowledge_base = {personal_knowledge_enabled, organization_knowledge_ids, knowledge_space_ids}
-       （useAiChat.ts:272-292 正常发送；useAiChat.ts:744-751 重新生成/继续追问）
+  └─ 构造 payload.use_knowledge_base = toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)
+       （useAiChat.ts:277 正常发送；useAiChat.ts:741 重新生成/继续追问 —— **两处同一函数、同一实参**。
+         分叉会表现成「第一次回答知道、重试就不知道」，这是 T-11 专门守的失败模式）
   └─ POST SSE → 后端 chat_service
 
 后端（chat_service.py）
-  ├─ _resolve_user_kb_selection(data)                       ← 唯一 KB 解析漏斗（第 970 行）
-  │    └─ KnowledgeDao.aget_list_by_ids(org_ids + space_ids) → [{id,name,description,tags,source}]
-  │         ├─ _prepare_tools(...) → _build_knowledge_search_tool（第 1121 行，kb_id_whitelist 第 645 行）
-  │         └─ 用户提示词 <selected_knowledge_bases> 区块
-  └─ 工具调用 search_knowledge_bases → WorkStationService.queryChunksFromDB（workstation_service.py:1089）
-       ├─ _filter_visible_space_kb_ids：只筛知识空间桶；组织桶**原样直通**（第 994 行注释 AC-14）
-       ├─ 组织桶非管理员 → filter_knowledge_ids_by_permission_async(login_user, org_ids, "use_kb")  ← 权限收口
-       │    └─ 被拒的库进 failures[]，前端渲染成失败 KB chip
-       └─ 逐库 get_multi_knowledge_vectorstore → 检索 → 文档总量上限 100
+  ├─ _resolve_user_kb_selection(data, login_user)           ← 唯一 KB 解析漏斗（第 1021 行）
+  │    ├─ organization_knowledge_all 为假（含旧客户端 / 任务模式）── 既有路径，**逐字未变**
+  │    │    └─ KnowledgeDao.aget_list_by_ids(org_ids + space_ids)（第 974 行）
+  │    │         → [{id,name,description,tags,source}]，**不做权限收口**（见下方「既有事实」）
+  │    └─ 为真 ── 「全部」路径，本特性新增（第 1042 行分叉）
+  │         └─ _expand_all_org_knowledge(login_user)（第 980 行）
+  │              ├─ KnowledgeDao.aget_all_knowledge(knowledge_type=NORMAL)  全租户 type=0 候选
+  │              │    只带 type 条件，靠 C3 的 do_orm_execute 注入租户条件；
+  │              │    **无 limit、无分页、不带 filter_department_ids**（真实 SQL 见 T-04）
+  │              ├─ 非管理员 → filter_knowledge_ids_by_permission_async(login_user, candidate_ids, "use_kb")（第 1011 行）
+  │              │    **与检索侧 workstation_service.py:1116 是同一调用、同一 permission_id**（INV-21）
+  │              └─ **fail-closed**：候选枚举或收口任一步抛异常 → 返回 `[]`；
+  │                   收口失败**绝不**返回候选集本身（第 1002-1016 行，这是本特性最关键的一条）
+  │         → 返回**整行 ORM 对象**（list[Knowledge]）；dict 化发生在漏斗末尾，不在 helper 里
+  │         → 展开结果同时决定 org / space 分桶（桶按行的 `source`），因此**检索桶与提示词同源**
+  ├─ _prepare_tools(...) → _build_knowledge_search_tool（第 623 行，kb_id_whitelist 第 646 行）
+  └─ 用户提示词 <selected_knowledge_bases> 区块
+       └─ 工具调用 search_knowledge_bases → WorkStationService.queryChunksFromDB（workstation_service.py:1089）
+            ├─ _filter_visible_space_kb_ids：只筛知识空间桶；组织桶**原样直通**（workstation_service.py:985 注释 AC-14）
+            ├─ 组织桶非管理员 → filter_knowledge_ids_by_permission_async(login_user, org_ids, "use_kb")（第 1116 行）← 权限收口
+            │    └─ 被拒的库进 failures[]，前端渲染成失败 KB chip
+            └─ 逐库 get_multi_knowledge_vectorstore → 检索 → 文档总量上限 100
+```
+
+> **既有事实，读 diff 时勿误读**：上图的**显式 id 路径不做收口** —— `aget_list_by_ids` 只受租户过滤，
+> 所以同一租户内用户无授权的库名/描述会进提示词，直到检索侧才被 `use_kb` 挡下并渲染成失败 chip。
+> F063 只给「全部」档位补上了收口，显式路径按 AC-25 **保持原样**。不要以为整个漏斗都收口了。
+
+**落地页提交（任务模式 · 输入区发起）—— 本特性唯一一处对外行为变化（决策 14 / H1'）：**
+
+```
+TaskModeChatInput.handleSend（档位由落地页自己的状态给出）
+  └─ useLinsightSubmit → payload.organization_knowledge_all = submission.organizationKnowledgeAll
+  └─ POST /api/v1/linsight/workbench/submit
+
+后端 LinsightWorkbenchImpl.submit_user_question（workbench_impl.py:255-282）
+  ├─ organization_knowledge_all 为真时**在提交期物化**：
+  │    └─ **局部 import** 复用同一份展开 _expand_all_org_knowledge(login_user)（第 269 行）
+  │         （局部而非模块级：workstation 是下游模块，模块级 import 会成环）
+  │         → org_ids = [kb.id for kb in ...] or None
+  └─ LinsightSessionVersion.organization_knowledge_ids = org_ids（第 282 行）  ← 落库的是**具体 id**，不是布尔
+       └─ 任务执行期 task_exec._resolve_user_knowledge_bases 只做 aget_list_by_ids：
+            **不再做 use_kb 收口**，且不读 org_knowledge_enabled / personal_knowledge_enabled（坑 16）
 ```
 
 **组织知识库功能被关闭时（spec AC-18）的分叉：**
 
 ```
 config.knowledgeBase.enabled === false
-  ├─ 入口不渲染（ChatKnowledge.tsx:439 / 498 / 520 的既有判断，无需新增）
+  ├─ 入口不渲染（ChatKnowledge.tsx:387 的既有判断，无需新增）
   ├─ payload 恒为「不使用」（不发 organization_knowledge_all，ids 为空）
   └─ 状态层**不动**：档位标记必须活过关闭期，重新开启即恢复求值   ← 决策 13（既有实现会剥掉它）
 ```
@@ -294,9 +329,14 @@ config.knowledgeBase.enabled === false
 **任务模式交接（日常页切任务模式）：**
 
 ```
-useAiChat → payload.tools 非空 + 任务模式 → 后端 _to_linsight_submit(data)（chat_service.py:2287）
-  └─ 直接读 use_knowledge_base.organization_knowledge_ids / knowledge_space_ids（第 2357 行，不走 _resolve_user_kb_selection）
-       → LinsightQuestionSubmitSchema → linsight 任务存储（**具体 id**）
+useAiChat → payload.tools 非空 + 任务模式 → 后端 _to_linsight_submit(data, org_ids)（chat_service.py:2375）
+  ├─ 日常链路先经 _resolve_submit_org_ids(data, login_user)（第 2350 行）把档位解成具体 id
+  │    └─ 三态：`None` = 未设档位，**透传**请求自带的 id 列表（6 个既有调用方走这条）
+  │              `[]` = 设了「全部」但一个都没权限（必须保持为空，不得回退到请求自带的 id）
+  │              非空 = 展开结果
+  │         ——`is not None` 这个判断是承重的，改成 `return []` 会让既有调用方的显式 id 交接**静默变空**
+  └─ 直接读 use_knowledge_base.organization_knowledge_ids / knowledge_space_ids
+       → LinsightQuestionSubmitSchema → linsight 任务存储（**具体 id**）；**不**再展开一次（AC-25 防线）
 ```
 
 ### 4.2 关键数据结构 / 字段约定
@@ -353,6 +393,7 @@ useAiChat → payload.tools 非空 + 任务模式 → 后端 _to_linsight_submit
 | 15 | **落地页与执行态共用同一个 `taskModeContextState` 原子，而且 key 真的会重合**：两者都取 `conversationId \|\| 'new'`，落地页写的正是 `'new'`；执行态的 `ExecutionFlow` 在 `linsight.session_id` 尚未落进 store 时也回退到 `'new'`（`ExecutionFlow.tsx:274-278`）。执行态原判定是 `context.knowledge.length > 0` | 落地页设了「不使用」后，执行态会把档位标记当成「用户勾了组织知识库」而误报（`TaskModeInput.tsx:215/232`）。**这不是「将来 key 可能重合」，而是首轮会话创建前后的真实窗口** —— 踩上就向用户/后端报一个相反的档位 | 决策 14 + 坑 13 同一收口：`TaskModeInput` 改用 `hasPickedKnowledge(context.knowledge)`（只数真实条目），落地页侧用 `isOrgScopeAll`；两处都不再看原始 `length` |
 | 16 | **任务执行期只认具体 id 列表，提交入参上的粗粒度布尔是「死字段」**：`task_exec._resolve_user_knowledge_bases` 只解析 `organization_knowledge_ids` / `knowledge_space_ids`，其 docstring 明写 `org_knowledge_enabled` / `personal_knowledge_enabled`「intentionally NOT consulted」 | 会以为「提交时 `org_knowledge_enabled=true` 就等于检索了组织知识库」，从而写出一个**UI 上完全正确、检索侧毫无作用**的实现（code-review H1'：落地页的档位与摘要卡曾纯属显示，会话一生不查任何组织库）；也会以为「改了布尔就等于改了行为」而漏掉 id 列表的交接 | 决策 10（交接必须交出具体 id）与决策 14（落地页以 `organization_knowledge_all` 提交、服务端**展开成 id 落库**）；坑 8 |
 | 17 | **全应用共用一个 `QueryClient`，`queryKey` 少一个字段就会让参数不同的调用方塌成同一条缓存**（本次是 `['OrgTools', page, page_size, …]` 漏了 `page_size`） | 「同一份数据、不同分页」看起来天然该共用缓存，实际是**互相截断**：本特性的存在性探测（`page_size:1`）与灵思组织库选择器（`page_size:50`）命中同一条，谁先挂载谁决定另一侧渲染什么 —— 探测在前就把选择器截成一行，且**不报错**（比 404 隐蔽） | 决策 12 的落点；`hooks/queries/tools/queries.ts::useGetOrgToolList` 的 key 已含 `page_size`；新加带分页参数的 query 时先检查 key 是否带全参数 |
+| 18 | **输入区有两处 legacy 互斥**（`AiChatInput.tsx`：加文件时、切「联网搜索」时），语义是「清掉这轮选中的 KB」—— 而档位标记**不是** KB，只是**恰好躺在同一个数组里**；`ChatKnowledge` 回写选中态时同理 | 两个方向都会静默出错：写 `onSelectedOrgKbsChange([])` 把标记一起删掉 ⇒ 兜底重新生效，用户显式设的「不使用」**变成「全部」**（把用户拒绝的检索打开）；判据写 `val.length > 0` 把标记读成「选了知识库」⇒ 点「不使用」会清掉刚挂上的附件 | 决策 9 / 坑 13 的同一收口，两个助手都在 `utils/knowledgeScope.ts`：**清空**走 `onlyOrgScopeMarker(items)`（只留标记）、**判据**走 `hasPickedKnowledge(items)`（只数真实条目）；两处调用点有静态断言钉住，助手本身有单测且经变异验证 |
 
 ---
 
@@ -429,3 +470,5 @@ useAiChat → payload.tools 非空 + 任务模式 → 后端 _to_linsight_submit
 | 2026-09-22 | **决策 8 按需求方裁决重写：存量数据不做迁移**（原「读时归一 + 区分是否选过组织项」降为被否决方案 B），移除文首 ⚠ 待确认横幅；同步改写 **spec AC-21**、spec §范围边界与 §3 边界情况（原字面「升级即迁移为全部」会把「只选过知识空间」的用户静默扩权到全公司），并新增「已知副作用」条目 | 需求方裁决（design ★ 前的最后一项待定） |
 | 2026-09-22 | **新增决策 14（任务模式落地页跟随新口径）+ 坑 15**，并修订 **spec AC-25**（保护范围限定到执行态、记录落地页跟随与那处已确认的默认翻转）；坑 7 由「待确认」改为 T-17 审计结论（`useChatFunctions` 为死代码） | T-17 消费者审计发现 AC-25 的前提只对执行态成立 |
 | 2026-09-22 | **code-review 收尾（H1' 落地页兑现承诺）**：决策 14 补记「原文只证了『不丢失』、没证『能生效』」并写明兑现方式 —— 落地页新增提交字段 `organization_knowledge_all`，由 `submit_user_question` 在提交时展开成具体 id 落库（与日常漏斗**同一个** `_expand_all_org_knowledge`，闭环仍是一条「全部」口径）；§4.2 补该字段、§4.3 补两个职责行（`submit_user_question` / `_resolve_submit_org_ids`）、§6.1 补 outgoing、§7 补单测第 8 项并改写前端与 E2E 断言；新增**坑 16**（提交布尔是死字段、执行期只认 id 列表）与**坑 17**（共享 `QueryClient` 下 `queryKey` 漏 `page_size` 会让不同参数的调用方互相截断），并改写**坑 15** —— 落地页与执行态共用 `'new'` key 不是「将来可能」而是首轮会话创建前后的真实窗口（同步修正决策 12 落点里过期的缓存键形状） | `/code-review --base feat/2.7.0/045-minimax-tts-adapter`：复核发现「按决策 14 原样实现」的落地页档位对检索**零作用**（提示词与检索都只认 id 列表），需求方裁决「落地页兑现承诺」 |
+| 2026-09-23 | **实现合入后的 code-review 复审（4 agent × 7 维度）**。修 **H3**：§4.1 数据流停在开工前 —— 补 `organization_knowledge_all=true` 分叉（候选 → 收口 → fail-closed，并写明展开结果**同时决定 org/space 分桶**，因为桶按行的 `source` 走）、补**落地页提交链路**（`submit_user_question` 提交期物化 → 落库具体 id → 执行期只做 `aget_list_by_ids`、不再收口）、补 `_resolve_submit_org_ids` 的三态语义（`None` 透传 / `[]` 全部但无权限 / 非空展开结果），并把行号与签名全量刷新（`chat_service.py` 因本特性整体下移 50~64 行）；新增**坑 18**（两处 legacy 互斥会销毁档位标记）；页头日期同步。**后端五条核心安全要求经逐条核对成立**（与检索侧同一份逐库判定 / 真 fail-closed / 不手写 `tenant_id` / 灵思不双重展开 / 旧形态逐字不变），未发现越权或信息泄漏类实现缺陷 | 实现合入后按 SDD 流程复审；同一轮审查抓出两条前端真回归（**H1** 档位标记被读成「选了知识库」而误清附件、**M1** 两处互斥清空整组导致「不使用」回弹成「全部」），已修并补测试 |
+| 2026-09-23 | **本轮修复的测试侧收尾**：改写 AC-08 用例（原与 AC-02 输入字面相同）、AC-18 用例（原为同一表达式的重复调用，「关闭期」从未被建模），并为 `ChatKnowledge` 补 `onChange` 回写断言（该文件头部声称覆盖回写，实际 `onChange` 从未被断言 —— 把 `onSelect` 改成空函数，全部前端测试仍绿）。**六项变异逐一验证**：改坏实现后新断言分别变红，备份还原后工作区无残留注入行 | 复审指出「25 条 AC 全覆盖」中的 AC-08 / AC-18 / AC-20 / AC-24 存在虚报 |

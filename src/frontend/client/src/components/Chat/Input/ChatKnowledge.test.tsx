@@ -121,6 +121,12 @@ const openMenu = (triggerLabel: string) => {
 };
 
 const tierRows = () => Array.from(document.querySelectorAll<HTMLElement>('[data-org-scope]'));
+/** The tier row itself — clicking it is what has to reach `onChange`. */
+const tierRow = (scope: 'all' | 'none') => {
+  const row = tierRows().find((r) => r.getAttribute('data-org-scope') === scope);
+  if (!row) throw new Error(`no tier row rendered for scope=${scope}`);
+  return row;
+};
 const selectedTier = () =>
   tierRows()
     .find((row) => row.getAttribute('data-selected') === 'true')
@@ -208,5 +214,38 @@ describe('ChatKnowledge org-knowledge entry (F063 T-12)', () => {
     openMenu('com_ui_knowledge_space');
 
     expect(await screen.findByText('SPACE-7')).toBeTruthy();
+  });
+
+  it('5. writes the chosen tier back through onChange, keeping the picked entries (AC-13)', async () => {
+    const { onChange } = renderEntry({ value: [space('7')] });
+
+    openMenu('com_knowledge_add_file');
+    await screen.findByText('com_chat_knowledge_scope_all');
+
+    fireEvent.click(tierRow('all'));
+
+    // Assert `onChange` itself, NOT the rendered `data-selected`: that attribute
+    // is derived from the `value` PROP, so it stays correct even if the row
+    // writes nothing at all (case 3 would pass on a dead `onSelect`). This is
+    // the only case here that would notice.
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const written = onChange.mock.calls[0][0] as TierItem[];
+    expect(written.filter((i) => i.type === 'space').map((i) => i.id)).toEqual(['7']);
+    expect(written.filter((i) => i.id === ORG_SCOPE_MARKER_ID).map((i) => i.orgScope)).toEqual([
+      'all',
+    ]);
+  });
+
+  it('5b. switching tiers overwrites the marker instead of stacking a second one (AC-13)', async () => {
+    const { onChange } = renderEntry({ value: [space('7'), marker('all')] });
+
+    openMenu('com_knowledge_add_file');
+    await screen.findByText('com_chat_knowledge_scope_none');
+
+    fireEvent.click(tierRow('none'));
+
+    const written = onChange.mock.calls[0][0] as TierItem[];
+    const markers = written.filter((i) => i.id === ORG_SCOPE_MARKER_ID);
+    expect(markers.map((i) => i.orgScope)).toEqual(['none']);
   });
 });
