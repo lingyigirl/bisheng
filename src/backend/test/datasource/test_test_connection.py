@@ -351,7 +351,7 @@ def _write_tripwires():
         ),
         patch.object(
             DbDatasourceTableDao,
-            "aupdate_business_desc",
+            "aupdate_human_fields",
             side_effect=AssertionError("wrote a datasource table"),
         ),
         patch.object(DbQueryLogDao, "acreate", side_effect=AssertionError("wrote a query log")),

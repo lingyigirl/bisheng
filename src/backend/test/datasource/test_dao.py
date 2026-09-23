@@ -256,12 +256,97 @@ async def test_snapshot_refresh_updates_only_the_collected_columns():
 async def test_business_desc_update_touches_only_that_column():
     session = _Session()
     with _patch(session):
-        await DbDatasourceTableDao.aupdate_business_desc(table_id=5, business_desc='存客户主数据')
+        await DbDatasourceTableDao.aupdate_human_fields(table_id=5, business_desc='存客户主数据')
 
     written = set().union(*session.updates)
     assert written == {'business_desc'}, (
         f'editing the description must not rewrite the collected snapshot: {written}'
     )
+    # And it must not clear the overrides sitting beside it. "Unset" has to mean
+    # "not written" for that to hold -- a `None` default would have made saving a
+    # description silently drop every field override on the table.
+    assert 'column_overrides' not in written
+
+
+@pytest.mark.asyncio
+async def test_column_overrides_update_touches_only_that_column():
+    """F064 AC-04: an override edit is its own write, one level down from AC-12.
+
+    If this UPDATE also carried the snapshot, then editing an override and
+    re-collecting would share a writer, and whichever ran last would silently
+    decide what the model is told about every column.
+    """
+    session = _Session()
+    with _patch(session):
+        await DbDatasourceTableDao.aupdate_human_fields(
+            table_id=5, column_overrides={'amount': '含税金额'}
+        )
+
+    written = set().union(*session.updates)
+    assert written == {'column_overrides'}, (
+        f'editing field overrides must not rewrite the snapshot or the business '
+        f'description: {written}'
+    )
+    assert session.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_both_human_fields_can_be_written_in_one_statement():
+    """The PUT submits both together (F064 decision 3), so the DAO writes both.
+
+    One statement rather than two is the point of having a single entry point
+    for the human half: a half-applied save is the failure the "one submit"
+    requirement exists to avoid.
+    """
+    session = _Session()
+    with _patch(session):
+        await DbDatasourceTableDao.aupdate_human_fields(
+            table_id=5, business_desc='客户主数据', column_overrides={'amount': '含税金额'}
+        )
+
+    written = set().union(*session.updates)
+    assert written == {'business_desc', 'column_overrides'}, written
+    assert session.committed == 1
+
+
+@pytest.mark.asyncio
+async def test_an_empty_call_writes_nothing_at_all():
+    """Both fields unset is a no-op -- not an empty UPDATE, and not an error.
+
+    This is what lets the API layer's `model_fields_set` decision survive all
+    the way down: a request that carried neither field reaches the database as
+    no statement at all, rather than as a statement that nulls something.
+    """
+    session = _Session()
+    with _patch(session):
+        await DbDatasourceTableDao.aupdate_human_fields(table_id=5)
+
+    assert session.updates == [], f'expected no UPDATE at all, got {session.updates}'
+    assert session.committed == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_none_clears_rather_than_being_treated_as_unset():
+    """F064 decision 5: passing `None` is a WRITE, and it writes NULL, not `{}`.
+
+    This is the flip side of the case above, and the pair is what pins the
+    sentinel: if `None` were the default, these two tests could not both pass.
+    The stored distinction is what the UI reads to tell "从未订正" from
+    "订正过、后来清空" (AC-09) -- downstream can no longer recover it.
+    """
+    session = _Session()
+    with _patch(session):
+        await DbDatasourceTableDao.aupdate_human_fields(table_id=5, column_overrides=None)
+
+    written = set().union(*session.updates)
+    assert written == {'column_overrides'}, written
+    bound = [
+        p
+        for stmt in session.statements
+        if getattr(stmt, 'is_update', False)
+        for p in stmt.compile(dialect=mysql.dialect()).params.values()
+    ]
+    assert None in bound, f'clearing must be written as NULL, got {bound}'
 
 
 # --- failure trail is best-effort -------------------------------------------

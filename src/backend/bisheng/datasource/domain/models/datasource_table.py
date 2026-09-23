@@ -13,13 +13,17 @@ from bisheng.core.database.dialect_helpers import UPDATE_TIME_SERVER_DEFAULT, Js
 class DbDatasourceTable(SQLModelSerializable, table=True):
     """One table exposed from a datasource, plus its governed description.
 
-    Two fields with different owners, and conflating them is a bug:
+    Three fields with different owners, and conflating them is a bug:
 
       * `structure_snapshot` — machine-collected (name / type / in-database
         comment for every column). A re-collect REPLACES it.
       * `business_desc` — written by an admin. A re-collect must NEVER touch it
         (spec AC-12): the whole point of the description is to survive schema
         churn, and a blanket `update` is the easy way to lose it.
+      * `column_overrides` — written by an admin, one entry per field. Same rule
+        as `business_desc`, one level down (F064 AC-04), and for the same
+        reason: `areplace_snapshot` replaces the whole snapshot on every
+        re-collect, so an override living inside it would be lost silently.
 
     No sample values are ever collected -- only structure, never table rows
     (spec AC-13).
@@ -54,6 +58,18 @@ class DbDatasourceTable(SQLModelSerializable, table=True):
     business_desc: str | None = Field(
         default=None,
         sa_column=Column(LargeText, nullable=True, comment='人工维护的业务描述; 重采集不得覆盖'),
+    )
+    column_overrides: dict[str, str] | None = Field(
+        default=None,
+        sa_column=Column(
+            JsonType,
+            nullable=True,
+            # Keyed by FIELD NAME, not by position: the snapshot's order is the
+            # collector's business, and a key that survives reordering is what
+            # lets a rename leave the old override behind as a dangling key
+            # (F064 AC-05) rather than silently re-pointing it at another column.
+            comment='字段级人工订正 {"字段名": 人工说明}; 重采集不得覆盖; 空值键由写入侧丢弃',
+        ),
     )
     enabled: int = Field(
         default=1,

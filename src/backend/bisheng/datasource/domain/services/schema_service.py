@@ -1,16 +1,22 @@
 """Persist collected table structures, and maintain the admin's descriptions.
 
 The one rule this module exists to keep is spec AC-12: **a re-collect refreshes
-the structure and must NOT touch `business_desc`.** The whole point of the
-description is to survive schema churn — a column's meaning is exactly what the
+the structure and must NOT touch what an admin wrote.** The whole point of that
+content is to survive schema churn — a column's meaning is exactly what the
 database cannot tell us, so it is the one thing worth keeping across a refresh.
 Losing it means every re-collect silently discards work an admin did by hand.
+F064 extends the rule from the table-level description down to per-field
+overrides (its AC-04).
 
-That is why the write path is split in two (`areplace_snapshot` for structure,
-`aupdate_business_desc` for the description) rather than one "save the table"
-call: a blanket update is how the description would get clobbered, and the DAO
-tests assert the generated UPDATE's column list so the split cannot quietly
-collapse back into one.
+That is why the write path is split in two — `areplace_snapshot` for the
+machine-collected columns, `aupdate_human_fields` for everything an admin
+authors — rather than one "save the table" call: a blanket update is how that
+content would get clobbered, and the DAO tests assert the generated UPDATE's
+column list so the split cannot quietly collapse back into one.
+
+Within the human half the split is by PRESENCE instead (`None` is a real value,
+meaning "cleared"): the caller names what it wants written, and the DAO writes
+exactly that.
 
 AC-15 — no automatic re-collection — is a property of what is *absent*: there
 is no Celery task, no beat schedule and no timer anywhere in this module or the
@@ -106,10 +112,13 @@ async def set_exposed(datasource_id: int, table_names: list[str]) -> int:
 async def update_description(table_id: int, description: str | None) -> None:
     """Set one table's business description (spec AC-11).
 
-    Goes straight to the two-column DAO, so it cannot accidentally rewrite the
-    collected snapshot on the way through.
+    Goes straight to the human-columns DAO writer, which cannot name
+    `structure_snapshot` at all, so it cannot rewrite the collected snapshot on
+    the way through. `column_overrides` is left unset -- and unset means "not
+    written", not "written as NULL" -- so saving a description never clears the
+    field overrides beside it.
     """
-    await DbDatasourceTableDao.aupdate_business_desc(table_id, description)
+    await DbDatasourceTableDao.aupdate_human_fields(table_id, business_desc=description)
 
 
 async def list_tables_for_admin(datasource_id: int) -> list[dict[str, Any]]:

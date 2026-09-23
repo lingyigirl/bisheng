@@ -10,9 +10,9 @@
 
 | ID | 任务 | 覆盖 AC | 验证标准 | 状态 |
 |---|---|---|---|---|
-| T-01 | `DbDatasourceTable` 新增 `column_overrides`（`JsonType`，nullable，中文列注释） | — | `python -c "import ..."` 可导入；`pytest test/datasource/test_schema_service.py` 全绿 | ☐ |
-| T-02 | Alembic 迁移 `v2_7_0_f064_field_comment_override`，`down_revision = f063_term_standard_term_unique` | — | `uv run alembic heads` 仍**只有一行**；`pytest test/database/test_alembic_single_head.py` 通过 | ☐ |
-| T-03 | `DbDatasourceTableDao.aupdate_column_overrides`：定向只写该列 | AC-04 | 单测：调用后 `structure_snapshot` / `business_desc` 不变 | ☐ |
+| T-01 | `DbDatasourceTable` 新增 `column_overrides`（`JsonType`，nullable，中文列注释） | — | `python -c "import ..."` 可导入；`pytest test/datasource/test_schema_service.py` 全绿 | ☑ |
+| T-02 | Alembic 迁移 `v2_7_0_f064_field_comment_override`，`down_revision = f063_term_standard_term_unique` | — | `uv run alembic heads` 仍**只有一行**；`pytest test/database/test_alembic_single_head.py` 通过 | ☑ |
+| T-03 | **扩展** `DbDatasourceTableDao.aupdate_business_desc` → `aupdate_human_fields`（人工列的唯一写入者，哨兵默认值）—— **不新增 DAO 入口**（C1，见偏差记录） | AC-04 | 单测：① 只传 `business_desc` ⇒ UPDATE 列清单恰为 `{business_desc}`；② 只传 `column_overrides` ⇒ 恰为 `{column_overrides}`；③ 两者同传 ⇒ 恰为两者；④ 都不传 ⇒ **零 UPDATE**；⑤ 显式传 `None` ⇒ 写 NULL（非空字典） | ☑ |
 
 ## Wave B — 写入编排与读路径
 
@@ -60,3 +60,18 @@
 ## 执行记录
 
 （实现过程中按 Wave 追加：做了什么、踩了什么坑、偏差与处理。）
+
+### Wave A（2026-09-23）
+
+**T-01 / T-02 按设计实现，无偏差。**
+
+**T-03 —— `/task-review T-03` 抓到 C1 违规（HIGH），决策 2 推翻重写（经用户确认）。**
+
+- **症状**：原设计选定「新增 `DbDatasourceTableDao.aupdate_column_overrides`，与 `areplace_snapshot`、`aupdate_business_desc` 三足鼎立」。`/task-review` 的**检查项 #1（架构分层，HIGH）**判定其违反 `docs/constitution.md:30`：**「never add new DAO entry points for new features」**。
+- **为什么不是误报**：`datasource` 模块由 **F061 建立**，本特性是给**既有模块**的 DAO 加口子。仓库里有两次同型先例 —— **F062** 把这条写进 design（四处引用）并立为**坑 14**，用既有 `DepartmentDao.aget_active_by_tenant` 绕开；**F063** 拆 tasks 时撞到同一句，被记为 **BLOCKER**，设计改写为「复用两处既有入口、本特性零新增」。F060/F061 不受此限，因为它们是在**新建模块**时定义 DAO 的初始面。
+- **为什么不能「找个既有入口复用」了事**：数过 `DbDatasourceTableDao` 的全部方法（`acreate` / `alist_by_datasource` / `alist_by_ids` / `areplace_snapshot` / `aupdate_business_desc` / `aset_enabled` / `adelete_by_datasource`），**没有一个能承载 `column_overrides`** —— `areplace_snapshot` 写它就等于直接破掉 AC-04 的结构性保证。而 C1 的**前半句**又禁止在 Service 里直接写 ORM。两条合起来是夹逼。
+- **处置（选定 C，用户确认）**：**扩展** `aupdate_business_desc` → `aupdate_human_fields(table_id, *, business_desc=…, column_overrides=…)`，成为**人工列的唯一写入者**；`areplace_snapshot` 仍是机器列的唯一写入者。**扩展既有入口不是新增入口**，C1 字面合规。
+- **随之而来的实现约束**：人工列上 `None` 是**合法值**（表示清空，决策 5），所以默认值**不能**是 `None`，必须用哨兵 `_UNSET` —— 否则「只保存业务描述」会把全表字段订正清空且不报错。已作为 **design 坑 8** 记录，并写进 `test_datasource` 的一对用例（`test_an_empty_call_writes_nothing_at_all` / `test_explicit_none_clears_rather_than_being_treated_as_unset`）——**只有哨兵正确时这两条才会同时通过**。
+- **同步范围**：design 决策 2（重写）+ §2 新增 C1 约束行 + §4.3 `dao.py` 行 + 新增坑 8 + 修订历史；`schema_service.update_description` 改调新方法；3 处既有测试引用改名。
+- **对后续 Wave 的影响**：**T-04 / T-10 的形态随之改变** —— `schema_service` 不再有独立的 `update_column_overrides` 写入路径（归一化后交给同一个 `aupdate_human_fields`），端点仍按 `model_fields_set` 决定「传哪些字段」。**决策 3（一次提交、presence-based）不受影响**，反而与 DAO 层的哨兵同构。
+- **验证**：`test/datasource/` **467 passed**；`arch-guard.sh` exit 0；`ruff` 干净；`alembic heads` 单行。

@@ -51,7 +51,7 @@ async def test_refresh_updates_structure_and_never_touches_the_description():
 
     A single "save this table row" call would pass every assertion about the
     structure being updated while silently clearing the description — so the
-    assertion is that `aupdate_business_desc` is NOT called, and that the write
+    assertion is that `aupdate_human_fields` is NOT called, and that the write
     that does happen is the snapshot-only one.
     """
     row = _row(11, 'orders')
@@ -61,7 +61,7 @@ async def test_refresh_updates_structure_and_never_touches_the_description():
     ), patch.object(
         schema_service.DbDatasourceTableDao, 'areplace_snapshot', AsyncMock()
     ) as replace, patch.object(
-        schema_service.DbDatasourceTableDao, 'aupdate_business_desc', AsyncMock()
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
     ) as desc_write, patch.object(
         schema_service.DbDatasourceTableDao, 'acreate', AsyncMock()
     ):
@@ -121,13 +121,13 @@ async def test_a_table_that_vanished_from_the_database_keeps_its_row():
 
 async def test_setting_a_description_does_not_rewrite_the_snapshot():
     with patch.object(
-        schema_service.DbDatasourceTableDao, 'aupdate_business_desc', AsyncMock()
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
     ) as desc_write, patch.object(
         schema_service.DbDatasourceTableDao, 'areplace_snapshot', AsyncMock()
     ) as replace:
         await schema_service.update_description(5, '存客户主数据')
 
-    desc_write.assert_awaited_once_with(5, '存客户主数据')
+    desc_write.assert_awaited_once_with(5, business_desc='存客户主数据')
     replace.assert_not_awaited()
 
 

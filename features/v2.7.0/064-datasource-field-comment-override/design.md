@@ -22,6 +22,7 @@
 |---|---|---|
 | **平台对客户库没有写通道** | **INV-19 ②**：查询仅放行单条 SELECT，拒绝多语句 / 写操作 / 结构变更 | AC-02 不是新增承诺，而是既有约束的推论——本特性**不需要**为此加任何拦截代码 |
 | 重新采集不得覆盖人工内容 | F061 AC-12（表级口径） | 扩展为字段级：新列必须**不被** `areplace_snapshot` 的 UPDATE 列表提及 |
+| **C1 禁止为 new feature 新增 DAO 入口** | `docs/constitution.md:30`；先例：F062 坑 14、F063 设计改写 | 人工列的写入**只能落在既有入口上** ⇒ 决策 2 由「新增第三个写入方法」改为「**扩展** `aupdate_business_desc`」。且 `None` 在此是合法值，扩展时默认值必须用哨兵（坑 8） |
 | 单一 head 的迁移图 | `alembic/AGENTS.md` §0 | 新迁移的 `down_revision` 必须取 `uv run alembic heads` 的真实输出 |
 | 双 DB（MySQL / DM8） | 宪法 C2 | 列类型沿用既有 `JsonType` / `LargeText`，不引入新类型 |
 | 多租户自动过滤 | 宪法 C3 | 新列挂在既有 `db_datasource_table` 上，随行的 `tenant_id` 与 `strict_tenant_filter()` 自动生效，无需新代码 |
@@ -46,9 +47,19 @@
 
 - **备选 A**：一次 UPDATE 同时写 `structure_snapshot` + `table_comment` + `business_desc` + `column_overrides`。
   → **否决**：把「机器采集」与「人工内容」重新混进同一条写路径，正是 F061 `schema_service.py` 模块文档串里明确要避免的事（AC-12 会被一行改动破掉）。
-- **选定 B**：新增 `aupdate_column_overrides(table_id, overrides)`，与既有 `areplace_snapshot`（结构+表注释）、`aupdate_business_desc`（业务描述）**三足鼎立**，每列只有一个写入者。
+- **备选 B（原选定，Wave A 实现期推翻）**：新增 `aupdate_column_overrides(table_id, overrides)`，与 `areplace_snapshot`、`aupdate_business_desc` **三足鼎立**，每列一个写入者。
+  → **否决**：**C1 明文「never add new DAO entry points for new features」**（`docs/constitution.md:30`）。`datasource` 模块由 F061 建立，本特性是给**既有模块**加口子 —— F062 把这条写成**坑 14**、F063 为同一句**改写了自己的设计**，是同一处红线的两次先例。而且**没有可复用的既有入口**：`areplace_snapshot` 不写这一列（写了就直接破 AC-04），`aupdate_business_desc` 只写描述；C1 前半句又禁止在 Service 里直接写 ORM —— 两条合起来是夹逼。
+- **选定 C**：把 `aupdate_business_desc` **扩展**为 `aupdate_human_fields(table_id, *, business_desc=…, column_overrides=…)`，成为**人工列的唯一写入者**；`areplace_snapshot` 仍是机器列的唯一写入者。
 
-**原因**：`areplace_snapshot` 的 UPDATE 列表不提 `column_overrides`，AC-04 就是**结构性成立**的，不依赖注释或纪律。
+**原因**：
+- **扩展既有入口不是新增入口**，C1 字面合规。代价是把「三足」并成「两条腿」（机器 / 人工）而不是「四足」——而人工那两条腿本来就由同一次提交写入（决策 3），合并反而更贴合。
+- **AC-04 / AC-12 仍结构性成立**：机器列与人工列各由一个方法独占，`areplace_snapshot` 的 UPDATE 列表根本不提 `column_overrides`。
+- 与决策 3 **同构**：API 层按 `model_fields_set` 判「有没有提交」，DAO 层按**哨兵**判「有没有传」，同一条规则在两层各把一次关，谁也不会撤销对方的谨慎。
+- 人工列仍只有一个写入者（就是这一个方法）。
+
+**实现约束（改这条决策时必须一起看）**：`None` 在人工列上是**合法值**（表示清空，决策 5），所以默认值**不能**用 `None`，必须用哨兵 —— 否则「只保存业务描述」会顺手把字段订正全清空。见 §5 坑 8。
+
+**何时该重新考虑**：若人工列增至三个以上，或某列需要独立于其它列的写入时序（例如订正要能单独保存、不带上业务描述），「一个方法 + 哨兵」会开始别扭；届时正确做法是**回头谈 C1 的措辞**（修订宪法），而不是再悄悄加一个 DAO 方法。
 
 ### 决策 3：API 形态（一次提交 vs 两个端点）
 
@@ -117,7 +128,7 @@
 | 文件 | 职责 | 本特性改动 |
 |---|---|---|
 | `datasource/domain/models/datasource_table.py` | 表模型 | 新增 `column_overrides` 列 |
-| `datasource/domain/models/dao.py` | 定向 UPDATE | 新增 `aupdate_column_overrides` |
+| `datasource/domain/models/dao.py` | 定向 UPDATE | **扩展** `aupdate_business_desc` → `aupdate_human_fields`（人工列的唯一写入者，按「传了才写」，哨兵默认值）；**不新增 DAO 入口**（C1，见决策 2） |
 | `datasource/domain/services/schema_service.py` | 写入编排 + 归一化 | 新增 `update_column_overrides`（含空值归一化）；`list_tables_for_admin` 带回新列 |
 | `datasource/domain/services/schema_prompt.py` | 注入 + 召回 | `render_table` / `_haystack` 取值改「订正优先」 |
 | `datasource/domain/langchain/tool.py` | 工具构造（dict ②） | dict 里带上 `column_overrides` |
@@ -137,6 +148,7 @@
 5. **前端测试断言 Dialog 内容必须用 `screen`,不能对 `container.innerHTML` 断言**：Radix Dialog 走 portal，`container` 里恒为空，任何「不出现 X」的断言都会假绿。
 6. **订正文本会进入注入预算**：字段说明越长，越可能触发既有的 retrieval 降级。这是既有机制（F061 schema 预算）覆盖的，本特性不新增保护，但要知道「订正写太长会把 schema 挤进 retrieval 模式」。
 7. **`column_overrides` 的键是字段名**。字段改名 = 旧键成为「已不在库中」的悬挂键（AC-05 保留），新名需重新订正；这是有意的（改名后旧说明描述的是另一个字段，不能自动迁移）。
+8. **人工列上 `None` 是合法值（= 清空），所以写入方法的默认值必须是哨兵，不能是 `None`。** `aupdate_human_fields` 用 `_UNSET` 区分「没传这个字段」与「传了 None」 | 把哨兵换回 `None` 默认值（看起来更简洁）后，**只保存业务描述的那一次请求会把全表的字段订正清空** —— 而且不报错、界面刷新后才看得出来。反过来，把「没传」当成「写 NULL」也会让 API 层辛苦分辨的 `model_fields_set` 在下一层被抹平 | `dao.py` 的 `_UnsetType` / `_UNSET`；决策 2 的「实现约束」；`test_dao.py` 里 `test_an_empty_call_writes_nothing_at_all` 与 `test_explicit_none_clears_rather_than_being_treated_as_unset` 是一对，**只有哨兵正确时这两条才会同时通过** |
 
 ---
 
@@ -187,3 +199,4 @@
 | 日期 | 变更 |
 |---|---|
 | 2026-09-23 | 首版：随 spec 一并落定 6 项决策与 7 条已知坑 |
+| 2026-09-23 | **决策 2 推翻重写（原选定 B → 选定 C）：写入路径由「新增 `aupdate_column_overrides`、三足鼎立」改为「扩展 `aupdate_business_desc` → `aupdate_human_fields`、机器/人工两条腿」。** 触发：Wave A 的 `/task-review T-03` 抓到 **C1 违规（HIGH）** —— `docs/constitution.md:30` 明文「never add new DAO entry points for new features」，而 `datasource` 模块由 F061 建立，本特性是给既有模块加口子（F062 坑 14、F063 设计改写是同一处红线的两次先例）。**且无路可退**：没有能承载该列的既有入口（`areplace_snapshot` 写它就直接破 AC-04），C1 前半句又禁止在 Service 里写 ORM。**决策变更经用户确认（★ 决策的推翻必须重新确认）**。同步：§2 新增 C1 约束行、§4.3 的 `dao.py` 行改写、**新增坑 8**（`None` 是合法值 ⇒ 默认值必须是哨兵）。**决策 1 / 3 / 4 / 5 / 6 不变**；AC-04 仍是结构性的（机器列与人工列各由一个方法独占） |
