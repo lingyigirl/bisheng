@@ -10,6 +10,7 @@ from bisheng.knowledge.rag.pipeline.base import BasePipeline, NormalPipeline
 from bisheng.knowledge.rag.pipeline.loader.base import BaseBishengLoader
 from bisheng.knowledge.rag.pipeline.loader.etl4lm import Etl4lmLoader
 from bisheng.knowledge.rag.pipeline.loader.excel import ExcelLoader
+from bisheng.knowledge.rag.pipeline.loader.financial_report_ocr import FinancialReportOcrLoader
 from bisheng.knowledge.rag.pipeline.loader.hierarchical import HierarchicalMarkdownLoader, HierarchicalWordLoader
 from bisheng.knowledge.rag.pipeline.loader.html import BishengHtmlLoader
 from bisheng.knowledge.rag.pipeline.loader.media import BishengMediaLoader
@@ -22,6 +23,7 @@ from bisheng.knowledge.rag.pipeline.loader.txt import BishengTextLoader
 from bisheng.knowledge.rag.pipeline.loader.word import BishengWordLoader
 from bisheng.knowledge.rag.pipeline.loader.x_create import XinChuangFormatterLoader
 from bisheng.knowledge.rag.pipeline.types import PipelineConfig, PipelineResult
+from bisheng.utils.exceptions import EtlException
 
 FileExtensionMap = {
     "xlsx": {"loader": "_init_excel_loader", "transformers": "_init_excel_transformers"},
@@ -214,6 +216,15 @@ class BaseFilePipeline(BasePipeline):
         """
         knowledge_conf = settings.get_knowledge()
         common_params = self._get_loader_common_params(file_path=file_path, file_extension=file_extension)
+        if knowledge_conf.loader_provider == ParseType.FINANCIAL_REPORT_OCR.value:
+            if not knowledge_conf.financial_report_ocr.url:
+                raise EtlException("financial_report_ocr.url is not configured")
+            if hasattr(self, "db_file") and self.db_file:
+                self.db_file.parse_type = ParseType.FINANCIAL_REPORT_OCR.value
+            return FinancialReportOcrLoader(
+                **common_params,
+                **knowledge_conf.financial_report_ocr.model_dump(),
+            )
         if knowledge_conf.loader_provider == ParseType.ETL4LM.value and knowledge_conf.etl4lm.url:
             if hasattr(self, "db_file") and self.db_file:
                 self.db_file.parse_type = ParseType.ETL4LM.value

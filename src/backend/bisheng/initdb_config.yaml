@@ -1,5 +1,5 @@
 knowledges: # 知识库相关配置
-  loader_provider: "mineru" # 文档解析模型提供商，支持etl4lm、mineru、paddle_ocr三种选项，默认为etl4lm
+  loader_provider: "mineru" # 文档解析模型提供商，支持etl4lm、mineru、paddle_ocr、financial_report_ocr，默认为etl4lm
   etl4lm:
     # 文档解析模型服务配置，包括OCR、版式分析、表格识别、公式识别等
     url: ""  # http://192.168.106.12:8180/v1/etl4llm/predict
@@ -22,6 +22,14 @@ knowledges: # 知识库相关配置
       x-api-key: "11"
     request_kwargs:
       useChartRecognition: false
+  financial_report_ocr:
+    # 外部财务报表 OCR 服务地址，例如 http://xxx/ocr/v1/financial_report
+    url: ""
+    timeout: 60
+    headers: {}
+    request_kwargs: {}
+    request_mode: "multipart" # multipart 或 base64_json
+    file_field: "file"
   version_management:
     enabled: false
     simhash_similarity_threshold: 0.85

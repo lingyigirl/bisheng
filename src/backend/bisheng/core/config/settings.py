@@ -3,7 +3,7 @@ import json
 import os
 import re
 import ssl
-from typing import Union
+from typing import Literal, Union
 
 from celery.schedules import crontab
 from cryptography.fernet import Fernet
@@ -564,6 +564,20 @@ class PaddleOcrConf(BaseModel):
     request_kwargs: dict = Field(default_factory=dict, description="PaddleOcrService Request Arguments")
 
 
+class FinancialReportOcrConf(BaseModel):
+    """外部财务报表 OCR 配置。"""
+
+    url: str = Field(default="", description="财务报表 OCR 服务地址")
+    timeout: int = Field(default=60, description="财务报表 OCR 请求超时时间(秒)")
+    headers: dict = Field(default_factory=dict, description="财务报表 OCR 请求头")
+    request_kwargs: dict = Field(default_factory=dict, description="财务报表 OCR 请求参数")
+    request_mode: Literal["multipart", "base64_json"] = Field(
+        default="multipart",
+        description="请求模式: multipart 或 base64_json",
+    )
+    file_field: str = Field(default="file", description="请求中的文件字段名")
+
+
 class VersionManagementConf(BaseModel):
     """Version Management Configure"""
 
@@ -583,6 +597,10 @@ class KnowledgeConf(BaseModel):
     etl4lm: Etl4lmConf = Field(default_factory=Etl4lmConf, description="Etl4lm Configure")
     mineru: MineruConf = Field(default_factory=MineruConf, description="Mineru Configure")
     paddle_ocr: PaddleOcrConf = Field(default_factory=PaddleOcrConf, description="PaddleOcr Config")
+    financial_report_ocr: FinancialReportOcrConf = Field(
+        default_factory=FinancialReportOcrConf,
+        description="财务报表 OCR 配置",
+    )
     version_management: VersionManagementConf = Field(
         default_factory=VersionManagementConf,
         description="Version Management Configure",
@@ -604,6 +622,8 @@ class KnowledgeConf(BaseModel):
             return bool(self.mineru.url)
         if provider == "paddle_ocr":
             return bool(self.paddle_ocr.url)
+        if provider == "financial_report_ocr":
+            return bool(self.financial_report_ocr.url)
         return False
 
 
