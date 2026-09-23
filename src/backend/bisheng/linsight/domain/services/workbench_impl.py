@@ -255,6 +255,21 @@ class LinsightWorkbenchImpl:
                     ),
                 )
 
+            # F063: the landing page's org-KB tier is 「全部」 — a state, so it
+            # arrives as a flag instead of an id list and must be materialised
+            # here, at submit time (the version row stores the CONCRETE ids the
+            # user chose, and the task run reads only the id lists). Same helper
+            # the daily funnel and the daily task-mode handoff call, so 「全部」
+            # keeps exactly one definition. A failure inside it degrades to "no
+            # org KB this round" rather than to "search everything" (fail-closed).
+            org_ids = submit_obj.organization_knowledge_ids
+            if submit_obj.organization_knowledge_all:
+                # Local import: workstation is the downstream module (it imports
+                # this one), so a module-level edge here would close a cycle.
+                from bisheng.workstation.domain.services.chat_service import _expand_all_org_knowledge
+
+                org_ids = [kb.id for kb in await _expand_all_org_knowledge(login_user)] or None
+
             # Create Ideas Conversation Version (id == svid used for the workspace)
             linsight_session_version = LinsightSessionVersion(
                 id=svid,
@@ -264,7 +279,7 @@ class LinsightWorkbenchImpl:
                 tools=submit_obj.tools,
                 org_knowledge_enabled=submit_obj.org_knowledge_enabled,
                 personal_knowledge_enabled=submit_obj.personal_knowledge_enabled,
-                organization_knowledge_ids=submit_obj.organization_knowledge_ids,
+                organization_knowledge_ids=org_ids,
                 knowledge_space_ids=submit_obj.knowledge_space_ids,
                 files=processed_files,
                 model=submit_obj.model,

@@ -242,6 +242,12 @@ export const useLinsightSubmit = (versionId, setVersionId, setVersions) => {
                     // F035: continue an existing session (follow-up round) so the
                     // backend appends a version instead of creating a new 会话.
                     session_id: linsightSubmission.sessionId || null,
+                    // F063: the org-KB tier. Explicit False rather than omitted
+                    // (same reasoning as `skills` below): the schema default is
+                    // False, and the two callers that do not set the field — the
+                    // execution-state input and the daily-chat linsight entry —
+                    // must read as "no expansion", not as "field forgotten".
+                    organization_knowledge_all: linsightSubmission.organizationKnowledgeAll || false,
                 }
 
                 const sse = new SSE(`${__APP_ENV__.BASE_URL}/api/v1/linsight/workbench/submit`, {

@@ -1,9 +1,17 @@
 import { atom } from 'recoil';
 
+// F063: the org-KB tier (全部 / 不使用) rides on `selectedOrgKbs` as one synthetic
+// marker entry instead of a new atom (Recoil is frozen — see `~/utils/knowledgeScope`).
+export type OrgScope = 'all' | 'none';
+
 export type SelectedOrgKb = {
   id: string;
   name: string;
   type: string;
+  // Only the tier marker carries this; every other entry leaves it undefined, so
+  // existing consumers are unaffected and an older client's archive reads back
+  // as "never set" (which falls back — see `resolveOrgScope`).
+  orgScope?: OrgScope;
 };
 
 // v2.5 Agent-mode: the subset of WorkstationConfig.tools the user has toggled on.

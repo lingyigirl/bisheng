@@ -28,11 +28,16 @@ import { SendIcon } from "~/components/svg";
 import { Button, TextareaAutosize } from "~/components/ui";
 import SpeechToTextComponent from "~/components/Voice/SpeechToText";
 import { useContainerCompact, TOOLBAR_COMPACT_THRESHOLD } from "~/hooks";
-import { useGetWorkbenchModelsQuery } from "~/hooks/queries/data-provider";
+import { useGetOrgToolList, useGetWorkbenchModelsQuery } from "~/hooks/queries/data-provider";
 import InputFiles from "~/pages/appChat/components/InputFiles";
 import { useFileDropAndPaste } from "~/pages/appChat/useFileDropAndPaste";
 import { bishengConfState } from "~/pages/appChat/store/atoms";
 import { checkIfScrollable, cn, removeFocusRings } from "~/utils";
+import {
+    removeSelectedOrgKb,
+    showsOrgKbSummary,
+    withoutOrgScopeMarker,
+} from "~/utils/knowledgeScope";
 import AiModelSelect from "./AiModelSelect";
 
 export interface AiChatInputFeatures {
@@ -327,7 +332,24 @@ const AiChatInput = memo(
             isComposingRef.current = false;
         }, []);
 
-        const hasSelectionTags = ((selectedOrgKbs && selectedOrgKbs.length > 0) || (chatFiles && chatFiles.length > 0) || uploadingFiles.length > 0 || (taskMode && dailySkills.length > 0)) && !isLingsi;
+        // F063 — the org-KB tier can be the strip's only reason to exist: the
+        // default state picks nothing, the tier falls back to `all`, and AC-15
+        // wants the summary card visible right there. So the presence of the
+        // strip cannot be decided from the selection alone. Existence probe with
+        // the same arguments as the bar's, so both share one cache entry.
+        const { data: orgKbs } = useGetOrgToolList({ page: 1, page_size: 1 });
+        const orgKbEnabled = bsConfig?.knowledgeBase?.enabled !== false;
+        const showsOrgSummaryCard = showsOrgKbSummary(
+            selectedOrgKbs,
+            orgKbEnabled,
+            Array.isArray(orgKbs) ? orgKbs.length : 0,
+        );
+        // Count *cards*, not array entries: the tier marker is a state carrier
+        // and draws no card, so counting it would mount an empty strip at
+        // tier「不使用」(the state the card is dismissed into).
+        const orgKbCardCount = withoutOrgScopeMarker(selectedOrgKbs).length;
+
+        const hasSelectionTags = ((showsOrgSummaryCard || orgKbCardCount > 0) || (chatFiles && chatFiles.length > 0) || uploadingFiles.length > 0 || (taskMode && dailySkills.length > 0)) && !isLingsi;
 
         // Tell the landing page whether the attachment bar is present so it can
         // hide/show the welcome subtitle without shifting the title or input box.
@@ -370,12 +392,17 @@ const AiChatInput = memo(
                         files={chatFiles || []}
                         kbs={selectedOrgKbs}
                         skills={taskMode ? dailySkills : []}
+                        orgKbEnabled={orgKbEnabled}
                         onRemoveFile={(file) => {
                             inputFilesRef.current?.removeByName?.(file.name);
                             setChatFiles((prev) => (prev || []).filter((i) => i.name !== file.name));
                         }}
+                        // The org tier card hands back a synthetic marker whose id
+                        // is not an entry id: filtering by it would delete the
+                        // marker and the fallback would answer `all` again, i.e.
+                        // the dismissed card would come straight back (AC-16).
                         onRemoveKb={onSelectedOrgKbsChange ? (kb) => {
-                            onSelectedOrgKbsChange(selectedOrgKbs.filter((i) => i.id !== kb.id));
+                            onSelectedOrgKbsChange(removeSelectedOrgKb(selectedOrgKbs, kb));
                         } : undefined}
                         onRemoveSkill={(skill) => setDailySkills(dailySkills.filter((s) => s.name !== skill.name))}
                     />

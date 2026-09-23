@@ -304,7 +304,7 @@
   },
   "src/components/Chat/ChatView.tsx": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 28
+      "count": 22
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 2
@@ -369,9 +369,6 @@
     }
   },
   "src/components/Chat/Input/ChatKnowledge.tsx": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 11
-    },
     "@typescript-eslint/no-unused-vars": {
       "count": 4
     }

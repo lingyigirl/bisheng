@@ -34,6 +34,7 @@ import {
     taskModeSkillsState,
     type TaskModeToolItem,
 } from '~/store/linsight';
+import { isOrgScopeAll, withoutOrgScopeMarker } from '~/utils/knowledgeScope';
 
 interface TaskModeChatInputProps {
     /** Session key for per-session memory; 'new' for a fresh task. */
@@ -111,11 +112,18 @@ export function TaskModeChatInput({ conversationId = 'new' }: TaskModeChatInputP
                     })),
                 },
             }));
+            // F063 — the org-knowledge tier (「全部」/「不使用」) rides inside
+            // `context.knowledge` as a synthetic marker, so both knowledge flags
+            // below are asked of the tier instead of the array's length or of a
+            // `type === 'org'` scan (which the marker also satisfies), see 坑 13.
+            const orgKbEnabled = bsConfig?.knowledgeBase?.enabled !== false;
+            const orgScopeAll = isOrgScopeAll(context.knowledge, orgKbEnabled);
             const submissionTools = [
                 {
                     id: 'pro_knowledge',
                     name: localize('com_tools_org_knowledge'),
-                    checked: context.knowledge.some((k) => k.type === 'org'),
+                    // Becomes `org_knowledge_enabled` on the wire (convertTools).
+                    checked: orgScopeAll,
                 },
                 ...mappedSelectedTools,
             ];
@@ -133,7 +141,15 @@ export function TaskModeChatInput({ conversationId = 'new' }: TaskModeChatInputP
                 model,
                 skills: skills.map((s) => s.name),
                 enableWebSearch: false,
-                useKnowledgeBase: context.knowledge.length > 0,
+                // A knowledge space on its own is still "knowledge in play"; the
+                // org tier is the one part that is a state, not an entry.
+                useKnowledgeBase: orgScopeAll || withoutOrgScopeMarker(context.knowledge).length > 0,
+                // F063: 「全部」 is a state, not an id list this input could
+                // enumerate, so it rides as a flag and the server materialises the
+                // permitted ids at submit time. Without this the landing page's
+                // tier was display-only: the task run resolves its scope from the
+                // stored id lists and never consults the booleans.
+                organizationKnowledgeAll: orgScopeAll,
                 // New session on the landing page.
                 sessionId: undefined,
             });

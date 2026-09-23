@@ -103,6 +103,13 @@ export default function MessagesView({
               className="flex items-center h-8 justify-center gap-2 rounded-2xl bg-blue-100 px-4 py-1 font-medium text-blue-main hover:bg-blue-200"
               disabled={readOnly}
               onClick={() => {
+                // F063 audit (T-17): this reset drops the org tier marker along
+                // with the selection, so a new conversation starts at the AC-02
+                // fallback — 「全部」, which is the feature's own default, so the
+                // reset lands where the user expects. `enableOrgKb` is a legacy
+                // flag nothing consumes (HoverButtons only destructures it, and
+                // useChatFunctions has it commented out); the request gates on the
+                // tier alone, so clearing it here changes nothing on the wire.
                 setSelectedOrgKbs([]);
                 setEnableOrgKb(false);
                 document.getElementById("create-convo-btn")?.click();

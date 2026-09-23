@@ -1,6 +1,8 @@
 /**
  * Attachment bar shown at the top of the chat input box once a knowledge space
- * or file is mounted. Figma 12841:46839.
+ * or file is mounted — or, since F063, once the organization-KB tier resolves to
+ * 「全部」, which is the default state and mounts the strip with nothing picked.
+ * Figma 12841:46839.
  *
  * Layout: a full-bleed light-gray strip with rounded top corners, sitting above
  * the textarea inside the input box. Cards are a single non-wrapping row that
@@ -24,7 +26,14 @@ import { Loader2 } from "lucide-react";
 import { Outlined } from "bisheng-icons";
 import type { FileType } from "~/components/ui/icon/File/FileIcon";
 import { OGDialog, OGDialogContent } from "~/components/ui";
+import { useLocalize } from "~/hooks";
+import { useGetOrgToolList } from "~/hooks/queries/data-provider";
 import { cn } from "~/utils";
+import {
+    ORG_SCOPE_MARKER,
+    isOrgScopeMarker,
+    showsOrgKbSummary,
+} from "~/utils/knowledgeScope";
 
 /** Fixed card geometry from the design (Figma 12841:47405). */
 const CARD_WIDTH = 148;
@@ -210,6 +219,13 @@ interface AttachmentBarProps {
     files: any[];
     kbs: any[];
     skills: any[];
+    /**
+     * F063 — the org-knowledge admin switch (AC-18). Required, not defaulted:
+     * the caller already knows it from `bsConfig`, and a silent default here
+     * would show the "all org knowledge bases" card on a surface the feature
+     * was turned off for.
+     */
+    orgKbEnabled: boolean;
     onRemoveFile?: (file: any) => void;
     onRemoveKb?: (kb: any) => void;
     onRemoveSkill?: (skill: any) => void;
@@ -226,16 +242,30 @@ export const AttachmentBar = ({
     files,
     kbs,
     skills,
+    orgKbEnabled,
     onRemoveFile,
     onRemoveKb,
     onRemoveSkill,
 }: AttachmentBarProps) => {
+    const localize = useLocalize();
     const scrollRef = useRef<HTMLDivElement>(null);
     // Insertion sequence per item key so the row can show newest-first across
     // all types (files + knowledge spaces) without timestamps on the data.
     const seqRef = useRef<{ map: Map<string, number>; n: number }>({ map: new Map(), n: 0 });
     const [canLeft, setCanLeft] = useState(false);
     const [canRight, setCanRight] = useState(false);
+
+    // F063 — does the strip carry the "all org knowledge bases" summary card
+    // (AC-15)? Existence, not a count: the list endpoint is cursor-paginated and
+    // has no `total`, and the card never shows a number (决策 9 / 12). The
+    // arguments match the mounting input's own probe exactly, so react-query
+    // serves both from one cache entry instead of issuing two requests.
+    const { data: orgKbs } = useGetOrgToolList({ page: 1, page_size: 1 });
+    const showOrgSummaryCard = showsOrgKbSummary(
+        kbs,
+        orgKbEnabled,
+        Array.isArray(orgKbs) ? orgKbs.length : 0,
+    );
 
     const entries = useMemo<Entry[]>(() => {
         const all: Entry[] = [
@@ -247,7 +277,13 @@ export const AttachmentBar = ({
             // a set that first appears all at once — restoring a conversation from
             // localStorage — hands the newest item the lowest sequence and the row
             // comes back reversed, even though picking them one by one is correct.
-            ...[...kbs].reverse().map((k) => ({ kind: "kb" as const, key: `kb-${k.id}`, data: k })),
+            // The org tier rides in this same array as a synthetic marker, but it
+            // is a *state*, not an entry — it is drawn as the single summary card
+            // below, never as a card of its own (F063 坑 7 / 13: match by id).
+            ...[...kbs]
+                .reverse()
+                .filter((k) => !isOrgScopeMarker(k))
+                .map((k) => ({ kind: "kb" as const, key: `kb-${k.id}`, data: k })),
             ...skills.map((s) => ({ kind: "skill" as const, key: `skill-${s.name}`, data: s })),
         ];
         const { map } = seqRef.current;
@@ -266,7 +302,9 @@ export const AttachmentBar = ({
         setCanRight(el.scrollLeft < maxScroll - 1);
     }, []);
 
-    // Recompute affordances when the item set changes or the row resizes.
+    // Recompute affordances when the item set changes or the row resizes. The
+    // summary card is not in `entries`, so it is counted in separately.
+    const rowCount = entries.length + (showOrgSummaryCard ? 1 : 0);
     useLayoutEffect(() => {
         updateEdges();
         const el = scrollRef.current;
@@ -274,7 +312,7 @@ export const AttachmentBar = ({
         const ro = new ResizeObserver(() => updateEdges());
         ro.observe(el);
         return () => ro.disconnect();
-    }, [updateEdges, entries.length]);
+    }, [updateEdges, rowCount]);
 
     // Keep the newest (leftmost) item in view whenever a new front item arrives.
     const frontKey = entries[0]?.key;
@@ -317,6 +355,19 @@ export const AttachmentBar = ({
                         className="flex gap-2 overflow-x-auto [&::-webkit-scrollbar]:hidden"
                         style={{ scrollbarWidth: "none" }}
                     >
+                        {/* F063 — the org tier as ONE card, however many KBs it
+                            stands for (AC-15/AC-17). Leftmost so it stays in
+                            view: the row starts at scrollLeft 0 and the
+                            keep-newest-in-view effect pins it there. Dismissing
+                            it hands back the marker, whose id the handler must
+                            not treat like a normal entry's (AC-16). */}
+                        {showOrgSummaryCard && (
+                            <CardShell
+                                icon={<Outlined.Books size={16} />}
+                                label={localize('com_chat_knowledge_scope_all_card')}
+                                onRemove={onRemoveKb ? () => onRemoveKb(ORG_SCOPE_MARKER) : undefined}
+                            />
+                        )}
                         {entries.map((entry) => {
                             switch (entry.kind) {
                                 case "uploading":

@@ -91,6 +91,14 @@ export default function useChatFunctions({
     const endpoint = 'Deepseek';
     const custom_model = 'deepseek-chat';
 
+    // F063 audit (T-17): dead path, left as-is. Nothing reads `store.submission`
+    // (the only sink of this object) and no `<ChatContext.Provider>` is rendered
+    // anywhere in `src`, so `useChatContext()` returns the empty default — the
+    // payload below never reaches the server. If this path is ever revived,
+    // `knowledges` must not be handed `selectedOrgKbs` raw: the org tier rides in
+    // that atom as the `__org_scope__` marker (坑 13), which the server would
+    // receive as if it were a knowledge-base id. Build it with
+    // `toPayloadKnowledgeScope` instead.
     const use_knowledge_base = {
       knowledges: selectedOrgKbs,
       // 是否用组织知识库

@@ -43,6 +43,13 @@ class LinsightQuestionSubmitSchema(BaseModel):
     # drive knowledge injection.
     organization_knowledge_ids: list[int] | None = Field(None, description="Selected organization knowledge base ids")
     knowledge_space_ids: list[int] | None = Field(None, description="Selected knowledge space ids")
+    # F063: the org-KB tier is 「全部」 — a state, not an enumeration the client can
+    # list. When set, the server expands it at submit time and stores the concrete
+    # ids in ``organization_knowledge_ids`` above, because the task run resolves its
+    # scope from the id lists ONLY (task_exec: the coarse booleans are not
+    # consulted). The daily task-mode entry already resolves its own ids before
+    # reaching the submit schema, so it leaves this False and nothing expands twice.
+    organization_knowledge_all: bool = Field(False, description="Search every organization KB the user may use")
     files: list[SubmitFileSchema] | None = Field(None, description="Uploaded files list:")
     tools: list[LinsightToolSchema] | None = Field(None, description="List of available tools")
     # F035: per-task selected execution model id; None falls back to the tenant

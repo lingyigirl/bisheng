@@ -14,13 +14,13 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "~/components/ui/Tooltip2";
-import { useGetOrgToolList } from "~/hooks/queries/data-provider";
 import { BsConfig } from "~/types/chat";
 import { useCategorizedKnowledgeSpaces, useLocalize, useMediaQuery } from "~/hooks";
 import { useToastContext } from "~/Providers";
 import { cn } from "~/utils";
-import { KnowledgeListPanel } from "./KnowledgeListPanel";
-import type { KnowledgeItem, KnowledgeType } from "./knowledgeTypes";
+import { hasKnowledgeSpaces, resolveOrgScope, withOrgScope } from "~/utils/knowledgeScope";
+import { KnowledgeListPanel, type KnowledgeListItem } from "./KnowledgeListPanel";
+import type { KnowledgeItem } from "./knowledgeTypes";
 
 export type { KnowledgeItem, KnowledgeType } from "./knowledgeTypes";
 
@@ -96,7 +96,6 @@ export const ChatKnowledge = ({
   compact?: boolean;
 }) => {
   const localize = useLocalize();
-  const PAGE_SIZE = 20;
   const MAX_KB_PER_TYPE = 50;
   const { showToast } = useToastContext();
 
@@ -106,17 +105,10 @@ export const ChatKnowledge = ({
     [value]
   );
 
-  const selectedOrgKbs = useMemo(
-    () => value.filter((item) => item.type === 'org'),
-    [value]
-  );
-
-  // search page
-  const [orgKeyword, setOrgKeyword] = useState("");
-  const debouncedOrgKeyword = useDebounce(orgKeyword, 500);
-  const [orgPage, setOrgPage] = useState(1);
-  const [allOrgKbs, setAllOrgKbs] = useState<any[]>([]);
-  const [hasMoreOrg, setHasMoreOrg] = useState(true);
+  // F063 — the organization-KB tier (「全部」/「不使用」). Resolved from the state
+  // (an explicit pick on the marker entry, else the AC-02 fallback) so the tier
+  // is right even when this entry has never been opened this session.
+  const orgScope = resolveOrgScope(value, hasKnowledgeSpaces(value));
 
   // --- Knowledge space data (load all groups at once, no pagination) ---
   const [spaceKeyword, setSpaceKeyword] = useState("");
@@ -139,94 +131,44 @@ export const ChatKnowledge = ({
     [spaceGroups],
   );
 
-  // Comma-separated ids of admin-configured org KBs. Passed to the backend so
-  // those ids are floated to the top of the global sort — otherwise a
-  // configured KB sitting on page 2+ of the alpha list could never be promoted
-  // by client-side reshuffle alone.
-  const preferredIds = useMemo(() => {
-    const configured = (config as any)?.orgKbs || [];
-    if (!configured.length) return '';
-    return configured.map((k: any) => String(k.id)).join(',');
-  }, [config]);
-
-  // Org KB data fetching (paginated via react-query)
-  const { data: orgData, isFetching: orgFetching } = useGetOrgToolList({
-    page: orgPage,
-    page_size: PAGE_SIZE,
-    name: debouncedOrgKeyword,
-    sort_by: 'name',
-    preferred_ids: preferredIds,
-  });
-
-  useEffect(() => {
-    setOrgPage(1);
-    setAllOrgKbs([]);
-  }, [debouncedOrgKeyword, preferredIds]);
-
-  useEffect(() => {
-    if (orgData) {
-      setAllOrgKbs((prev) => (orgPage === 1 ? [...orgData] : [...prev, ...orgData]));
-      setHasMoreOrg(orgData.length === PAGE_SIZE);
-    }
-  }, [orgData, orgPage]);
-
-  // Sort: admin-configured org KBs (in sort_order) first, then any other KBs
-  // the user can access. Filtering by use-permission is enforced server-side
-  // in useGetOrgToolList — we only reshuffle display order here.
-  const sortedOrgKbs = useMemo(() => {
-    const configured = (config as any)?.orgKbs || [];
-    if (!configured.length) return allOrgKbs;
-    const ordered = [...configured].sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-    const configuredIds = new Set(ordered.map((k: any) => String(k.id)));
-    const byId = new Map(allOrgKbs.map((k: any) => [String(k.id), k]));
-    const head = ordered
-      .map((k: any) => byId.get(String(k.id)))
-      .filter(Boolean);
-    const tail = allOrgKbs.filter((k: any) => !configuredIds.has(String(k.id)));
-    return [...head, ...tail];
-  }, [allOrgKbs, config]);
-
   // checked data — compare with String() on both sides (API returns numeric
   // ids, but the atom type + default-seeding use strings).
-  const handleToggle = (item: any, type: KnowledgeType) => {
+  const handleToggle = (item: KnowledgeListItem) => {
     const itemKey = String(item.id);
-    const exists = value.some((i) => String(i.id) === itemKey && i.type === type);
+    const exists = value.some((i) => String(i.id) === itemKey && i.type === 'space');
 
     if (exists) {
-      const nextValue = value.filter((i) => !(String(i.id) === itemKey && i.type === type));
+      const nextValue = value.filter((i) => !(String(i.id) === itemKey && i.type === 'space'));
       onChange(nextValue);
     } else {
-      const currentTypeCount = value.filter(i => i.type === type).length;
+      const currentTypeCount = value.filter(i => i.type === 'space').length;
 
       if (currentTypeCount >= MAX_KB_PER_TYPE) {
         showToast({
-          message:
-            type === 'space'
-              ? localize('com_chat_knowledge_toast_space_limit')
-              : localize('com_chat_knowledge_toast_org_limit'),
+          message: localize('com_chat_knowledge_toast_space_limit'),
           status: 'error',
         });
         return;
       }
 
       // Normalise id to string on insert to keep the atom invariant stable.
-      const newItem: KnowledgeItem = { id: itemKey, name: item.name, type };
+      const newItem: KnowledgeItem = { id: itemKey, name: item.name ?? '', type: 'space' };
       onChange([newItem, ...value]);
     }
   };
 
+  // Dead since the pre-F063 toolbar rework (declared, never read). Left in
+  // place on purpose: stale project code is annotated, not deleted.
   const hasAnySelection = value.length > 0;
   const orgEnabled = !!config?.knowledgeBase?.enabled;
 
-  const [openSub, setOpenSub] = useState<'org' | null>(null);
   // 仅 <=576 走移动端下钻面板；577~768 保持桌面级联交互（右侧展开）
   const isMobile = useMediaQuery('(max-width: 576px)');
-  const [mobilePanel, setMobilePanel] = useState<'root' | 'org' | 'skill'>('root');
+  const [mobilePanel, setMobilePanel] = useState<'root' | 'skill'>('root');
   const menuContentRef = useRef<HTMLDivElement>(null);
 
   const handleRootOpenChange = useCallback((open: boolean) => {
     setRootOpen(open);
-    setOpenSub(null);
     setMobilePanel('root');
   }, []);
 
@@ -236,8 +178,8 @@ export const ChatKnowledge = ({
   const [mobileMenuSide, setMobileMenuSide] = useState<'top' | 'bottom'>('bottom');
 
   // A "tall list panel" needs the adaptive height cap on mobile: the knowledge
-  // pill always shows the spaces list directly, and the "+" menu shows the org
-  // list once drilled into ('org'). The "+" root (short action items) does not.
+  // pill shows its spaces list directly, and the "+" menu grows tall once it is
+  // drilled into the skill list. The "+" root (short action items) is not.
   const mobileTallPanel = variant === 'knowledge' || mobilePanel !== 'root';
 
   useLayoutEffect(() => {
@@ -425,7 +367,7 @@ export const ChatKnowledge = ({
               setKeyword={setSpaceKeyword}
               groups={spaceListGroups}
               selectedItems={selectedKnowledgeSpaces}
-              onToggle={(item) => handleToggle(item, 'space')}
+              onToggle={handleToggle}
               isFetching={spaceFetching}
               hasMore={false}
               onLoadMore={() => { }}
@@ -434,122 +376,47 @@ export const ChatKnowledge = ({
           </div>
         )}
 
-        {/* Org knowledge selector — moved into the "+" menu, below upload.
-            Desktop: cascading submenu. Gated by KB feature flag. */}
-        {variant === 'plus' && !isMobile && config?.knowledgeBase?.enabled !== false && (
-          <DropdownMenuSub
-            open={openSub === 'org'}
-            onOpenChange={(o) => {
-              if (o) setOpenSub('org');
-              else setOpenSub((cur) => (cur === 'org' ? null : cur));
-            }}
-          >
-            <DropdownMenuSubTrigger
-              data-sub-key="org"
-              className={cn(
-                'flex h-8 cursor-pointer items-center justify-between rounded-lg px-2 outline-none',
-              )}
+        {/* Org knowledge tier (F063) — 「全部 / 不使用」 and nothing else. The
+            per-KB picker was removed with the listing (AC-13/AC-14): "search all
+            of them" is now the default, and "narrow it down to a few" is what
+            knowledge spaces are for. Same rows on desktop and mobile — one code
+            path, so every entry that mounts this input behaves alike (AC-24).
+            Gated by the KB feature flag (AC-18). */}
+        {variant === 'plus' &&
+          ((!isMobile) || (isMobile && mobilePanel === 'root')) &&
+          config?.knowledgeBase?.enabled !== false && (
+          <>
+            <div className="my-1 h-px bg-slate-100" />
+            <p className="shrink-0 px-2 py-[5px] text-caption text-text-3">
+              {localize('com_tools_org_knowledge')}
+            </p>
+            {/* `data-org-scope` / `data-selected` mirror the state the tier was
+                resolved to, so the panel is inspectable without reading styles. */}
+            <DropdownMenuItem
+              data-org-scope="all"
+              data-selected={orgScope === 'all' ? 'true' : 'false'}
+              onSelect={() => onChange(withOrgScope(value, 'all'))}
+              className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 outline-none"
             >
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  {/* Icon turns brand-blue once an org KB is selected (no dot). */}
-                  <Outlined.Books size={16} className={selectedOrgKbs.length > 0 ? "text-blue-500" : "text-text-2"} />
-                </div>
-                <span className="text-[14px] font-normal text-slate-700">
-                  {localize('com_tools_org_knowledge')}
-                </span>
-              </div>
-            </DropdownMenuSubTrigger>
-
-            {/* `align="center"` centers the panel vertically on the trigger row
-                (same placement rule as the skill panel below). */}
-            <DropdownMenuSubContent
-              align="center"
-              collisionPadding={BOTTOM_GAP}
-              className="ml-2 flex max-h-[440px] w-[240px] flex-col overflow-hidden rounded-2xl border-slate-100 bg-white pt-3 px-3 pb-0 shadow-[0_2px_16px_-2px_rgba(0,23,66,0.10)]"
-              style={
-                {
-                  '--tw-enter-duration': '0.35s',
-                  '--tw-enter-easing': 'ease-in-out',
-                } as React.CSSProperties
-              }
+              <Outlined.Books size={16} className={orgScope === 'all' ? 'text-blue-500' : 'text-text-2'} />
+              <span className={cn('flex-1 text-[14px] font-normal', orgScope === 'all' ? 'text-blue-500' : 'text-slate-700')}>
+                {localize('com_chat_knowledge_scope_all')}
+              </span>
+              {orgScope === 'all' && <Outlined.Check size={14} className="text-blue-500" />}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-org-scope="none"
+              data-selected={orgScope === 'none' ? 'true' : 'false'}
+              onSelect={() => onChange(withOrgScope(value, 'none'))}
+              className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 outline-none"
             >
-              {/* No heading here: this panel hangs off the "组织知识库" row, which
-                  stays visible next to it. The mobile drill panel keeps its own
-                  heading — there it is the back row's label. */}
-              <KnowledgeListPanel
-                freezeHeightOnFilter
-                placeholder={localize('com_tools_knowledge_base_search')}
-                keyword={orgKeyword}
-                setKeyword={setOrgKeyword}
-                items={sortedOrgKbs}
-                selectedItems={selectedOrgKbs}
-                onToggle={(item) => handleToggle(item, 'org')}
-                isFetching={orgFetching}
-                hasMore={hasMoreOrg}
-                onLoadMore={() => setOrgPage((p) => p + 1)}
-                emptyText={localize('com_chat_knowledge_empty_no_org_kbs')}
-              />
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        )}
-
-        {/* Org knowledge selector (mobile): drill option on the "+" root. */}
-        {variant === 'plus' && isMobile && mobilePanel === 'root' && config?.knowledgeBase?.enabled !== false && (
-          <DropdownMenuItem
-            onSelect={(e) => {
-              e.preventDefault();
-              setMobilePanel('org');
-            }}
-            className="flex h-8 cursor-pointer items-center justify-between gap-2 rounded-lg px-2 outline-none"
-          >
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="relative shrink-0">
-                {/* Icon turns brand-blue once an org KB is selected (no dot). */}
-                <Outlined.Books size={16} className={selectedOrgKbs.length > 0 ? "text-blue-500" : "text-text-2"} />
-              </div>
-              <span className="truncate text-[14px] font-normal text-slate-700">
-                {localize('com_tools_org_knowledge')}
+              <Outlined.Books size={16} className={orgScope === 'none' ? 'text-blue-500' : 'text-text-2'} />
+              <span className={cn('flex-1 text-[14px] font-normal', orgScope === 'none' ? 'text-blue-500' : 'text-slate-700')}>
+                {localize('com_chat_knowledge_scope_none')}
               </span>
-            </div>
-            <Outlined.Right className="size-4 shrink-0 text-slate-400" />
-          </DropdownMenuItem>
-        )}
-
-        {/* Org knowledge selector (mobile): drill panel. */}
-        {variant === 'plus' && isMobile && mobilePanel === 'org' && config?.knowledgeBase?.enabled !== false && (
-          <div className="flex min-h-0 w-full flex-1 flex-col gap-2">
-            <div className="flex shrink-0 items-center gap-0.5">
-              <button
-                type="button"
-                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-text-3 hover:bg-fill-2"
-                aria-label={localize('com_ui_go_back')}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setMobilePanel('root');
-                }}
-              >
-                <Outlined.ArrowLeft size={18} />
-              </button>
-              <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-slate-200" />
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-                {localize('com_tools_org_knowledge')}
-              </span>
-            </div>
-            <KnowledgeListPanel
-              placeholder={localize('com_tools_knowledge_base_search')}
-              keyword={orgKeyword}
-              setKeyword={setOrgKeyword}
-              items={sortedOrgKbs}
-              selectedItems={selectedOrgKbs}
-              onToggle={(item) => handleToggle(item, 'org')}
-              isFetching={orgFetching}
-              hasMore={hasMoreOrg}
-              onLoadMore={() => setOrgPage((p) => p + 1)}
-              emptyText={localize('com_chat_knowledge_empty_no_org_kbs')}
-            />
-          </div>
+              {orgScope === 'none' && <Outlined.Check size={14} className="text-blue-500" />}
+            </DropdownMenuItem>
+          </>
         )}
 
         {/* F035 (PRD §4.1.3) — 任务模式组：以分隔线与上方通用上下文组隔开。

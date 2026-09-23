@@ -195,7 +195,8 @@ from bisheng.citation.domain.services.citation_prompt_helper import (
     save_message_citations_sync,
     select_registry_items_for_persistence,
 )
-from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
+from bisheng.knowledge.domain.models.knowledge import KnowledgeDao, KnowledgeTypeEnum
+from bisheng.knowledge.domain.services.knowledge_permission_service import KnowledgePermissionService
 
 DEFAULT_AGENT_MAX_ITERATIONS = 50
 
@@ -967,7 +968,57 @@ async def _build_knowledge_search_tool(
     )
 
 
-async def _resolve_user_kb_selection(data: APIChatCompletion) -> list[dict]:
+async def _load_knowledge_rows(ids: list[int]) -> list:
+    """Load Knowledge rows for the given ids; best-effort (never raises)."""
+    try:
+        return await KnowledgeDao.aget_list_by_ids(ids)
+    except Exception as exc:
+        logger.warning(f"Failed to load Knowledge rows for {ids}: {exc}")
+        return []
+
+
+async def _expand_all_org_knowledge(login_user: UserPayload) -> list:
+    """F063: every organization KB the user is allowed to use (the "全部" tier).
+
+    Two existing entry points, no new DAO/service surface (C1 forbids adding DAO
+    entry points for a new feature):
+
+    - candidate: a full-row, tenant-wide SELECT (`aget_all_knowledge`) with ONLY
+      the type filter. `filter_department_ids` is deliberately not passed — it
+      narrows the platform list to the currently browsed tree node, which would
+      cut the candidate down to a view instead of a superset. Tenant scoping is
+      automatic on SELECT (C3's `do_orm_execute` listener), so `tenant_id` is
+      never hand-written here.
+    - narrowing: the same per-KB `use_kb` verdict the retrieval path uses.
+      Admins skip it there (`queryChunksFromDB`), so they skip it here too —
+      otherwise "全部" would differ from what is actually read.
+
+    Fails closed: any failure degrades to "no org KB this turn" rather than to
+    "grant everything". Returns the rows themselves so the caller does not have
+    to re-fetch them.
+    """
+    try:
+        candidates = await KnowledgeDao.aget_all_knowledge(knowledge_type=KnowledgeTypeEnum.NORMAL)
+    except Exception as exc:
+        logger.warning(f"[resolve_user_kb] org candidate enumeration failed: {exc}")
+        return []
+    if not candidates:
+        return []
+    if login_user.is_admin():
+        return candidates
+    candidate_ids = [kb.id for kb in candidates]
+    try:
+        permitted_ids = await KnowledgePermissionService().filter_knowledge_ids_by_permission_async(
+            login_user, candidate_ids, "use_kb"
+        )
+    except Exception as exc:
+        logger.warning(f"[resolve_user_kb] org permission narrowing failed: {exc}")
+        return []
+    permitted_set = set(permitted_ids)
+    return [kb for kb in candidates if kb.id in permitted_set]
+
+
+async def _resolve_user_kb_selection(data: APIChatCompletion, login_user: UserPayload) -> list[dict]:
     """Translate APIChatCompletion.use_knowledge_base into KB metadata dicts.
 
     Returns [] if the user hasn't picked any KB. Used both for building the
@@ -975,24 +1026,36 @@ async def _resolve_user_kb_selection(data: APIChatCompletion) -> list[dict]:
     <selected_knowledge_bases> section. Each KB dict carries the set of tag
     names attached to files inside it (aggregated), so the model can pick
     meaningful tag filters when calling search_knowledge_bases.
+
+    `organization_knowledge_all` (F063) replaces a per-id enumeration with a
+    server-side expansion, so the expansion must be narrowed before it reaches
+    the prompt: the result carries KB names and descriptions.
     """
     ukb = data.use_knowledge_base
     if not ukb:
         return []
-    org_ids = list(ukb.organization_knowledge_ids or [])
-    space_ids = list(ukb.knowledge_space_ids or [])
-    ids = org_ids + space_ids
-    if not ids:
-        return []
     # Preserve the bucket each ID came from so `queryChunksFromDB` can route
     # space-type KBs past the auth check (they're personal) while org-type
     # still enforce permissions.
+    space_ids = list(ukb.knowledge_space_ids or [])
     space_id_set = set(space_ids)
-    try:
-        kbs = await KnowledgeDao.aget_list_by_ids(ids)
-    except Exception as exc:
-        logger.warning(f"Failed to load Knowledge rows for {ids}: {exc}")
-        return []
+    if ukb.organization_knowledge_all:
+        org_kbs = await _expand_all_org_knowledge(login_user)
+        space_kbs = await _load_knowledge_rows(space_ids) if space_ids else []
+        kbs = org_kbs + space_kbs
+        # The aggregation below costs 2 queries per KB. Over an expanded org set
+        # that is the N+1 this tier must not pay; the selected knowledge spaces
+        # are bounded by the user's own selection, so they keep their tags
+        # exactly as before this tier existed.
+        tag_targets = space_kbs
+    else:
+        ids = list(ukb.organization_knowledge_ids or []) + space_ids
+        if not ids:
+            return []
+        kbs = await _load_knowledge_rows(ids)
+        if not kbs:
+            return []
+        tag_targets = kbs
 
     # Best-effort aggregation of file-level tags per KB. A KB with many files
     # can have a large tag set; we cap the total tags advertised per KB at 50
@@ -1003,7 +1066,7 @@ async def _resolve_user_kb_selection(data: APIChatCompletion) -> list[dict]:
         from bisheng.database.models.tag import TagDao
         from bisheng.knowledge.domain.models.knowledge_file import KnowledgeFileDao
 
-        for kb in kbs:
+        for kb in tag_targets:
             try:
                 files = await KnowledgeFileDao.aget_file_by_filters(
                     knowledge_id=kb.id,
@@ -1527,7 +1590,7 @@ async def _agent_stream_chat_completion(
 
         try:
             # ---- Step 1: resolve user-selected KBs ----
-            knowledge_bases_info = await _resolve_user_kb_selection(data)
+            knowledge_bases_info = await _resolve_user_kb_selection(data, login_user)
 
             # ---- Step 2: assemble LangChain tools ----
             tool_payloads = [t.model_dump() for t in (data.tools or [])]
@@ -2209,7 +2272,7 @@ async def _task_mode_stream_completion(request: Request, data: APIChatCompletion
     # Local import avoids a module-level workstation->linsight coupling/cycle.
     from bisheng.linsight.domain.services.workbench_impl import LinsightWorkbenchImpl
 
-    submit_obj = _to_linsight_submit(data)
+    submit_obj = _to_linsight_submit(data, await _resolve_submit_org_ids(data, login_user))
     # Pass the original daily-shape files (filepath/type/file_id) so the user
     # question turn persists its attachments and they render after a refresh
     # (the submit schema's SubmitFileSchema drops the display fields).
@@ -2284,7 +2347,32 @@ async def _task_mode_stream_completion(request: Request, data: APIChatCompletion
     return StreamingResponse(_handoff_event(), media_type="text/event-stream")
 
 
-def _to_linsight_submit(data: APIChatCompletion):
+async def _resolve_submit_org_ids(data: APIChatCompletion, login_user: UserPayload) -> list[int] | None:
+    """F063: the org KB ids the linsight submit should carry, or None.
+
+    None means "the request already carries its explicit list" — pass it straight
+    through. Every request that predates this feature lands here, so the handoff's
+    behaviour is byte-for-byte unchanged for them (spec AC-25).
+
+    A list is returned when the client asked for "全部": the linsight
+    session_version stores the CONCRETE ids chosen at submit time ("these are the
+    SPECIFIC ids the user chose"), so the expansion must be materialised here. It
+    reuses `_expand_all_org_knowledge` — the same helper the daily funnel calls —
+    so "全部" has exactly one definition (design 决策 10 A). Resolution happens
+    once, at submit time, not per task run.
+
+    Task mode cannot reach the expansion: the task-mode input reads its own store
+    (client `TaskModeChatInput.tsx`) and sends no `organization_knowledge_all`, so
+    `data` here never sets it. This branch therefore does NOT mean "task mode
+    changed".
+    """
+    ukb = data.use_knowledge_base
+    if not (ukb and ukb.organization_knowledge_all):
+        return None
+    return [kb.id for kb in await _expand_all_org_knowledge(login_user)]
+
+
+def _to_linsight_submit(data: APIChatCompletion, org_knowledge_ids: list[int] | None = None):
     """Map the unified chat request to a linsight submit schema (F035 Track J).
 
     Sound mappings only — question, conversation (session_id), the per-turn
@@ -2354,7 +2442,15 @@ def _to_linsight_submit(data: APIChatCompletion):
     # ids + knowledge-space (SPACE) ids — instead of every KB of a coarse type.
     # The booleans are still set for storage/back-compat but no longer drive
     # injection (task_exec resolves from the id lists).
-    org_ids = list(ukb.organization_knowledge_ids or []) if ukb else []
+    # F063: `org_knowledge_ids` is None for every pre-existing caller (use the
+    # request's own list) and a concrete list when the caller resolved the "全部"
+    # tier — see `_resolve_submit_org_ids`. The `is not None` test carries weight:
+    # a resolved EMPTY list means "全部, and nothing is permitted", which must stay
+    # empty instead of falling back to whatever ids the request happened to carry.
+    if org_knowledge_ids is not None:
+        org_ids = list(org_knowledge_ids)
+    else:
+        org_ids = list(ukb.organization_knowledge_ids or []) if ukb else []
     space_ids = list(ukb.knowledge_space_ids or []) if ukb else []
     personal_enabled = bool(ukb and ukb.personal_knowledge_enabled)
 

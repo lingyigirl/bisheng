@@ -34,6 +34,7 @@ import { useLinsightSessionManager } from '~/hooks/useLinsightManager';
 import InputFiles from '~/pages/appChat/components/InputFiles';
 import { useFileDropAndPaste } from '~/pages/appChat/useFileDropAndPaste';
 import { bishengConfState } from '~/pages/appChat/store/atoms';
+import { hasPickedKnowledge } from '~/utils/knowledgeScope';
 import { useToastContext } from '~/Providers';
 import {
     taskModeContextState,
@@ -211,8 +212,16 @@ export function TaskModeInput({ conversationId = 'new', disabled = false, onFoll
 
         // convertTools (useLinsightManager) maps the pseudo 'pro_knowledge' entry
         // to org_knowledge_enabled; concrete tools ride along via `data`.
+        //
+        // F063 (坑 13): the org-KB tier rides in `knowledge` as a synthetic
+        // `__org_scope__` marker, so a raw `length > 0` would report 「不使用」 as
+        // "a KB was picked". The two surfaces DO share this atom: `ExecutionFlow`
+        // falls back to the 'new' key whenever `linsight.session_id` is not yet
+        // populated, which is exactly the key the landing page writes. Only real
+        // entries count (`hasPickedKnowledge`).
+        const pickedKnowledge = hasPickedKnowledge(context.knowledge);
         const submissionTools = [
-            { id: 'pro_knowledge', name: localize('com_tools_org_knowledge'), checked: context.knowledge.length > 0 },
+            { id: 'pro_knowledge', name: localize('com_tools_org_knowledge'), checked: pickedKnowledge },
             ...context.tools,
         ];
 
@@ -229,7 +238,7 @@ export function TaskModeInput({ conversationId = 'new', disabled = false, onFoll
             model,
             skills: skills.map((s) => s.name),
             enableWebSearch: false,
-            useKnowledgeBase: context.knowledge.length > 0,
+            useKnowledgeBase: pickedKnowledge,
             // F035: continue the current session on follow-up rounds. conversationId
             // is the real session id in the execution view, 'new' on the landing page.
             sessionId: conversationId && conversationId !== 'new' ? conversationId : undefined,

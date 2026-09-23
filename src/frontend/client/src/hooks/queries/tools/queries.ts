@@ -74,7 +74,12 @@ export const useGetOrgToolList = (query: { page, page_size?, name?, sort_by?, pr
   return useQuery({
     // preferred_ids participates in the key so switching configured set (or
     // loading bsConfig.orgKbs after the first render) invalidates the cache.
-    queryKey: ['OrgTools', query.page, query.name, query.preferred_ids || ''],
+    // page_size MUST be here too: the app has one QueryClient shared by every
+    // route, and callers disagree on the size (F063's existence probe asks for 1;
+    // the linsight org picker asks for 50). Without it in the key they collapse
+    // into one entry and whoever mounts first decides what the others render —
+    // the probe would truncate the picker to a single row.
+    queryKey: ['OrgTools', query.page, query.page_size, query.name, query.preferred_ids || ''],
     queryFn: () => getKnowledgeInfo(query),
     select(data) {
       return data?.data.data;

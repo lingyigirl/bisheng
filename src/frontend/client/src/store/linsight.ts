@@ -252,6 +252,13 @@ export type SubmissionState = {
     skills?: string[];
     enableWebSearch: boolean;
     useKnowledgeBase: boolean;
+    /**
+     * F063: the org-KB tier resolved to 「全部」 — the server expands it into the
+     * concrete permitted ids at submit time (`organization_knowledge_all` on the
+     * wire). Set by the landing page only: the execution-state input continues an
+     * existing session whose ids were already fixed at its first submit (AC-25).
+     */
+    organizationKnowledgeAll?: boolean;
     prevVersionId?: string;
     /** F035: existing session id to continue (follow-up round); undefined = new session. */
     sessionId?: string;

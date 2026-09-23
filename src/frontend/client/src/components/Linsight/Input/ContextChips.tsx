@@ -6,6 +6,7 @@
 import { Outlined } from 'bisheng-icons';
 import { Loader2, Paperclip, Sparkles, X } from 'lucide-react';
 import type { TaskModeKnowledgeItem, TaskModeSkill } from '~/store/linsight';
+import { withoutOrgScopeMarker } from '~/utils/knowledgeScope';
 
 export interface ContextAttachmentFile {
     clientId: string;
@@ -83,8 +84,13 @@ export function ContextChips({
         })),
     ];
 
+    // F063 (坑 13): the org-KB tier rides in `knowledge` as a synthetic marker
+    // whose `name` is empty. Rendering it would draw a blank chip, and counting
+    // it would let a bare marker keep the row on screen. Only real entries chip.
+    const chippedKnowledge = withoutOrgScopeMarker(knowledge);
+
     const isEmpty =
-        skills.length === 0 && knowledge.length === 0 && orderedFiles.length === 0;
+        skills.length === 0 && chippedKnowledge.length === 0 && orderedFiles.length === 0;
     if (isEmpty) return null;
 
     return (
@@ -112,7 +118,7 @@ export function ContextChips({
                         onRemove={() => onRemoveSkill(skill)}
                     />
                 ))}
-                {knowledge.map((item) => (
+                {chippedKnowledge.map((item) => (
                     <Chip
                         key={`${item.type}-${item.id}`}
                         icon={

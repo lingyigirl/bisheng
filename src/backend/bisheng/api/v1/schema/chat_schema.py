@@ -61,6 +61,13 @@ class UseKnowledgeBaseParam(BaseModel):
     personal_knowledge_enabled: bool | None = False
     organization_knowledge_ids: list[int] | None = []
     knowledge_space_ids: list[int] | None = []
+    # F063: when true, the server expands this to every organization knowledge
+    # base the user is allowed to use (type=0), instead of requiring the client
+    # to enumerate them. Optional and defaulting to False so that existing
+    # clients keep the exact previous semantics; when true,
+    # `organization_knowledge_ids` is ignored (the two forms are mutually
+    # exclusive — the client only ever sends one of them).
+    organization_knowledge_all: bool | None = False
 
     @field_validator("organization_knowledge_ids", mode="before")
     @classmethod

@@ -9,6 +9,7 @@ import { v4 } from "uuid";
 import type { ConversationData, TConversation } from "~/types/chat";
 import { QueryKeys, dataService } from "~/types/chat";
 import { addConversation, updateConvoFields } from "~/utils";
+import { hasKnowledgeSpaces, toPayloadKnowledgeScope } from "~/utils/knowledgeScope";
 import store from "~/store";
 import { useLocalize } from "~/hooks";
 import { useToastContext } from "~/Providers";
@@ -267,15 +268,17 @@ export default function useAiChat(initialConversationId: string = "new", isLings
             setMessages(updatedMessages);
 
             // Build SSE payload (same structure as useChatFunctions.ask).
-            // Backend expects List[int] for both id fields; atom holds strings
-            // so we coerce via Number here.
-            const orgKbDisabled = (bsConfig as any)?.knowledgeBase?.enabled === false;
-            const orgKbs = orgKbDisabled
-                ? []
-                : selectedOrgKbs.filter((kb) => kb.type === 'org').map((kb) => Number(kb.id));
-            const spaceKbs = selectedOrgKbs
-                .filter((kb) => kb.type === 'space')
-                .map((kb) => Number(kb.id));
+            // F063: the org-KB tier (全部 / 不使用) replaces the per-id
+            // enumeration. One call produces both id lists and keeps the two org
+            // forms exclusive; the admin switch disables only the org part.
+            // Must stay identical to the regenerate path's payload below —
+            // diverging there shows up as "the first answer knew, the retry did
+            // not" (T-11).
+            const knowledgeScope = toPayloadKnowledgeScope(
+                selectedOrgKbs,
+                hasKnowledgeSpaces(selectedOrgKbs),
+                (bsConfig as any)?.knowledgeBase?.enabled !== false,
+            );
             const payload = {
                 text: text.trim(),
                 clientTimestamp: new Date().toLocaleString("sv").replace(" ", "T"),
@@ -287,8 +290,7 @@ export default function useAiChat(initialConversationId: string = "new", isLings
                 model: chatModel.id + "",
                 use_knowledge_base: {
                     personal_knowledge_enabled: false,
-                    organization_knowledge_ids: orgKbs,
-                    knowledge_space_ids: spaceKbs,
+                    ...knowledgeScope,
                 },
                 isContinued: false,
                 isTemporary: false,
@@ -728,6 +730,14 @@ export default function useAiChat(initialConversationId: string = "new", isLings
             setMessages((prev) => [...prev, newResponse]);
 
             // Build SSE payload
+            // F063: the very same call as the send path above — a regenerate that
+            // resolved the scope differently would silently answer from another
+            // knowledge set (T-11).
+            const knowledgeScope = toPayloadKnowledgeScope(
+                selectedOrgKbs,
+                hasKnowledgeSpaces(selectedOrgKbs),
+                (bsConfig as any)?.knowledgeBase?.enabled !== false,
+            );
             const payload = {
                 text: parentMsg.text?.trim() || "",
                 clientTimestamp: new Date()
@@ -742,12 +752,7 @@ export default function useAiChat(initialConversationId: string = "new", isLings
                 endpointType: "custom",
                 model: chatModel.id + "",
                 use_knowledge_base: {
-                    organization_knowledge_ids: (bsConfig as any)?.knowledgeBase?.enabled === false
-                        ? []
-                        : selectedOrgKbs.filter((kb) => kb.type === 'org').map((kb) => Number(kb.id)),
-                    knowledge_space_ids: selectedOrgKbs
-                        .filter((kb) => kb.type === 'space')
-                        .map((kb) => Number(kb.id)),
+                    ...knowledgeScope,
                 },
                 isContinued: false,
                 isRegenerate: true,

@@ -26,6 +26,7 @@ import useChatModelMemo from '~/hooks/useChatModelMemo';
 import useLocalize from '~/hooks/useLocalize';
 import store from '~/store';
 import { addConversation, cn, generateUUID } from '~/utils';
+import { normalizeStoredItems } from '~/utils/knowledgeScope';
 import { Card, CardContent } from '../ui/Card';
 import Landing from './Landing';
 import Presentation from './Presentation';
@@ -85,7 +86,8 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
   // AiAssistantPanel), so it lives in useChatModelMemo. KB / tools are
   // ChatView-only and handled in the effect below. Rules:
   //  - KB space: default empty; remember user toggles
-  //  - org KB: default per bsConfig.orgKbs[].default_checked; remember toggles
+  //  - org KB: F063 — remembered as a TIER (全部 / 不使用), not as a list of ids;
+  //    with nothing stored it falls back to 全部 (`~/utils/knowledgeScope`)
   //  - tools: default per bsConfig.tools[].default_checked; remember toggles
   useChatModelMemo(user, bsConfig as any);
 
@@ -97,35 +99,25 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
 
     // Org KBs + knowledge spaces (unified selectedOrgKbs atom).
     // Priority: any localStorage entry (including empty) wins so the user's
-    // explicit clear is preserved across refresh; admin-configured
-    // default_checked only applies on first session (key absent).
-    // When org-KB is disabled by admin, keep knowledge-space selections and
-    // only drop org KB entries.
+    // explicit clear is preserved across refresh.
     try {
       const raw = localStorage.getItem(`${prefix}selectedOrgKbs`);
-      let saved: any[] | null = null;
+      let saved: unknown = null;
       if (raw !== null) {
         try {
-          const v = JSON.parse(raw);
-          if (Array.isArray(v)) saved = v;
+          saved = JSON.parse(raw);
         } catch { /* ignore parse errors */ }
       }
 
-      const orgKbDisabled = (bsConfig as any)?.knowledgeBase?.enabled === false;
-      if (saved !== null) {
-        setSelectedOrgKbs(
-          orgKbDisabled
-            ? saved.filter((item: any) => item?.type !== 'org')
-            : saved
-        );
-      } else {
-        const defaults = orgKbDisabled
-          ? []
-          : ((bsConfig as any)?.orgKbs || [])
-            .filter((k: any) => k.default_checked)
-            .map((k: any) => ({ id: String(k.id), name: k.name, type: 'org' }));
-        setSelectedOrgKbs(defaults);
-      }
+      // F063: normalised on read — knowledge spaces plus the org-KB tier marker,
+      // legacy per-item org entries dropped (see `~/utils/knowledgeScope`).
+      // The tier marker is deliberately NOT dropped when the admin disables org
+      // KBs: keeping it is what lets the user's choice survive the switch going
+      // off and on again. Disabling takes effect in the request payload instead.
+      // The admin-config default-checked org list is no longer adopted as a
+      // default (AC-23) — with no archive the tier falls back to "all", so
+      // seeding ids here would freeze a default the user never chose.
+      setSelectedOrgKbs(normalizeStoredItems(saved));
     } catch { /* ignore */ }
 
     // Agent tool groups (parent-level). Same priority rule: any localStorage
