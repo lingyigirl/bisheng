@@ -14,7 +14,7 @@ import {
 } from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { ArrowLeft, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { TableDescriptionDialog } from "./TableDescriptionDialog";
 
@@ -22,6 +22,56 @@ interface Props {
   datasourceId: number;
   datasourceName: string;
   onBack: () => void;
+}
+
+/** One row of the left picker. `missing` marks a collected table the database
+ *  no longer has — see `mergePickerRows`. */
+interface PickerRow {
+  table_name: string;
+  collected: boolean;
+  enabled: number;
+  missing: boolean;
+}
+
+/**
+ * The tables the picker lists: what the database has right now, plus every
+ * collected table it no longer has.
+ *
+ * The second half is not padding. The detail pane shows only the selected
+ * table, so without an entry here a table that was dropped upstream could not
+ * be reached at all — its snapshot and business description would still exist
+ * with no way to open them, which is the opposite of the spec's promise that an
+ * unreachable table stays visible on the table list.
+ *
+ * The live list is authoritative for tables it contains: `enabled` there is the
+ * platform's own exposed flag, so a table is never listed twice.
+ */
+function mergePickerRows(
+  available: AvailableTableRow[],
+  tables: DatasourceTableRow[],
+): PickerRow[] {
+  const liveNames = new Set(available.map((row) => row.table_name));
+  return [
+    ...available.map((row) => ({ ...row, missing: false })),
+    ...tables
+      .filter((row) => !liveNames.has(row.table_name))
+      .map((row) => ({
+        table_name: row.table_name,
+        collected: true,
+        enabled: row.enabled,
+        missing: true,
+      })),
+  ];
+}
+
+/** The ticked set as the server reports it — what "save selection" must echo
+ *  back so that saving does not silently un-expose a table.
+ *
+ *  Tables dropped upstream matter here: `set_exposed` walks the stored rows and
+ *  disables every one whose name is not in the submitted list, and such a table
+ *  has no entry in the live list to be re-ticked from. */
+function exposedNames(rows: PickerRow[]): Set<string> {
+  return new Set(rows.filter((row) => row.enabled).map((row) => row.table_name));
 }
 
 export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: Props) {
@@ -35,6 +85,10 @@ export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: P
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [collecting, setCollecting] = useState(false);
   const [descTarget, setDescTarget] = useState<DatasourceTableRow | null>(null);
+  // Which table the detail pane shows. Single-select and separate from `checked`
+  // on purpose: ticking boxes is a batch "expose these" action, so one ticked
+  // set cannot decide which single table to display.
+  const [selected, setSelected] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -45,7 +99,10 @@ export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: P
     setLoading(false);
     if (availableRes) {
       setAvailable(availableRes.data);
-      setChecked(new Set(availableRes.data.filter((row) => row.enabled).map((row) => row.table_name)));
+      // Rebuilt from the rows the server just returned rather than from state:
+      // the live list already carries each table's exposed flag, and a table the
+      // database no longer has carries it on its collected row.
+      setChecked(exposedNames(mergePickerRows(availableRes.data, tablesRes?.data ?? [])));
     }
     if (tablesRes) setTables(tablesRes.data);
   }, [datasourceId]);
@@ -53,6 +110,15 @@ export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: P
   useEffect(() => {
     void load();
   }, [load]);
+
+  const pickerRows = useMemo(() => mergePickerRows(available, tables), [available, tables]);
+  const selectedTable = useMemo(
+    () => (selected ? (tables.find((row) => row.table_name === selected) ?? null) : null),
+    [selected, tables],
+  );
+  const selectedIsMissing = selected
+    ? pickerRows.some((row) => row.table_name === selected && row.missing)
+    : false;
 
   const handleSaveSelection = async () => {
     const res = await captureAndAlertRequestErrorHoc(
@@ -124,107 +190,138 @@ export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: P
       <div className="flex min-h-0 flex-1 gap-4">
         <div className="flex w-[280px] min-w-[220px] flex-col rounded-md border">
           <div className="shrink-0 border-b px-3 py-2 text-sm font-medium">
-            {t("datasource.tables.availableTitle", { count: available.length })}
+            {t("datasource.tables.availableTitle", { count: pickerRows.length })}
           </div>
           <div className="min-h-0 flex-1 overflow-auto p-2">
-            {available.length === 0 && !loading && (
+            {pickerRows.length === 0 && !loading && (
               <p className="py-6 text-center text-xs text-muted-foreground">
                 {t("datasource.tables.availableEmpty")}
               </p>
             )}
-            {available.map((row) => (
-              <label
+            {pickerRows.map((row) => (
+              // A row click SELECTS; only the checkbox ticks. They are different
+              // actions -- one picks what the detail pane shows, the other stages
+              // the batch "expose these" set -- so the tick box stops the click
+              // from bubbling rather than doubling as the row's click target.
+              <div
                 key={row.table_name}
-                className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
+                className={`flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent ${
+                  selected === row.table_name ? "bg-accent" : ""
+                }`}
+                onClick={() => setSelected(row.table_name)}
               >
-                <Checkbox
-                  checked={checked.has(row.table_name)}
-                  onCheckedChange={(value) => {
-                    setChecked((prev) => {
-                      const next = new Set(prev);
-                      if (value === true) next.add(row.table_name);
-                      else next.delete(row.table_name);
-                      return next;
-                    });
-                  }}
-                />
+                <span onClick={(event) => event.stopPropagation()}>
+                  <Checkbox
+                    checked={checked.has(row.table_name)}
+                    onCheckedChange={(value) => {
+                      setChecked((prev) => {
+                        const next = new Set(prev);
+                        if (value === true) next.add(row.table_name);
+                        else next.delete(row.table_name);
+                        return next;
+                      });
+                    }}
+                  />
+                </span>
                 <span className="min-w-0 flex-1 truncate" title={row.table_name}>
                   {row.table_name}
                 </span>
-                {!row.collected && (
+                {row.missing && (
+                  <Badge variant="gray">{t("datasource.tables.notInDatabase")}</Badge>
+                )}
+                {!row.missing && !row.collected && (
                   <Badge variant="gray">{t("datasource.tables.notCollected")}</Badge>
                 )}
-              </label>
+              </div>
             ))}
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border">
-          <div className="sticky top-0 z-10 border-b bg-background px-3 py-2 text-sm font-medium">
-            {t("datasource.tables.collectedTitle", { count: tables.length })}
+        <div className="flex min-h-0 flex-1 flex-col rounded-md border">
+          <div className="shrink-0 border-b px-3 py-2 text-sm font-medium">
+            {t("datasource.tables.detailTitle")}
           </div>
-          {tables.map((table) => (
-            <div key={table.id} className="border-b last:border-b-0">
-              <div className="flex items-center gap-2 px-3 py-2">
-                <span className="font-medium">{table.table_name}</span>
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  {table.table_comment || t("datasource.tables.noTableComment")}
-                </span>
-                {/* The exposed flag is `enabled`; unticking sets it to 0 rather
-                    than deleting, which is what keeps the description alive. */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span>
-                      <Switch
-                        checked={table.enabled === 1}
-                        onCheckedChange={(value) => {
-                          // The endpoint takes the whole exposed set, so one
-                          // toggle sends the current set with this table added
-                          // or removed — an unsaved checkbox selection is
-                          // included rather than discarded.
-                          const next = new Set(checked);
-                          if (value) next.add(table.table_name);
-                          else next.delete(table.table_name);
-                          setChecked(next);
-                          void captureAndAlertRequestErrorHoc(
-                            selectDatasourceTablesApi(datasourceId, Array.from(next)),
-                          ).then((res) => {
-                            if (res) void load();
-                          });
-                        }}
-                      />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    {t("datasource.tables.exposeTooltip")}
-                  </TooltipContent>
-                </Tooltip>
-                <Button variant="ghost" size="sm" onClick={() => setDescTarget(table)}>
-                  {t("datasource.tables.editDescription")}
-                </Button>
-              </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {/* One table at a time: the pane follows the row selected on the
+                left instead of stacking every collected table, which made the
+                page run off the bottom and left the admin scrolling to find
+                the one they were working on. */}
+            {!selected && (
+              <p className="py-16 text-center text-sm text-muted-foreground">
+                {tables.length === 0
+                  ? t("datasource.tables.collectedEmpty")
+                  : t("datasource.tables.selectHint")}
+              </p>
+            )}
+            {/* Selected but not collected yet: the live list knows the name and
+                nothing else — no comment, no columns — so there is honestly
+                nothing to render besides the way to collect it. */}
+            {selected && !selectedTable && (
+              <p className="py-16 text-center text-sm text-muted-foreground">
+                {t("datasource.tables.notCollectedHint", { table: selected })}
+              </p>
+            )}
+            {selectedTable && (
+              <div>
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className="font-medium">{selectedTable.table_name}</span>
+                  {selectedIsMissing && (
+                    <Badge variant="gray">{t("datasource.tables.notInDatabase")}</Badge>
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {selectedTable.table_comment || t("datasource.tables.noTableComment")}
+                  </span>
+                  {/* The exposed flag is `enabled`; unticking sets it to 0 rather
+                      than deleting, which is what keeps the description alive. */}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Switch
+                          checked={selectedTable.enabled === 1}
+                          onCheckedChange={(value) => {
+                            // The endpoint takes the whole exposed set, so one
+                            // toggle sends the current set with this table added
+                            // or removed — an unsaved checkbox selection is
+                            // included rather than discarded.
+                            const next = new Set(checked);
+                            if (value) next.add(selectedTable.table_name);
+                            else next.delete(selectedTable.table_name);
+                            setChecked(next);
+                            void captureAndAlertRequestErrorHoc(
+                              selectDatasourceTablesApi(datasourceId, Array.from(next)),
+                            ).then((res) => {
+                              if (res) void load();
+                            });
+                          }}
+                        />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t("datasource.tables.exposeTooltip")}
+                    </TooltipContent>
+                  </Tooltip>
+                  <Button variant="ghost" size="sm" onClick={() => setDescTarget(selectedTable)}>
+                    {t("datasource.tables.editDescription")}
+                  </Button>
+                </div>
 
-              <div className="px-3 pb-3">
-                <CollapsibleColumns
-                  table={table}
-                  emptyText={t("datasource.tables.columnsEmpty")}
-                  headerLabels={{
-                    name: t("datasource.tables.colFieldName"),
-                    type: t("datasource.tables.colFieldType"),
-                    comment: t("datasource.tables.colFieldComment"),
-                  }}
-                  commentMissingText={t("datasource.tables.commentUnavailable")}
-                  businessDescLabel={t("datasource.tables.businessDesc")}
-                  noBusinessDescText={t("datasource.tables.noBusinessDesc")}
-                />
+                <div className="px-3 pb-3">
+                  <CollapsibleColumns
+                    table={selectedTable}
+                    emptyText={t("datasource.tables.columnsEmpty")}
+                    headerLabels={{
+                      name: t("datasource.tables.colFieldName"),
+                      type: t("datasource.tables.colFieldType"),
+                      comment: t("datasource.tables.colFieldComment"),
+                    }}
+                    commentMissingText={t("datasource.tables.commentUnavailable")}
+                    businessDescLabel={t("datasource.tables.businessDesc")}
+                    noBusinessDescText={t("datasource.tables.noBusinessDesc")}
+                  />
+                </div>
               </div>
-            </div>
-          ))}
-          {tables.length === 0 && !loading && (
-            <p className="py-16 text-center text-sm text-muted-foreground">
-              {t("datasource.tables.collectedEmpty")}
-            </p>
-          )}
+            )}
+          </div>
         </div>
       </div>
 

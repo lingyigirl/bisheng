@@ -25,11 +25,18 @@ export default function DatasourcePage() {
           <TabsTrigger value="failures">{t("datasource.tab.failures")}</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="list" className="mt-3 min-h-0 flex-1">
+        {/* `flex flex-col` is load-bearing, not decoration: `TabsContent` is a
+            plain Radix div, and every tab below sizes itself with `flex-1`
+            + `min-h-0` so its own list scrolls instead of stretching the page.
+            Without a flex parent those children fall back to `height: auto`,
+            so their `overflow-auto` never triggers and the whole page grows
+            (that is what made the table picker and the datasource list run off
+            the bottom of the screen). */}
+        <TabsContent value="list" className="mt-3 flex min-h-0 flex-1 flex-col">
           <DatasourceListTab queries={queries} />
         </TabsContent>
 
-        <TabsContent value="failures" className="mt-3 min-h-0 flex-1">
+        <TabsContent value="failures" className="mt-3 flex min-h-0 flex-1 flex-col">
           {/* The failure list is a work queue, not a report: its whole purpose
               is sending the admin to the table description that needs writing
               (AC-42), so a row click lands on that datasource's table editor.

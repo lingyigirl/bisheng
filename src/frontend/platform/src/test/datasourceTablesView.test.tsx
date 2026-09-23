@@ -18,7 +18,7 @@ import {
   listAvailableTablesApi,
   listDatasourceTablesApi,
 } from "@/controllers/API/datasource";
-import { render, screen, waitFor } from "@/test/test-utils";
+import { fireEvent, render, screen, waitFor } from "@/test/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react-i18next", () => ({
@@ -131,6 +131,11 @@ describe("DatasourceTablesView (F061 T-36 / T-37 / AC-48)", () => {
     } as never);
 
     renderView();
+    // The detail pane shows the SELECTED table, so the column list only exists
+    // once the table is picked from the picker. Clicking the row is what selects
+    // it now — the tick box is a separate action (see
+    // datasourceTablesViewSelection.test.tsx).
+    fireEvent.click(await screen.findByText("orders"));
 
     await waitFor(() => {
       // The first column must carry the explicit "cannot report" copy.
