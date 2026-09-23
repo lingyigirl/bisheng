@@ -41,9 +41,12 @@
 **验证**：**9 项变异逐一注入并即时还原**（6 项代码变异 + 3 项覆盖断言变异），**全部被捕获**；
 每次变异与还原在同一步完成，事后校验工作区无残留注入行。测试数 68 → **80**。
 
+**文档维度已收尾（2026-09-23）**：坑 6 / 坑 10 已改为当前事实、§1 非目标第 2 条已限定为**执行态**并指向决策 14、
+§6.1 展开结果拆成「原始 ORM / 漏斗出口 dict」两行、§6.2 修正调用方数量并补**跨域私有符号依赖**行、
+决策 2「两处」→**三处**、决策 3「4 个调用方」→**3 个**、新增**坑 19**（三态语义）、
+e2e-checklist 补上场景 6 的去向说明；本轮两处**自相矛盾**（T-17 消费者表、T-19 场景 6b）也已就地标注被 H1' / M1 推翻。
+
 **未结（不影响功能）**：M4 展开成本不封顶、不缓存（设计决策 11 已接受，AC-09 明文禁止收敛，但 spec §3 缺对应边界条目）；
-坑表尚未加 `_resolve_submit_org_ids` 的三态行（§4.1 已写）；坑 6 / 坑 10 描述的是本次已删除的代码；
-§1 非目标第 2 条与决策 14 自相矛盾；e2e-checklist 场景编号缺 6；
 **e2e 余一项待办**：**e2e 断言的变异验证**（验收条件之一）。落地页场景已补（见上）；
 但注意变异验证要「改坏 → **重启后端** → 跑 e2e → 还原 → 再重启」，因为运行中的 uvicorn 无 `--reload`，
 而重启需要该进程原本的启动命令 —— 本次**未做**。
@@ -489,7 +492,7 @@ toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)  // 请求体片段
 | `ChatKnowledge.tsx`（档位开关） | 按 `readOrgScope` / `withOrgScope` 读写 | T-12 / T-13 已覆盖 |
 | `MessagesView.tsx:38-41`（只持 setter，不读值） | 「开启新对话」的 `setSelectedOrgKbs([])` 把档位一并清空 ⇒ 回到 AC-02 兜底（「全部」，即本特性默认值）；`enableOrgKb` 是无消费方的遗留标记 | **加注释，不改行为** |
 | `useChatFunctions.ts:63 / 94-102`（`knowledges: selectedOrgKbs`） | **死代码**：`src` 内无 `<ChatContext.Provider>` 挂载点（`useChatContext()` 恒为默认空对象），其产物 `store.submission` 无任何读者 | **只加注释**（警示「若复活必须走 `toPayloadKnowledgeScope`」），不删 |
-| `TaskModeInput.tsx:215 / 232`（执行态） | 走 `context.knowledge.length > 0`；与落地页共用原子但 key 不同（落地页 `'new'`；执行态为会话 id），实际不相遇 | **加注释（坑 15），行为零改动**（AC-25） |
+| `TaskModeInput.tsx:215 / 232`（执行态） | 走 `context.knowledge.length > 0` —— 会把档位标记当成「已选组织库」 | ⚠️ **本行是 T-17 的原结论，已被 M1 推翻**：当时判为「与落地页 key 不同、实际不相遇 ⇒ 只加注释、行为零改动」，但 `ExecutionFlow` 在 `linsight.session_id` 未落 store 时**也**回退到 `'new'` —— 正是落地页写入的 key，**真实窗口存在**。实际**改了行为**：判定改走 `hasPickedKnowledge(context.knowledge)`（见偏差记录 M1、坑 15 改写） |
 | `TaskModeChatInput.tsx`（任务模式**落地页**） | 原判定把档位标记当「已选组织库」⇒「不使用」档误报 `org_knowledge_enabled=true` | **改为按档位判定**（`isOrgScopeAll`）；见 design 决策 14 与 spec AC-25 修订 |
 | `KnowledgeSpaceSelect.tsx`（执行态逐库选择器） | 数据源是 `useGetOrgToolList` 全量，**不读** `selectedOrgKbs` ⇒ 见不到标记 | 零改动 |
 | `useAiChat.ts` / `useSubmitMessage.ts`（日常 payload） | 经 `toPayloadKnowledgeScope` 构造，标记项被排除 | T-11 已覆盖 |
@@ -533,7 +536,7 @@ toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)  // 请求体片段
 | 4 | 移除汇总卡后发起该轮 | 该轮不检索组织知识库 |
 | 5 | 刷新页面 / **重新生成** | 档位保持（含显式「不使用」这种**与兜底结果相同**的状态）；重新生成走的是与发送同源的 payload（T-11 的接线验收） |
 | 6a | 任务模式**执行态**（灵思任务已创建后的输入区） | UI 与行为**零改动**（AC-25 修订后的保护范围）：逐库选择器照旧可用，提交的 `org_knowledge_enabled` 与升级前同义 |
-| 6b | 任务模式**落地页**（`/linsight/new`） | 跟随新口径（AC-24）：默认显示「全部组织知识库」汇总卡；不选任何东西直接发起任务 ⇒ 提交体 `org_knowledge_enabled=true`（**这是本次唯一一处对外行为变化**，已由需求方确认）；把卡片移除成「不使用」后再发起 ⇒ `org_knowledge_enabled=false`（旧实现在此处会误报 true） |
+| 6b | 任务模式**落地页**（`/linsight/new`） | 跟随新口径（AC-24）：默认显示「全部组织知识库」汇总卡；不选任何东西直接发起任务 ⇒ **落库的 `linsight_session_version.organization_knowledge_ids` 是该用户有权限的全部组织库 id**；把卡片移除成「不使用」后再发起 ⇒ 该列为 `NULL`/空。⚠️ **断言已修订（H1'，2026-09-22）**：原写「提交体 `org_knowledge_enabled=true/false`」**无效** —— 该布尔在任务执行期**不被读取**（坑 16），断言它等于测一个死字段。**2026-09-23 已由自动化覆盖**：`test_landing_page_all_tier_materialises_the_same_set_as_the_list_entry` / `test_landing_page_none_tier_stores_no_ids`（均 `no_llm`） |
 | 7 | **档位切到「不使用」后，看平台侧知识库列表与组织树角标** | 数字与集合**一律不变**（AC-12：「不使用」是本轮问答的**作用域选择**，不产生任何授权语义，也不改变其他入口的可见性）——本场景是 AC-12 的具体断言，不能只靠「代码里没写负向授权」这类推断 |
 
 **入口覆盖（AC-24）**：日常问答页、**订阅模块的 AI 助手面板**、独立对话页、分享页——至少各验一次「本口径生效且不因入口分叉」；其中订阅面板刷新后应恢复为日常问答页所保存的选择（AC-20）。
@@ -618,7 +621,7 @@ toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)  // 请求体片段
 - **T-17 消费者审计（2026-09-22，已合入）**：清单（消费者 × 行为）与 AC-20 写盘点名见 **T-17 任务的产出表**；论证在 **design 决策 14 + 坑 15 / 坑 7 更新**。三项要点：
   ① **`useChatFunctions` 判定为死代码**（不是「被引入就是活代码」的反例）：`src` 内**没有任何** `<ChatContext.Provider>` 挂载点（只有 `StandaloneChatContext` 这个无关的 context），`useChatContext()` 恒为默认空对象；其唯一产物 `store.submission` 全仓**无读者**。按根 `AGENTS.md §3`「与需求无关的死代码只标注不删除」，只在原处加注释，并写明**若复活必须改走 `toPayloadKnowledgeScope`**（否则会把 `__org_scope__` 当知识库 id 发给服务端）。
   ② **发现 AC-25 的前提只对执行态成立，超出原计划范围 → 已停下交需求方裁决**：任务模式**落地页**（`TaskModeChatInput`）整个复用日常 `AiChatInput`，必然继承两档入口与汇总卡；且其 `handleSend` 用 `some(k => k.type === 'org')` / `length > 0` 推导 `checked`(→`org_knowledge_enabled`) 与 `useKnowledgeBase`，而档位标记的 `type` 也是 `'org'`（坑 13）⇒ **「不使用」档会误报「用了组织知识库」**。澄清过程中还确认：落地页的**逐库 id 从未上过线**（`convertTools` 只读 `checked` 布尔，提交 payload 只有 `org_knowledge_enabled` / `personal_knowledge_enabled`），所以对齐两档不丢失任何已生效能力。**裁决：落地页跟随新口径**（默认档位「全部」），执行态维持原样；并接受由此产生的**唯一一处对外行为变化**——落地页首次提问的默认行为由「不检索组织库」变为「检索全部组织库」。同步产出：`isOrgScopeAll(items, enabled)` 成为**唯一档位判定入口**（与 payload 的 `organization_knowledge_all` 同源同值）、**spec AC-25 修订**（保护范围限定到执行态 + 记录落地页跟随与该默认翻转）、**design 决策 14 + 坑 15**。落地页注释统一英文（前端硬规则），文档为中文。
-  ③ **两处遗留注释/零改动落点**：`MessagesView`「开启新对话」`setSelectedOrgKbs([])` ⇒ 档位回到兜底（「全部」）而非「不使用」——这是**清空即默认**的语义，与 AC-08 一致，且 `enableOrgKb` 是无消费方的遗留标记，故**不改行为只加注释**；`TaskModeInput` 的 `length > 0` 与落地页共用原子但 key 不同（坑 15），同样只加注释。
+  ③ **两处遗留注释/零改动落点**：`MessagesView`「开启新对话」`setSelectedOrgKbs([])` ⇒ 档位回到兜底（「全部」）而非「不使用」——这是**清空即默认**的语义，与 AC-08 一致，且 `enableOrgKb` 是无消费方的遗留标记，故**不改行为只加注释**；`TaskModeInput` 的 `length > 0`（**已被 M1 推翻**：「key 不同」的判断是错的，`ExecutionFlow` 也回退到 `'new'`，实际改了行为，见偏差记录 M1）。
 - **T-17 新增用例与变异验证（本次）**：`utils/knowledgeScope.test.ts` 新增 `isOrgScopeAll` / `showsOrgKbSummary` 一组 5 条（含一条**跨函数一致性**：对 7 种状态 × 开关两态，逐项断言 `isOrgScopeAll(...) === toPayloadKnowledgeScope(...).organization_knowledge_all` —— 钉住「界面说的档位」与「请求发的档位」是同一个答案）。变异：把 `isOrgScopeAll` 改成 `return enabled`（丢掉档位判定）⇒ **4 条红**，已还原。三条描述文案里的「全部/不使用」因 `no-restricted-syntax`（硬编码中文，Ledger #28）改为 `tier 'all' / 'none'`——该规则连**字符串字面量**里的中文也拦（注释里的中文不拦）。
 - **T-18 回归实跑（2026-09-22，本次）**：本特性只改后端两个文件（`chat_schema.py` / `chat_service.py`），故基线对比用「备份 → `git checkout --` 这两个文件 → 重跑 → 还原」完成（**不走 `git stash`**：共享工作区里 stash 会被并行工作流的提交冲掉；备份落 `/tmp/f063_backup/`，还原后 `md5sum` 与备份逐字节一致）。**结果：零退化。**
   ① `test/workstation/`：有 F063 **26 failed / 191 passed**，无 F063 **26 failed / 165 passed** —— 失败集**逐条相同**，F063 净增的 26 条用例全绿。既有失败均为**环境性**，与本次改动无关：`test_workstation_apps_rebac.py` 硬编码了他人机器路径 `D:\Users/zhou/Code/bisheng/...`（`FileNotFoundError`），`test_conversation_export_import.py` 等因缺中间件撞 `object MagicMock can't be used in 'await' expression` 与消息落库乱码。
