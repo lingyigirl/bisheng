@@ -51,7 +51,7 @@
 
 | ID | 任务 | 覆盖 AC | 验证标准 | 状态 |
 |---|---|---|---|---|
-| T-17 | e2e：写订正 → 重采集 → 注入文本仍为订正；客户库注释未被改写 | AC-02 / AC-04 / AC-06 | `pytest test/e2e/test_e2e_f064_field_override.py` 通过 | ☐ |
+| T-17 | e2e：写订正 → 重采集 → 订正仍在；客户库注释未被改写 | AC-02 / AC-04 / AC-05 / AC-01 兼容面 | `pytest test/e2e/test_e2e_f064_field_override.py` ⇒ **6 passed**（真后端 + 真 MySQL）。**AC-06 不经 HTTP 不可观测**，仍由 `test_schema_prompt.py` 覆盖，边界写在文件头 | ☑ |
 | T-18 | 回归：F061 数据源既有测试全绿 | — | `pytest test/datasource/` ⇒ **486 passed** | ☑ |
 | T-19 | 质量门 | — | `arch-guard.sh` **exit 0**；平台 `tsc-strict` **0 错误**；`eslint` 53 个报错**全部既有**（`workflow.ts` / `finetune.ts` / `dashboard.ts`，与 F063 记录一致，本次改动文件零涉及） | ☑ |
 
@@ -125,10 +125,17 @@
 
 ### Wave F（2026-09-23）
 
-**T-18 / T-19 通过；T-17 用例已写但未能实跑（环境前置不满足），未打勾。**
+**三个任务全部通过。**
 
 - **T-17**：`test/e2e/test_e2e_f064_field_override.py`，**6 条用例**，覆盖：订正跨越重采集存活（AC-04）、**客户库列注释逐字节未变**（AC-02，直连信息连读 `information_schema`，不经平台——问平台等于问嫌疑人）、只发描述不清空订正（AC-01 兼容面，走 HTTP 以覆盖真正的请求体 presence 规则）、显式 `null` 清空、空白归一化为「无」、悬挂键保留（AC-05）。**AC-06（注入文本）不经 HTTP 不可观测**，已在文件头写明边界，仍由 `test_schema_prompt.py` 覆盖。
 - **实跑失败，原因是环境而非用例**：4 failed / 2 passed。失败信息显示响应体里**根本没有 `column_overrides` 键** ⇒ 运行中的后端仍是 F064 之前的代码。进一步只读排查：**dev 库 `bisheng_local` 的 alembic 版本是 `f061_datasource`**，即 **F062 / F063 / F064 三个迁移都未应用**，`db_datasource_table` 没有 `column_overrides` 列。
 - **因此 T-17 需要先做部署动作**（跑迁移 + 重启后端），而这**不在我的授权范围内自行执行**：`alembic upgrade head` 会连带执行 **F062 / F063 的迁移**（不是本特性的），其中 **F063 是给 `standard_term` 加唯一约束的迁移，其文件自述「数据未准备好时会在部署期大声失败」** —— 在不了解 dev 库现有数据的情况下跑它，可能直接失败或阻塞。已就此询问用户。
 - **T-18**：`test/datasource/` **486 passed**。
 - **T-19**：`arch-guard.sh` exit 0；平台 `tsc-strict` 0 错误；`eslint` 53 个报错已逐文件核实**全部为既有**（`controllers/API/` 下三个文件），本次触碰的文件 eslint 干净。
+
+#### T-17 实跑补记（2026-09-23）
+
+迁移执行后重跑：**6 passed**（12.6s，真后端 + 真 MySQL）。
+
+> **我先前的一次误判，记录备查**：我曾判定「迁移未生效」，依据是 `172.19.70.189:3306/bisheng_local` 仍是 `f061_datasource`。**探错了库** —— `bisheng_local` 是 e2e 里被当作「客户库」的目标；后端自己的库是 **`bisheng`**（`src/backend/bisheng/config.yaml` 第 6 行的 MySQL URL）。查对之后：`bisheng` 已是 `f064_field_comment_override`，`column_overrides` 列存在，迁移本就是成功的。
+> **教训**：这个仓库里有**两个库**，名字只差一个后缀，用途完全不同。判断「迁移有没有生效」前先确认后端连的是哪一个，别拿 e2e 的目标库当准绳。
