@@ -19,7 +19,8 @@ table rows, and a schema prompt is exactly where the temptation lives —
 "showing the model three example values would help it infer the format".
 It would also copy customer data into a prompt, a log and possibly a persisted
 record, under an authorization model that does not cover any of those. An admin
-who wants the model to understand a column writes it in `business_desc`.
+who wants the model to understand a column writes it in `business_desc` — or,
+since F064, in a per-field override for a single column.
 """
 
 # ruff: noqa: RUF001 -- the injected schema block is Chinese prose shown to the
@@ -55,6 +56,27 @@ _CJK_RE = re.compile(r'[一-鿿㐀-䶿]')
 MIN_RETRIEVED_TABLES = 3
 
 
+def _column_comment(column: dict, overrides: dict) -> str:
+    """One column's effective comment: the admin's override, else the collected one.
+
+    A single definition on purpose. `render_table` decides what the model READS
+    and `_haystack` decides what retrieval MATCHES on; if the two resolved this
+    differently, a column could be described to the model in words retrieval
+    never searched — a mismatch that surfaces only as a wrong answer, never as
+    an error (design 决策 4).
+
+    An override is keyed by FIELD NAME, so a key that no longer matches any
+    column in the snapshot is simply never looked up — which is how AC-05's
+    "keep it, but do not inject it" falls out without a filter of its own.
+
+    Truthiness, not `is not None`: on the injection side an empty override and
+    an absent one are the same thing (design 坑 2). The write path already
+    refuses to store blanks (决策 5), so this is a backstop, not the mechanism.
+    """
+    override = overrides.get(column.get('name'))
+    return override if override else (column.get('comment') or '')
+
+
 def render_table(table: dict) -> str:
     """One table as the model sees it.
 
@@ -68,10 +90,11 @@ def render_table(table: dict) -> str:
     elif table.get('table_comment'):
         lines.append(f'说明：{table["table_comment"]}')
 
+    overrides = table.get('column_overrides') or {}
     for column in table.get('structure_snapshot') or []:
         name = column.get('name')
         col_type = column.get('type') or ''
-        comment = column.get('comment')
+        comment = _column_comment(column, overrides)
         suffix = f'  -- {comment}' if comment else ''
         lines.append(f'  - {name} {col_type}{suffix}'.rstrip())
     return '\n'.join(lines)
@@ -163,6 +186,7 @@ def _terms(question: str) -> list[str]:
 
 
 def _haystack(table: dict) -> str:
+    overrides = table.get('column_overrides') or {}
     parts = [
         str(table.get('table_name') or ''),
         str(table.get('business_desc') or ''),
@@ -170,7 +194,10 @@ def _haystack(table: dict) -> str:
     ]
     for column in table.get('structure_snapshot') or []:
         parts.append(str(column.get('name') or ''))
-        parts.append(str(column.get('comment') or ''))
+        # Same resolution as render_table -- see `_column_comment`. Retrieval has
+        # to match on the words the model is actually shown, or an admin's
+        # override improves the description and leaves it unsearchable.
+        parts.append(_column_comment(column, overrides))
     return ' '.join(parts).lower()
 
 
