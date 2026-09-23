@@ -52,8 +52,8 @@
 | ID | 任务 | 覆盖 AC | 验证标准 | 状态 |
 |---|---|---|---|---|
 | T-17 | e2e：写订正 → 重采集 → 注入文本仍为订正；客户库注释未被改写 | AC-02 / AC-04 / AC-06 | `pytest test/e2e/test_e2e_f064_field_override.py` 通过 | ☐ |
-| T-18 | 回归：F061 数据源既有测试全绿 | — | `pytest test/datasource/` 通过 | ☐ |
-| T-19 | 质量门 | — | `arch-guard.sh` exit 0；平台 `pnpm lint` + `typecheck` 通过 | ☐ |
+| T-18 | 回归：F061 数据源既有测试全绿 | — | `pytest test/datasource/` ⇒ **486 passed** | ☑ |
+| T-19 | 质量门 | — | `arch-guard.sh` **exit 0**；平台 `tsc-strict` **0 错误**；`eslint` 53 个报错**全部既有**（`workflow.ts` / `finetune.ts` / `dashboard.ts`，与 F063 记录一致，本次改动文件零涉及） | ☑ |
 
 ---
 
@@ -122,3 +122,13 @@
 - **验证**：新测试 **9 passed**；`tsc-strict` 0 错误；`eslint` 干净；`check-i18n` OK。
 - **既有失败（与本次无关）**：平台全量 **7 文件 / 15 条**失败（权限、审批、布局、`knowledgePermissionDialog` 的 `lucide-react` mock 缺 `Rocket` 导出）。已用**对照实验**确认：把三份 locale 还原到 HEAD 后重跑，非 i18n-mock 的三个文件仍是 **10 failed**，与带改动时一致 ⇒ 既有失败。
 - **过程失误（已修正，记录在案）**：做对照时用了 `cp A B C /tmp/`，三个文件同名 `bs.json`，`cp` 拒绝覆盖并**返回非零** ⇒ `&&` 链短路，`git checkout` 根本没执行。所以那一次「对照」跑的其实仍是改动后的版本，**没有起到隔离作用**；重做时才改用不同文件名备份。文件内容本身未受影响（已逐项校验：各 8 增 1 删、key 无重复、JSON 可解析、`check-i18n` OK）。
+
+### Wave F（2026-09-23）
+
+**T-18 / T-19 通过；T-17 用例已写但未能实跑（环境前置不满足），未打勾。**
+
+- **T-17**：`test/e2e/test_e2e_f064_field_override.py`，**6 条用例**，覆盖：订正跨越重采集存活（AC-04）、**客户库列注释逐字节未变**（AC-02，直连信息连读 `information_schema`，不经平台——问平台等于问嫌疑人）、只发描述不清空订正（AC-01 兼容面，走 HTTP 以覆盖真正的请求体 presence 规则）、显式 `null` 清空、空白归一化为「无」、悬挂键保留（AC-05）。**AC-06（注入文本）不经 HTTP 不可观测**，已在文件头写明边界，仍由 `test_schema_prompt.py` 覆盖。
+- **实跑失败，原因是环境而非用例**：4 failed / 2 passed。失败信息显示响应体里**根本没有 `column_overrides` 键** ⇒ 运行中的后端仍是 F064 之前的代码。进一步只读排查：**dev 库 `bisheng_local` 的 alembic 版本是 `f061_datasource`**，即 **F062 / F063 / F064 三个迁移都未应用**，`db_datasource_table` 没有 `column_overrides` 列。
+- **因此 T-17 需要先做部署动作**（跑迁移 + 重启后端），而这**不在我的授权范围内自行执行**：`alembic upgrade head` 会连带执行 **F062 / F063 的迁移**（不是本特性的），其中 **F063 是给 `standard_term` 加唯一约束的迁移，其文件自述「数据未准备好时会在部署期大声失败」** —— 在不了解 dev 库现有数据的情况下跑它，可能直接失败或阻塞。已就此询问用户。
+- **T-18**：`test/datasource/` **486 passed**。
+- **T-19**：`arch-guard.sh` exit 0；平台 `tsc-strict` 0 错误；`eslint` 53 个报错已逐文件核实**全部为既有**（`controllers/API/` 下三个文件），本次触碰的文件 eslint 干净。
