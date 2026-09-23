@@ -360,6 +360,13 @@ class TableSelectionPayload(BaseModel):
 
 class TableDescriptionPayload(BaseModel):
     business_desc: str | None = Field(default=None, description='人工维护的业务描述')
+    # F064. Optional, and OMITTING IT IS NOT THE SAME AS SENDING NULL: the
+    # endpoint writes only the keys that were submitted (`model_fields_set`), so
+    # an existing client that sends just `business_desc` keeps its overrides, and
+    # `"column_overrides": null` is how a caller clears them.
+    column_overrides: dict[str, str] | None = Field(
+        default=None, description='字段级人工订正 {"字段名": 人工说明}; 不提交该键即不改动'
+    )
 
 
 async def _require_manage(datasource_id: int, login_user) -> None:
@@ -492,7 +499,12 @@ async def update_table_description(
     payload: TableDescriptionPayload,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
 ):
-    """Set one table's business description (spec AC-11).
+    """Set one table's human-authored metadata: its description, its per-field
+    overrides, or both (spec AC-11; F064 AC-01).
+
+    Both live behind one PUT because the dialog edits them together and the
+    requirement is one save action -- two endpoints would mean two buttons and
+    a half-finished edit whenever the second call failed.
 
     The path is `/table-metadata/{id}`, not `/tables/{id}`, deliberately: a bare
     `/datasource/tables/{x}` would be matched by `/datasource/{datasource_id}`
@@ -511,5 +523,17 @@ async def update_table_description(
         raise DatasourceNotFoundError()
 
     await _require_manage(rows[0].datasource_id, login_user)
-    await schema_service.update_description(table_id, payload.business_desc)
+
+    # Presence, not value, decides what is written. After validation an absent
+    # key and an explicit `null` are both `None`, so `model_fields_set` is the
+    # only place that distinction still exists -- and it has to survive all the
+    # way down, because writing "the fields we happen to have" would clear the
+    # description (or the overrides) on every save that omits them. Existing
+    # clients send only `business_desc` and are not being upgraded with this.
+    submitted = payload.model_fields_set
+    if 'business_desc' in submitted:
+        await schema_service.update_description(table_id, payload.business_desc)
+    if 'column_overrides' in submitted:
+        await schema_service.update_column_overrides(table_id, payload.column_overrides)
+
     return resp_200({'id': table_id})

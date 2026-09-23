@@ -427,3 +427,120 @@ def test_the_two_table_listings_are_separate_endpoints():
     paths = {getattr(route, 'path', '') for route in module.router.routes}
     assert '/datasource/{datasource_id}/available-tables' in paths
     assert '/datasource/{datasource_id}/tables' in paths
+
+
+# --- F064: the description PUT writes only what was submitted ----------------
+#
+# The endpoint resolves the `table_id` through the DAO before it can check the
+# caller's permission (a table id does not say whose table it is), so that call
+# is patched in every case below; the assertion is always about which SERVICE
+# functions ran, because that is where the presence decision lands.
+
+
+_TABLE_DAO = 'bisheng.datasource.domain.models.dao.DbDatasourceTableDao.alist_by_ids'
+
+
+async def test_sending_only_the_description_leaves_the_overrides_alone():
+    """F064 compatibility. Existing clients post `business_desc` and nothing else,
+    and they are NOT upgraded in step with the server -- so a save that never
+    mentioned the overrides must not clear them.
+    """
+    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+        _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
+    ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
+        ep.schema_service, 'update_column_overrides', AsyncMock()
+    ) as overrides:
+        await ep.update_table_description(
+            5, ep.TableDescriptionPayload(business_desc='新描述'), login_user=SimpleNamespace(user_id=1)
+        )
+
+    desc.assert_awaited_once_with(5, '新描述')
+    assert overrides.await_count == 0, (
+        'a save that never mentioned the overrides cleared them -- the exact '
+        'regression `model_fields_set` exists to prevent'
+    )
+
+
+async def test_sending_only_the_overrides_leaves_the_description_alone():
+    """The mirror image: the dialog can edit the field list without touching the
+    textarea above it, and that edit must not blank the description.
+    """
+    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+        _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
+    ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
+        ep.schema_service, 'update_column_overrides', AsyncMock()
+    ) as overrides:
+        await ep.update_table_description(
+            5,
+            ep.TableDescriptionPayload(column_overrides={'amount': '含税金额'}),
+            login_user=SimpleNamespace(user_id=1),
+        )
+
+    overrides.assert_awaited_once_with(5, {'amount': '含税金额'})
+    assert desc.await_count == 0, 'an override edit blanked the business description'
+
+
+async def test_sending_both_writes_both():
+    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+        _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
+    ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
+        ep.schema_service, 'update_column_overrides', AsyncMock()
+    ) as overrides:
+        await ep.update_table_description(
+            5,
+            ep.TableDescriptionPayload(business_desc='新描述', column_overrides={'amount': '含税金额'}),
+            login_user=SimpleNamespace(user_id=1),
+        )
+
+    desc.assert_awaited_once_with(5, '新描述')
+    overrides.assert_awaited_once_with(5, {'amount': '含税金额'})
+
+
+async def test_an_explicit_null_clears_the_overrides():
+    """`null` is a VALUE, not an omission -- it is how the admin removes the last
+    override, and folding it into "not submitted" would make clearing impossible.
+    """
+    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+        _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
+    ), patch.object(ep.schema_service, 'update_column_overrides', AsyncMock()) as overrides:
+        await ep.update_table_description(
+            5,
+            ep.TableDescriptionPayload(column_overrides=None),
+            login_user=SimpleNamespace(user_id=1),
+        )
+
+    overrides.assert_awaited_once_with(5, None)
+
+
+async def test_a_payload_with_neither_field_writes_nothing():
+    """An empty body is a no-op, not a clear-everything."""
+    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+        _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
+    ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
+        ep.schema_service, 'update_column_overrides', AsyncMock()
+    ) as overrides:
+        await ep.update_table_description(
+            5, ep.TableDescriptionPayload(), login_user=SimpleNamespace(user_id=1)
+        )
+
+    assert desc.await_count == 0 and overrides.await_count == 0
+
+
+async def test_the_overrides_are_gated_by_the_datasource_permission_check():
+    """F064 AC-11: no field-level authorization, and none is wanted.
+
+    A datasource is the authorization unit (F061 AC-48). The new field must not
+    become a way for someone who cannot manage the datasource to write into it,
+    and it must not be written BEFORE the check either.
+    """
+    with patch.object(ep, '_require_manage', AsyncMock(side_effect=DatasourceNotFoundError())), patch(
+        _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
+    ), patch.object(ep.schema_service, 'update_column_overrides', AsyncMock()) as overrides:
+        with pytest.raises(DatasourceNotFoundError):
+            await ep.update_table_description(
+                5,
+                ep.TableDescriptionPayload(column_overrides={'amount': '含税金额'}),
+                login_user=SimpleNamespace(user_id=1),
+            )
+
+    assert overrides.await_count == 0, 'the overrides were written before the permission check'
