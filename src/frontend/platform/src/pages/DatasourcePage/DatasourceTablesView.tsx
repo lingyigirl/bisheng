@@ -14,7 +14,7 @@ import {
   type DatasourceTableRow,
 } from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, PencilLine, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { TableDescriptionDialog } from "./TableDescriptionDialog";
@@ -301,7 +301,16 @@ export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: P
                       {t("datasource.tables.exposeTooltip")}
                     </TooltipContent>
                   </Tooltip>
-                  <Button variant="ghost" size="sm" onClick={() => setDescTarget(selectedTable)}>
+                  {/* The entry into the description editor. `outline` + an icon
+                      rather than the `ghost` it had: as bare text next to the
+                      expose switch it read as a label for the switch rather
+                      than as the control that opens the editor. */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDescTarget(selectedTable)}
+                  >
+                    <PencilLine className="mr-1 size-4" />
                     {t("datasource.tables.editDescription")}
                   </Button>
                 </div>

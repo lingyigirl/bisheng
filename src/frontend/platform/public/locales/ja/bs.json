@@ -182,6 +182,8 @@
     "createApp": "アプリの作成",
     "createKnowledge": "ナレッジベース新規作成",
     "knowledge": "ナレッジベース",
+    "qaKnowledge": "QAナレッジベース",
+    "termLibrary": "用語ライブラリ",
     "evaluation": "評  価",
     "annotation": "注  釈",
     "approval": "承  認",

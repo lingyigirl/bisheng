@@ -183,6 +183,8 @@
     "createApp": "创建应用",
     "createKnowledge": "新建知识库",
     "knowledge": "知识库",
+    "qaKnowledge": "QA知识库",
+    "termLibrary": "术语库",
     "evaluation": "评  测",
     "board": "看  板",
     "workbenchHome": "首页",

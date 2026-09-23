@@ -15,7 +15,7 @@ import { PermissionDialog } from "@/components/bs-comp/permission/PermissionDial
 import { deleteDatasourceApi, updateDatasourceApi, type DatasourceRow } from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { useDebounce } from "@/util/hook";
-import { Plus, Shield } from "lucide-react";
+import { Plus, Shield, Table2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DatasourceFormDialog } from "./DatasourceFormDialog";
@@ -141,17 +141,26 @@ export function DatasourceListTab({ queries }: Props) {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={row.enabled ? "secondary" : "gray"}>
+                  {/* Green/red, not two near-whites. The previous pair
+                      (`secondary` = hsl(210 40% 96.1%) vs `gray` = #E8EBF2) were
+                      the same colour to the eye, so the column that exists to
+                      answer "is this switched on?" could not. */}
+                  <Badge variant={row.enabled ? "success" : "error"}>
                     {row.enabled ? t("datasource.list.enabled") : t("datasource.list.disabled")}
                   </Badge>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-1">
+                    {/* The entry into a datasource's tables. `outline` + an icon
+                        rather than the `ghost` it shared with 编辑/授权/删除: as
+                        plain text reading 「表」 it gave no sign it was the way
+                        in, which is the one thing this row exists to offer. */}
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       onClick={() => queries.setTablesDatasourceId(row.id)}
                     >
+                      <Table2 className="mr-1 size-4" />
                       {t("datasource.list.tables")}
                     </Button>
                     <Button
@@ -172,7 +181,17 @@ export function DatasourceListTab({ queries }: Props) {
                     >
                       <Shield className="size-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleToggleEnabled(row)}>
+                    {/* Coloured to match the status badge beside it, so the row
+                        reads the same whichever of the two the eye lands on
+                        first. Text colour, not a background: this is one of five
+                        ghost buttons in a row, and a filled one here would
+                        compete with 「表」 for the eye. */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={row.enabled ? "text-error-foreground" : "text-success-foreground"}
+                      onClick={() => handleToggleEnabled(row)}
+                    >
                       {row.enabled ? t("datasource.list.disable") : t("datasource.list.enable")}
                     </Button>
                     <Button

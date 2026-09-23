@@ -14,7 +14,13 @@ const badgeVariants = cva(
                 destructive:
                     "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
                 outline: "text-foreground",
-                gray: "bg-[#E8EBF2] text-[#61646D] px-1 py-[1px]"
+                gray: "bg-[#E8EBF2] text-[#61646D] px-1 py-[1px]",
+                // Status colours, from the semantic tokens rather than hex (root
+                // AGENTS.md: semantic colours are not themed). No `hover:` -- a
+                // status badge is not interactive, and the siblings' hover would
+                // otherwise tint it back toward the brand colour on mouse-over.
+                success: "border-transparent bg-success-background text-success-foreground",
+                error: "border-transparent bg-error-background text-error-foreground"
             },
         },
         defaultVariants: {

@@ -11,6 +11,7 @@ import {
 } from "@/components/bs-icons";
 import { LoadingIcon } from "@/components/bs-icons/loading";
 import { DatasetIcon } from "@/components/bs-icons/menu/dataset";
+import { LabelIcon } from "@/components/bs-icons";
 import { DashboardIcon } from "@/components/bs-icons/menu/system";
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
 import { SelectHover, SelectHoverItem } from "@/components/bs-ui/select/hover";
@@ -227,6 +228,23 @@ export default function MainLayout() {
                             showAdminNav('knowledge') &&
                             <NavLink to={isMenu('knowledge') ? '/filelib' : '/menu-pending?menu=knowledge'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
                                 <KnowledgeIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.knowledge')}</span>
+                            </NavLink>
+                        }
+                        {/* QA 知识库 and 术语库 were tabs under 知识库; they are menu
+                            entries now, the way 数据源 is. Same `knowledge` gate as
+                            the entry above — they sit behind the same permission
+                            the APIs behind them already require, so nothing new
+                            is being exposed by giving them their own route. */}
+                        {
+                            showAdminNav('knowledge') &&
+                            <NavLink to={isMenu('knowledge') ? '/qalib' : '/menu-pending?menu=knowledge'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
+                                <KnowledgeIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.qaKnowledge')}</span>
+                            </NavLink>
+                        }
+                        {
+                            showAdminNav('knowledge') &&
+                            <NavLink to={isMenu('knowledge') ? '/termlib' : '/menu-pending?menu=knowledge'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
+                                <LabelIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.termLibrary')}</span>
                             </NavLink>
                         }
                         {

@@ -183,6 +183,8 @@
     "createApp": "Create app",
     "createKnowledge": "Create knowledge base",
     "knowledge": "Knowledge Base",
+    "qaKnowledge": "QA Library",
+    "termLibrary": "Term Library",
     "evaluation": "Evaluation",
     "board": "Dashboard",
     "workbenchHome": "Home",
