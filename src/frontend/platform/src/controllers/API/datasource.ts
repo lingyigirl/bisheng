@@ -169,6 +169,29 @@ export async function deleteDatasourceApi(id: number): Promise<{ deleted: number
   return await axios.delete(`/api/v1/datasource/${id}`);
 }
 
+/** One thing still bound to a datasource — an assistant or a workflow. */
+export interface DatasourceReference {
+  id: string | number;
+  name: string;
+}
+
+export interface DatasourceReferences {
+  assistants: DatasourceReference[];
+  flows: DatasourceReference[];
+}
+
+/**
+ * Who still binds this datasource.
+ *
+ * The delete refuses while this is non-empty (11711), so the list asks first:
+ * the refusal alone says "cannot delete" without saying what to unbind, and
+ * the binding that matters most — a workflow — has no other screen that
+ * shows it.
+ */
+export async function getDatasourceReferencesApi(id: number): Promise<DatasourceReferences> {
+  return await axios.get(`/api/v1/datasource/${id}/references`);
+}
+
 /**
  * Probe a connection that may not exist yet, then close it. Persists nothing.
  *

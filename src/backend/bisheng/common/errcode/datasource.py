@@ -105,3 +105,22 @@ class DatasourceModelSlotNotConfiguredError(BaseErrorCode):
 
     Code: int = 11710
     Msg: str = "No model is configured for this operation"
+
+
+class DatasourceInUseError(BaseErrorCode):
+    """The datasource is still bound by at least one assistant or workflow.
+
+    Refusing is the only way the admin finds out what a delete would break.
+    Neither binding fails loudly on its own: the Agent node's
+    `_init_datasource_tool` returns no tool when its datasource is gone, so a
+    workflow silently stops answering from the database, and an assistant drops
+    the tool on its next session. Both look like "the model decided not to
+    query" rather than like a broken configuration.
+
+    The counts go in the raised message, not here: the frontend renders its own
+    copy from the code, and by the time it could see this it has already fetched
+    the names from `GET /datasource/{id}/references`.
+    """
+
+    Code: int = 11711
+    Msg: str = "Datasource is still referenced by an assistant or workflow"

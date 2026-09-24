@@ -2409,7 +2409,12 @@
       "delete": "削除",
       "empty": "データソースがありません",
       "deleteTitle": "データソースの削除",
-      "deleteConfirm": "データソース「{{name}}」を削除しますか？過去の回答と実行記録は保持されます。"
+      "deleteConfirm": "データソース「{{name}}」を削除しますか？過去の回答と実行記録は保持されます。",
+      "inUseTitle": "削除できません：データソースはまだ参照されています",
+      "inUseDesc": "データソース「{{name}}」は以下から参照されています。先に紐付けを解除してください：",
+      "inUseAssistants": "アシスタント：{{names}}",
+      "inUseFlows": "ワークフロー：{{names}}",
+      "inUseOk": "了解しました"
     },
     "form": {
       "createTitle": "データソース新規作成",

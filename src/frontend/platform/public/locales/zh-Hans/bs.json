@@ -2409,7 +2409,12 @@
       "delete": "删除",
       "empty": "暂无数据源",
       "deleteTitle": "删除数据源",
-      "deleteConfirm": "确认删除数据源「{{name}}」？历史回答与执行记录将保留。"
+      "deleteConfirm": "确认删除数据源「{{name}}」？历史回答与执行记录将保留。",
+      "inUseTitle": "无法删除：数据源仍被引用",
+      "inUseDesc": "数据源「{{name}}」仍被以下对象引用，请先解除绑定后再删除：",
+      "inUseAssistants": "助手：{{names}}",
+      "inUseFlows": "流程：{{names}}",
+      "inUseOk": "知道了"
     },
     "form": {
       "createTitle": "新建数据源",

@@ -2464,7 +2464,12 @@
       "delete": "Delete",
       "empty": "No datasources yet",
       "deleteTitle": "Delete datasource",
-      "deleteConfirm": "Delete datasource \"{{name}}\"? Past answers and query records are kept."
+      "deleteConfirm": "Delete datasource \"{{name}}\"? Past answers and query records are kept.",
+      "inUseTitle": "Cannot delete: the datasource is still referenced",
+      "inUseDesc": "Datasource \"{{name}}\" is still referenced by the following. Unbind them first:",
+      "inUseAssistants": "Assistants: {{names}}",
+      "inUseFlows": "Workflows: {{names}}",
+      "inUseOk": "Got it"
     },
     "form": {
       "createTitle": "New Datasource",

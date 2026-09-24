@@ -12,7 +12,12 @@ import { SearchInput } from "@/components/bs-ui/input";
 import AutoPagination from "@/components/bs-ui/pagination/autoPagination";
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
 import { PermissionDialog } from "@/components/bs-comp/permission/PermissionDialog";
-import { deleteDatasourceApi, updateDatasourceApi, type DatasourceRow } from "@/controllers/API/datasource";
+import {
+  deleteDatasourceApi,
+  getDatasourceReferencesApi,
+  updateDatasourceApi,
+  type DatasourceRow,
+} from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { useDebounce } from "@/util/hook";
 import { Plus, Shield, Table2 } from "lucide-react";
@@ -51,7 +56,43 @@ export function DatasourceListTab({ queries }: Props) {
   );
   const debouncedSearch = useDebounce(handleSearch, 300, false);
 
-  const handleDelete = (row: DatasourceRow) => {
+  const handleDelete = async (row: DatasourceRow) => {
+    // Ask who still binds it BEFORE offering the confirm. The backend refuses
+    // while anything is bound (11711), but its refusal cannot name the
+    // workflow that is in the way — nothing else in the product shows that a
+    // flow is using this datasource, so this dialog is the only place the
+    // admin can find out.
+    const references = await captureAndAlertRequestErrorHoc(getDatasourceReferencesApi(row.id));
+    if (!references) return;
+
+    const { assistants, flows } = references;
+    if (assistants.length || flows.length) {
+      bsConfirm({
+        title: t("datasource.list.inUseTitle"),
+        desc: (
+          <span className="block space-y-1">
+            <span className="block">{t("datasource.list.inUseDesc", { name: row.name })}</span>
+            {assistants.length > 0 && (
+              <span className="block">
+                {t("datasource.list.inUseAssistants", {
+                  names: assistants.map((one) => one.name).join("、"),
+                })}
+              </span>
+            )}
+            {flows.length > 0 && (
+              <span className="block">
+                {t("datasource.list.inUseFlows", {
+                  names: flows.map((one) => one.name).join("、"),
+                })}
+              </span>
+            )}
+          </span>
+        ),
+        okTxt: t("datasource.list.inUseOk"),
+      });
+      return;
+    }
+
     bsConfirm({
       title: `${t("datasource.list.deleteTitle")}`,
       desc: t("datasource.list.deleteConfirm", { name: row.name }),
@@ -198,7 +239,7 @@ export function DatasourceListTab({ queries }: Props) {
                       variant="ghost"
                       size="sm"
                       className="text-red-500"
-                      onClick={() => handleDelete(row)}
+                      onClick={() => void handleDelete(row)}
                     >
                       {t("datasource.list.delete")}
                     </Button>
