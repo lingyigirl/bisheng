@@ -154,11 +154,20 @@ async def test_only_flows_that_actually_bind_it_are_reported(monkeypatch):
     assert found['assistants'] == []
     # The prefilter is on the raw column, which is what keeps this dual-DB: a
     # JSON-path function here would have no DM8 equivalent.
-    # Pinned through the bound parameter: `literal_binds` has no renderer for a
-    # LIKE against a TEXT column, and a bare column-name check would pass for
-    # any predicate at all.
+    # The CAST is load-bearing and this is the only place it is pinned.
+    # `Flow.data` is a JSON column, and a plain `.like()` binds its parameter
+    # with the JSON type — MySQL then compares JSON to JSON and matches nothing.
+    # Measured against the real database: the same predicate returned 10 rows
+    # over a raw connection and 0 through SQLAlchemy, so the prefilter was
+    # silently empty and a workflow-bound datasource could be deleted. Nothing
+    # in this file could catch that (the fake session returns canned rows), so
+    # the assertion is on the rendered SQL.
+    #
+    # Pinned through the bound parameter as well: `literal_binds` has no
+    # renderer for a LIKE against a TEXT column, and a bare column-name check
+    # would pass for any predicate at all.
     flow_sql, flow_params = _compiled(session.statements[1])
-    assert 'flow.data LIKE' in flow_sql
+    assert 'CAST(flow.data AS CHAR) LIKE' in flow_sql
     assert '%datasource_id%' in flow_params.values()
 
 

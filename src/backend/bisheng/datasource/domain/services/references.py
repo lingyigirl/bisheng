@@ -19,9 +19,11 @@ path keeps them on purpose (spec AC-62) so past answers still render. Counting
 them would mark every datasource that was ever queried as "in use" and make
 deletion impossible.
 
-Dual-DB (constitution C2): the flow scan prefilters with a plain `LIKE` and
-parses in Python. MySQL's JSON-path functions have no DM8 equivalent, and the
-column is JSON on MySQL but a text-ish type on DM8.
+Dual-DB (constitution C2): the flow scan prefilters with a `CAST(... AS CHAR)
+LIKE` and parses in Python. MySQL's JSON-path functions have no DM8 equivalent,
+and the column is JSON on MySQL but a text-ish type on DM8. The CAST is not
+decorative — see the note at the query itself: without it the predicate matches
+nothing at all on MySQL.
 
 Scan cost: the `LIKE` cannot use an index — it renders each row's JSON to text
 to match. The flow table is small and this runs on an admin action (a delete, or
@@ -31,7 +33,7 @@ trade for not needing a schema change and a backfill to keep in sync.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 
 from bisheng.core.context.tenant import strict_tenant_filter
 from bisheng.core.database import get_async_db_session
@@ -97,14 +99,21 @@ async def alist_references(datasource_id: int) -> dict[str, list[dict]]:
                 )
             ).all()
 
-            # `LIKE` on the raw column, which is what makes this dual-DB safe.
+            # The `LIKE` MUST go through a CAST. `Flow.data` is a JSON column and
+            # `.like()` binds its parameter with the JSON type, so MySQL compares
+            # JSON to JSON instead of text and matches NOTHING — measured: the
+            # identical predicate returns 10 rows over a raw connection and 0
+            # through SQLAlchemy. A plain `.like()` here is not slow, it is
+            # silently empty, which would let a datasource bound to a workflow be
+            # deleted. `CAST(... AS CHAR)` is what makes the comparison textual.
+            #
             # The result set is Rows, not entities — a plain `select()` here is
             # SQLAlchemy's, not SQLModel's (see feedback_event.backfill_comment
             # for what mixing those up costs).
             flow_rows = (
                 await session.exec(
                     select(Flow.id, Flow.name, Flow.data).where(
-                        Flow.data.like(f'%{_DATASOURCE_TOKEN}%')
+                        cast(Flow.data, String).like(f'%{_DATASOURCE_TOKEN}%')
                     )
                 )
             ).all()

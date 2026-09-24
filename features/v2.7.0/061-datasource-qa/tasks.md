@@ -1359,3 +1359,21 @@ AC-61 / AC-64 建议用静态断言（扫描 `KnowledgeTypeEnum` 无数据源成
    `src/test/datasourceDeleteGuard.test.tsx`（3 条，含"无引用时删除仍可达"这一反向）。
    **全部变异验证**——其中后端 M5（把 `is_delete == 0` 改成 `>= 0`）第一轮**存活**，
    暴露出原断言只钉列名不钉谓词；已改为渲染字面量后钉住谓词，重跑该变异即红。
+   **2026-09-24 真实库 E2E（本次补做，抓到一个真缺陷）**：此前单元测试全绿，但整条链路
+   **从未在真实绑定的数据上跑过**（库里两个引用源都是 0 条）。补做后立刻暴露：
+   **工作流那半边恒不命中**——`alist_references` 里对 JSON 列写的 `Flow.data.like('%datasource_id%')`
+   **经 SQLAlchemy 绑定后参数被当作 JSON 类型**，MySQL 因此按 JSON 比 JSON 而非文本比对，
+   **恒不返回任何行**。实测同一谓词：裸连接命中 10 行，应用 session 命中 **0** 行。
+   后果是删除守卫会**放过绑在工作流上的数据源**——正是本项要防的那件事。
+   **单元测试测不到它**：假 session 返回的是预置行，断言只钉了渲染出的 SQL 里有 `flow.data LIKE`，
+   而那句 SQL 在语法上完全正确、在 MySQL 上却恒空。**修法**：改为
+   `cast(Flow.data, String).like(...)`（渲染为 `CAST(flow.data AS CHAR) LIKE`），并把断言改成
+   钉住 **`CAST(flow.data AS CHAR) LIKE`**——回退成 plain `.like()` 即红（已验证）。
+   **E2E 四项全过**：① 助手 + 流程都命中且干扰流未误报（干扰流刻意绑定另一个 id，用于证明
+   "LIKE 命中 ≠ 该 id 被绑定"）② 无关数据源返回空 ③ 删除被拒 `code=11711
+   msg='Datasource still referenced by 1 assistant(s) and 1 workflow(s)'` ④ 拒绝后数据源仍在。
+   临时数据（自建的临时数据源 + 助手 + 绑定行 + 2 条流程，共 5 行）已在 `finally` 中清干净，
+   复查残留为 0、`db_datasource` 回到原有 3 行。
+   **顺带记两个脚本坑**（非产品问题，避免下次重踩）：① 分多次 `asyncio.run()` 会因连接池绑定在
+   首个事件循环上而报 `'NoneType' object has no attribute 'send'`——E2E 必须单事件循环；
+   ② 断言"无关数据源返回空"时不要用 `ds_id + 99999`，那正是干扰流绑定的 id，返回它才是对的。
