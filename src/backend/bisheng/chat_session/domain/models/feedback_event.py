@@ -148,6 +148,9 @@ class MessageFeedbackEventDao:
             row = session.exec(stmt).first()
             if row is None:
                 return False
+            # `select` above is SQLAlchemy's, so `exec()` yields Row tuples
+            # rather than entities — unwrap before mutating, same as `alist`.
+            row = row[0]
             row.comment = (comment or "")[:4096]
             session.add(row)
             session.commit()
