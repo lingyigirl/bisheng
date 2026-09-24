@@ -155,4 +155,19 @@ describe("DatasourceTablesView (F061 T-36 / T-37 / AC-48)", () => {
     });
     expect(screen.getByText("datasource.tables.collect")).toBeTruthy();
   });
+
+  it("states that only ticked tables reach the model", async () => {
+    mockedTables.mockResolvedValue({ data: [], total: 0 } as never);
+
+    renderView();
+
+    // Same class of promise as the AC-12 line above, and the same reason for
+    // asserting it: nothing on this screen said which tables the model can
+    // actually see, while the panel title ("accessible tables") implies all of
+    // them can. An admin who believes that leaves every box ticked, which is
+    // the opposite of what the tick boxes are for.
+    await waitFor(() => {
+      expect(screen.getByText("datasource.tables.exposureHint")).toBeTruthy();
+    });
+  });
 });

@@ -193,6 +193,17 @@ export function DatasourceTablesView({ datasourceId, datasourceName, onBack }: P
           <div className="shrink-0 border-b px-3 py-2 text-sm font-medium">
             {t("datasource.tables.availableTitle", { count: pickerRows.length })}
           </div>
+          {/* What the tick boxes actually decide, stated rather than assumed.
+              Nothing on this screen said it, and the panel title ("可访问的表")
+              actively implied the opposite — that everything listed is already
+              usable. An admin who believes that leaves every box ticked, which
+              is the one outcome AC-13/AC-14 governance exists to prevent.
+              The "after Save selection" clause is not padding: the boxes stage
+              a batch while the detail pane's switch saves immediately, so a
+              flat "ticked = in use" would be false for the boxes. */}
+          <p className="shrink-0 border-b px-3 py-2 text-xs text-muted-foreground">
+            {t("datasource.tables.exposureHint")}
+          </p>
           <div className="min-h-0 flex-1 overflow-auto p-2">
             {pickerRows.length === 0 && !loading && (
               <p className="py-6 text-center text-xs text-muted-foreground">

@@ -14,6 +14,7 @@ import {
 } from "@/components/bs-ui/accordion";
 import { Button } from "@/components/bs-ui/button";
 import { Input, InputList, Textarea } from "@/components/bs-ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/bs-ui/select";
 import { Switch } from "@/components/bs-ui/switch";
 import {
   QuestionTooltip,
@@ -22,10 +23,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/bs-ui/tooltip";
+import { listAvailableDatasourcesApi } from "@/controllers/API/datasource";
+import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { locationContext } from "@/contexts/locationContext";
 import { useAssistantStore } from "@/store/assistantStore";
 import { CircleHelp, CircleMinus, CirclePlus, Plus, RefreshCw } from "lucide-react";
-import { useContext } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import ModelSelect from "./ModelSelect";
@@ -36,6 +39,22 @@ export default function Setting() {
 
   const { appConfig } = useContext(locationContext)
   const { assistantState, dispatchAssistant } = useAssistantStore();
+
+  // F061 AC-24: the datasources THIS user may bind. Same endpoint, same AC-49
+  // narrowing as the workflow Agent node's picker — one definition of "可选数据源",
+  // so the two surfaces cannot drift apart.
+  const [availableDatasources, setAvailableDatasources] = useState([]);
+  useEffect(() => {
+    captureAndAlertRequestErrorHoc(listAvailableDatasourcesApi()).then((res) => {
+      if (!res) return;
+      setAvailableDatasources(res.data || []);
+    });
+  }, []);
+
+  const boundDatasources = assistantState.datasource_list || [];
+  const bindableDatasources = availableDatasources.filter(
+    (one) => !boundDatasources.some((bound) => bound.id === one.id)
+  );
 
   return (
     <div
@@ -217,6 +236,67 @@ export default function Setting() {
                   }
                 />
               </div>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+      {/* F061 AC-24（缺口补记见 spec.md 2.4）：数据库数据源是与知识库**并列**的第二类
+          来源，故独立成节而不是并进上面那一节。两者取数语义不同——知识库召回切片塞
+          进上下文，数据源由模型生成 SQL 实时执行——界面上并列、链路上仍是两条。 */}
+      <h1 className="border-b bg-background-login indent-4 text-sm leading-8 text-muted-foreground">
+        {t("build.datasource")}
+      </h1>
+      <Accordion type="multiple" className="w-full">
+        <AccordionItem value="item-1">
+          <AccordionTrigger>
+            <span>{t("build.datasource")}</span>
+          </AccordionTrigger>
+          <AccordionContent className="py-2">
+            <div className="mb-4 px-6">
+              <Select
+                value=""
+                onValueChange={(value) => {
+                  const picked = bindableDatasources.find(
+                    (one) => String(one.id) === value
+                  );
+                  if (!picked) return;
+                  dispatchAssistant("setting", {
+                    datasource_list: [
+                      ...boundDatasources,
+                      { id: picked.id, name: picked.name },
+                    ],
+                  });
+                }}
+              >
+                <SelectTrigger className="mt-2">
+                  <SelectValue placeholder={t("build.selectDatasource")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {bindableDatasources.map((one) => (
+                    <SelectItem key={one.id} value={String(one.id)}>
+                      {one.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {boundDatasources.map((one) => (
+                <div
+                  key={one.id}
+                  className="group mt-2 flex cursor-pointer items-center justify-between"
+                >
+                  <p className="text-sm">{one.name}</p>
+                  <CircleMinus
+                    className="w-4 h-4 hidden text-primary group-hover:block"
+                    onClick={() =>
+                      dispatchAssistant("setting", {
+                        datasource_list: boundDatasources.filter(
+                          (item) => item.id !== one.id
+                        ),
+                      })
+                    }
+                  />
+                </div>
+              ))}
             </div>
           </AccordionContent>
         </AccordionItem>
