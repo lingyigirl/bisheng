@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { useToastContext } from "~/Providers";
 import { useLocalize } from "~/hooks";
 import { emitAreaTextEvent, EVENT_TYPE, FileTypes } from "../useAreaText";
+import { archiveLocalFiles } from "../formFile/archiveLocalFiles";
+import type { FormFileEntry } from "../formFile/types";
 import InputComponent from "./InputComponent";
 import InputFileComponent from "./InputFileComponent";
 import { MessageWarper } from "./MessageBsChoose";
@@ -49,6 +51,14 @@ const InputForm = ({ data, flow, logo }: { data: WorkflowNodeParam, flow: any })
         return map
     }, {}))
 
+    /**
+     * F065 — the file entries per field, straight from the control.
+     *
+     * `formDataRef` only carries names and values, so it cannot feed the archive
+     * step, which needs the local `File` objects themselves (design 决策 5).
+     */
+    const fileEntriesRef = useRef<Record<string, FormFileEntry[]>>({})
+
     const handleChange = (item, value) => {
         if (item.type === FormItemType.File) {
             formDataRef.current[item.key].value = Array.isArray(value) ? value : [value]
@@ -80,6 +90,20 @@ const InputForm = ({ data, flow, logo }: { data: WorkflowNodeParam, flow: any })
         if (errors.length) {
             return showToast({ message: errors.join('\n'), status: 'warning' });
         }
+
+        // F065: archive the local uploads into the user's 「应用文件」 space.
+        // Fire-and-forget by design — the archive must never block or alter the
+        // submit (AC-22/AC-23), and by the time it runs the input area is usually
+        // already gone, so a failure is logged rather than toasted (决策 7).
+        void archiveLocalFiles({
+            files: Object.values(fileEntriesRef.current).flat(),
+            fields: data.value,
+            values: valuesObject,
+            appName: flow?.name,
+        }).catch((error) => {
+            console.error('[f065] archive local uploads failed', error);
+        })
+
         emitAreaTextEvent({
             action: EVENT_TYPE.FORM_SUBMIT,
             data: valuesObject,
@@ -152,12 +176,17 @@ const InputForm = ({ data, flow, logo }: { data: WorkflowNodeParam, flow: any })
                                                 isSSO
                                                 disabled={false}
                                                 placeholder={localize('com_file_current_empty')}
-                                                value={''}
                                                 multiple={item.multiple}
+                                                // F065: only this form gets the knowledge-space picker
+                                                // (the skill form shares the control and must not — AC-28).
+                                                knowledgePicker
                                                 onChange={(name) => updataFileName(item, name)}
                                                 // fileTypes={FileTypes[item.file_type.toUpperCase()]}
                                                 suffixes={FileTypes[item.file_type.toUpperCase()]}
                                                 onFileChange={(val) => handleChange(item, val)}
+                                                onEntriesChange={(entries) => {
+                                                    fileEntriesRef.current[item.key] = entries
+                                                }}
                                             />
                                         )
                                     default:

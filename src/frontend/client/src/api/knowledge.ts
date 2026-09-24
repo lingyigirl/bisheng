@@ -1444,6 +1444,20 @@ export async function deleteFolderApi(space_id: string, folder_id: string): Prom
 // ─────────────────────────────────────────────
 
 /**
+ * Where the backend looks for duplicates before answering `repeat`.
+ *
+ * `space` (default, historical) = anywhere in the knowledge space;
+ * `folder` = only inside `parentId`, which is what F065's archive needs so the
+ * same content can be filed under several folders of one space.
+ */
+export type DedupScope = 'space' | 'folder';
+
+export interface UploadScopeOptions {
+    parentId?: string | number | null;
+    dedupScope?: DedupScope;
+}
+
+/**
  * Step 1: Upload a file to the server and get back its server path
  * Returns the upload response containing file_path to use in addFilesApi
  */
@@ -1457,9 +1471,17 @@ export async function uploadFileToServerApi(
      * as the multipart filename, which the backend persists verbatim.
      */
     filename?: string,
+    /** Scopes the `repeat` flag; omit for the historical whole-space answer. */
+    scope?: UploadScopeOptions,
 ): Promise<UploadFileResponse> {
     const formData = new FormData();
     formData.append("file", file, filename ?? file.name);
+    if (scope?.dedupScope) {
+        formData.append("dedup_scope", scope.dedupScope);
+    }
+    if (scope?.parentId !== undefined && scope?.parentId !== null && scope.parentId !== '') {
+        formData.append("parent_id", String(scope.parentId));
+    }
     const res = await request.postMultiPart(`/api/v1/knowledge/upload/${space_id}`, formData) as ApiResponse<UploadFileResponse> & { message?: string; msg?: string };
     if (res?.status_code !== undefined && res.status_code !== 200) {
         // Preserve status_code and data so the caller can render the localized
@@ -1481,7 +1503,7 @@ export async function uploadFileToServerApi(
  */
 export async function addFilesApi(
     space_id: string,
-    data: { file_path: string[]; parent_id?: number | null }
+    data: { file_path: string[]; parent_id?: number | null; dedup_scope?: DedupScope }
 ): Promise<KnowledgeFile[]> {
     const res = await request.post(
         `/api/v1/knowledge/space/${space_id}/files`,

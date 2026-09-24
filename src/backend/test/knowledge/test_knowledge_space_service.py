@@ -4439,3 +4439,96 @@ class TestFineGrainedPermissionRuntime:
                 await service.delete_file(125)
 
         mock_delete_batch.assert_not_awaited()
+
+
+class TestAddFileDedupScope:
+    """F065: the form-archive caller may scope duplicate detection to ONE folder.
+
+    Omitting ``dedup_scope`` must keep the historical whole-space behaviour —
+    every other caller in the codebase depends on that default.
+    """
+
+    def _patches(self, service, space, folder, process_one_file):
+        return (
+            patch.object(service, "_require_write_permission", new_callable=AsyncMock),
+            patch.object(service, "_require_permission_id", new_callable=AsyncMock),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.KnowledgeDao.aquery_by_id",
+                new_callable=AsyncMock,
+                return_value=space,
+            ),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.SpaceFileDao.get_user_total_file_size",
+                new_callable=AsyncMock,
+                return_value=0,
+            ),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.QuotaService.get_knowledge_space_upload_limit_bytes",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "bisheng.approval.domain.services.approval_service.ApprovalService.should_require_department_space_approval",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.KnowledgeFileDao.query_by_id",
+                new_callable=AsyncMock,
+                return_value=folder,
+            ),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.KnowledgeService.process_one_file",
+                process_one_file,
+            ),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.PermissionService.batch_write_tuples",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.OwnerService.write_owner_tuple",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "bisheng.knowledge.domain.services.knowledge_space_service.KnowledgeDao.async_update_knowledge_update_time_by_id",
+                new_callable=AsyncMock,
+            ),
+        )
+
+    def _folder_and_file(self):
+        # The customer folder sits in the space root, so files inside it carry
+        # "/70" as their file_level_path.
+        folder = _make_file(
+            file_id=70,
+            knowledge_id=1,
+            file_type=FileType.DIR.value,
+            file_name="customer-a",
+        )
+        added_file = _make_file(file_id=81, knowledge_id=1, file_name="doc.txt")
+        added_file.status = 5
+        added_file.file_size = 1
+        return folder, added_file
+
+    @pytest.mark.asyncio
+    async def test_folder_scope_hands_the_folders_path_to_process_one_file(self, service):
+        space = _make_space(auth_type=AuthTypeEnum.PUBLIC)
+        folder, added_file = self._folder_and_file()
+        process_one_file = MagicMock(return_value=added_file)
+
+        with self._patches(service, space, folder, process_one_file):
+            await service.add_file(1, ["/tmp/doc.txt"], parent_id=70, dedup_scope="folder")
+
+        assert process_one_file.call_args.kwargs["dedup_file_level_path"] == "/70"
+        # Destination and scope agree: both are the same folder.
+        assert process_one_file.call_args.kwargs["file_kwargs"]["file_level_path"] == "/70"
+
+    @pytest.mark.asyncio
+    async def test_no_scope_keeps_the_space_wide_default(self, service):
+        space = _make_space(auth_type=AuthTypeEnum.PUBLIC)
+        folder, added_file = self._folder_and_file()
+        process_one_file = MagicMock(return_value=added_file)
+
+        with self._patches(service, space, folder, process_one_file):
+            await service.add_file(1, ["/tmp/doc.txt"], parent_id=70)
+
+        assert process_one_file.call_args.kwargs["dedup_file_level_path"] is None

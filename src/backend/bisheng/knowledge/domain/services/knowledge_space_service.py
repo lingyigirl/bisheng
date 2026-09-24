@@ -555,6 +555,27 @@ class KnowledgeSpaceService(KnowledgeUtils):
         folder = await KnowledgeFileDao.query_by_id(folder_id)
         return self._ensure_space_folder(folder, space_id)
 
+    @staticmethod
+    def _folder_scope_path(folder: KnowledgeFile) -> str:
+        """The ``file_level_path`` a file DIRECTLY inside this folder carries.
+
+        Sibling of the inline computation in ``add_file`` — one formula, so a
+        folder-scoped duplicate check can never drift from where files land.
+        """
+        return f"{folder.file_level_path or ''}/{folder.id}"
+
+    async def resolve_folder_dedup_path(self, space_id: int, folder_id: int) -> str:
+        """Authorize + resolve a folder, returning its dedup scope path.
+
+        For callers that need to ask "is this already IN THIS FOLDER?" BEFORE
+        writing (the upload pre-check). The permission mirrors ``add_file``'s
+        ``upload_file`` check, so pre-checking can never see a folder the caller
+        could not write into.
+        """
+        await self._require_permission_id("folder", folder_id, "upload_file", space_id=space_id)
+        folder = await self._get_folder_for_action(space_id, folder_id)
+        return self._folder_scope_path(folder)
+
     async def _require_file_relation(
         self,
         file_id: int,
@@ -3375,6 +3396,7 @@ class KnowledgeSpaceService(KnowledgeUtils):
         file_source: FileSource = None,
         skip_approval: bool = False,
         skip_dedup: bool = False,
+        dedup_scope: str = "space",
     ) -> list[KnowledgeSpaceFileResponse]:
         if file_source is None:
             file_source = FileSource.SPACE_UPLOAD
@@ -3396,9 +3418,14 @@ class KnowledgeSpaceService(KnowledgeUtils):
         if parent_id:
             parent_folder = await self._get_folder_for_action(knowledge_id, parent_id)
             level = parent_folder.level + 1
-            file_level_path = f"{parent_folder.file_level_path}/{parent_id}"
+            file_level_path = self._folder_scope_path(parent_folder)
             parent_type = "folder"
             parent_resource_id = parent_id
+
+        # F065: the form-archive caller opts into folder-scoped duplicate
+        # detection, so identical content may live in several folders of one
+        # space. Every other caller keeps the historical whole-space scope.
+        dedup_file_level_path = file_level_path if dedup_scope == "folder" else None
 
         # User-role cap (multi-role max GB; admin returns None = unlimited).
         role_user_limit_bytes = await QuotaService.get_knowledge_space_upload_limit_bytes(self.login_user)
@@ -3469,6 +3496,7 @@ class KnowledgeSpaceService(KnowledgeUtils):
                         "file_source": file_source.value,
                     },
                     skip_dedup=skip_dedup,
+                    dedup_file_level_path=dedup_file_level_path,
                 )
                 if db_file.status != KnowledgeFileStatus.FAILED.value:
                     resolved_file_source = self._resolve_upload_file_source(db_file.file_name, file_source.value)

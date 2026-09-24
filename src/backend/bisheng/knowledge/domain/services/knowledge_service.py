@@ -1416,6 +1416,7 @@ class KnowledgeService(KnowledgeUtils):
         split_rule: dict,
         file_kwargs: dict = None,
         skip_dedup: bool = False,
+        dedup_file_level_path: str | None = None,
     ) -> KnowledgeFile:
         """Process uploaded files"""
         # download original file
@@ -1428,10 +1429,15 @@ class KnowledgeService(KnowledgeUtils):
         file_extension_name = file_name.split(".")[-1]
         original_file_name = cls.get_upload_file_original_name(file_name)
         # Does it contain duplicate files?
+        # ``dedup_file_level_path`` narrows the question to one folder ("is this
+        # already in the folder I'm writing into?"); leaving it None keeps the
+        # historical whole-space scope. Callers that opt in MUST scope their own
+        # pre-checks the same way, or they will skip files this call would add.
         repeat_files = KnowledgeFileDao.get_file_by_condition(
             knowledge_id=knowledge.id,
             md5_=md5_,
             file_name=original_file_name,
+            file_level_path=dedup_file_level_path,
         )
 
         if not file_info.excel_rule:

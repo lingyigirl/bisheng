@@ -212,6 +212,26 @@ class QAKnowledgeUpsert(QAKnowledgeBase):
     answers: list[str] | str | None = None
 
 
+def _same_folder_filter(file_level_path: str):
+    """Narrow a duplicate check to files sitting DIRECTLY in one folder.
+
+    ``KnowledgeFile.file_level_path`` stores the CONTAINING folder's path (the
+    path of the file's own parent), so "directly in folder F" is an equality
+    against ``f"{F.file_level_path}/{F.id}"`` and "" at the space root.
+
+    Root rows may also persist NULL from older upload paths, hence the twin
+    branch — kept inline rather than reusing ``SpaceFileDao._root_path_filter``
+    because that subclass lives in ``knowledge_space_file.py`` and importing it
+    here would invert the parent/child direction.
+    """
+    if file_level_path:
+        return KnowledgeFile.file_level_path == file_level_path
+    return or_(
+        KnowledgeFile.file_level_path == "",
+        KnowledgeFile.file_level_path.is_(None),
+    )
+
+
 def _f055_today_midnight() -> datetime:
     """F055: date-level "now" for effective-window comparisons.
 
@@ -439,7 +459,14 @@ class KnowledgeFileDao(KnowledgeFileBase):
             await session.commit()
 
     @classmethod
-    def get_file_by_condition(cls, knowledge_id: int, md5_: str | None = None, file_name: str | None = None):
+    def get_file_by_condition(
+        cls,
+        knowledge_id: int,
+        md5_: str | None = None,
+        file_name: str | None = None,
+        file_level_path: str | None = None,
+    ):
+        """Duplicates in a space (default) or, given ``file_level_path``, in one folder."""
         with get_sync_db_session() as session:
             sql = select(KnowledgeFile).where(KnowledgeFile.knowledge_id == knowledge_id)
             if md5_ and file_name:
@@ -448,10 +475,18 @@ class KnowledgeFileDao(KnowledgeFileBase):
                 sql = sql.where(KnowledgeFile.md5 == md5_)
             elif file_name:
                 sql = sql.where(KnowledgeFile.file_name == file_name)
+            if file_level_path is not None:
+                sql = sql.where(_same_folder_filter(file_level_path))
             return session.exec(sql).all()
 
     @classmethod
-    async def get_repeat_file(cls, knowledge_id: int, md5_: str | None = None, file_name: str | None = None):
+    async def get_repeat_file(
+        cls,
+        knowledge_id: int,
+        md5_: str | None = None,
+        file_name: str | None = None,
+        file_level_path: str | None = None,
+    ):
         # Mirror the list-rendering rule: hide files that are no longer the
         # primary version of any chain. Legacy files (no version row at all)
         # still count as visible. Otherwise an orphaned non-primary leftover
@@ -487,6 +522,8 @@ class KnowledgeFileDao(KnowledgeFileBase):
             sql = sql.where(KnowledgeFile.md5 == md5_)
         elif file_name:
             sql = sql.where(KnowledgeFile.file_name == file_name)
+        if file_level_path is not None:
+            sql = sql.where(_same_folder_filter(file_level_path))
         async with get_async_db_session() as session:
             result = await session.exec(sql)
             return result.first()

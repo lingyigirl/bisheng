@@ -1,54 +1,116 @@
 // @ts-strict-ignore
 
-import { FileSearch2, Loader2 } from "lucide-react";
-import { useContext, useEffect, useState } from "react";
+import { Button } from "@bisheng/ui";
+import { FileSearch2, FolderOpen, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { bishengConfState } from "../store/atoms";
 import { useRecoilState } from "recoil";
-import { useToastContext } from "~/Providers";
-import { Button } from "~/components";
+// Narrow imports on purpose: `~/Providers` and `~/components` are barrels that
+// reach ESM-only deps, which breaks any test that merely loads this control
+// (F065 design 坑 16).
+import { useToastContext } from "~/Providers/ToastContext";
 import { uploadFile, uploadFileWithProgress } from "~/api/apps";
 import useLocalize from "~/hooks/useLocalize";
+import { mergeSelectedFiles } from "../formFile/mergeSelectedFiles";
+import type { FormFileEntry } from "../formFile/types";
+import { KnowledgeFilePicker } from "./KnowledgeFilePicker";
+import { resolvePickedValues, type PickedKnowledgeFile } from "./KnowledgeFilePicker/resolvePickedValues";
 
+/**
+ * F065 — the file control of the workflow form.
+ *
+ * Two things changed from the original control, both opt-in or shape-preserving:
+ * 1. Multi-select now MERGES across picks (append + name de-duplication) instead
+ *    of replacing the list; single-select still keeps only the newest file.
+ * 2. With `knowledgePicker`, files can be chosen from a knowledge space and end
+ *    up in the same list as local uploads.
+ *
+ * Deliberately NOT changed: the two callback shapes. Single-select publishes a
+ * scalar and multi-select an array, because `InputFormSkill` (which shares this
+ * control, see design 坑 14) forwards the value straight into its payload — a
+ * shape change there would silently alter that form's wire contract (AC-28).
+ *
+ * Unused legacy props, kept so callers need no edit: `value` (both callers pass
+ * `''`; the list below is the source of truth) and `fileTypes` (superseded by
+ * `suffixes`).
+ */
 export default function InputFileComponent({
-    value,
     onChange,
-    disabled,
+    disabled = false,
     suffixes = [],
-    fileTypes,
     placeholder = 'The current file is empty',
     onFileChange,
     editNode = false,
     isSSO = false,
     multiple = false,
-    flow
+    flow,
+    /**
+     * Publishes the selected entries themselves — the only channel that carries
+     * the local `File` objects, which the submit-time archive step needs (design
+     * 决策 5). Optional: callers that only care about names/values can omit it.
+     */
+    onEntriesChange,
+    /**
+     * Opt-in "choose from a knowledge space" affordance. Defaults to off: this
+     * control is shared with the skill form, which keeps its current behaviour
+     * (design 决策 9).
+     */
+    knowledgePicker = false,
+}: {
+    onChange: (value: string | string[]) => void;
+    disabled?: boolean;
+    suffixes?: string[];
+    placeholder?: string;
+    onFileChange: (value: string | string[]) => void;
+    editNode?: boolean;
+    isSSO?: boolean;
+    multiple?: boolean;
+    flow: { id?: string; name?: string };
+    onEntriesChange?: (entries: FormFileEntry[]) => void;
+    knowledgePicker?: boolean;
 }) {
     const t = useLocalize()
-    const [myValue, setMyValue] = useState(value);
+    const [entries, setEntries] = useState<FormFileEntry[]>([]);
     const [loading, setLoading] = useState(false);
-    useEffect(() => {
-        if (disabled) {
-            setMyValue("");
-            onChange("");
-            onFileChange("");
-        }
-    }, [disabled, onChange]);
-
-    function checkFileType(fileName: string): boolean {
-        for (let index = 0; index < suffixes.length; index++) {
-            if (fileName.endsWith(suffixes[index])) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    useEffect(() => {
-        setMyValue(value);
-    }, [value]);
+    const [pickerOpen, setPickerOpen] = useState(false);
+    // Mirrors `entries` so async upload callbacks merge into the latest list
+    // rather than the one captured when they started.
+    const entriesRef = useRef<FormFileEntry[]>([]);
 
     const [bishengConfig] = useRecoilState(bishengConfState)
 
     const { showToast } = useToastContext();
+
+    /**
+     * Publish a list to the host form, keeping both channels in step (AC-13).
+     * Single-select stays a scalar, multi-select an array — see the file header.
+     */
+    const commit = (next: FormFileEntry[]) => {
+        entriesRef.current = next;
+        setEntries(next);
+        onEntriesChange?.(next);
+        const names = next.map((entry) => entry.name);
+        const values = next.map((entry) => entry.value);
+        if (multiple) {
+            onChange(names);
+            onFileChange(values);
+        } else {
+            onChange(names[0] ?? '');
+            onFileChange(values[0] ?? '');
+        }
+    }
+
+    useEffect(() => {
+        if (!disabled) return;
+        // Return the previous reference when already empty: a fresh `[]` on every
+        // tick would re-render forever, because `onChange` has an unstable
+        // identity here and so re-runs this effect on each render.
+        setEntries((prev) => (prev.length === 0 ? prev : []));
+        entriesRef.current = [];
+        onEntriesChange?.([]);
+        onChange(multiple ? [] : '');
+        onFileChange(multiple ? [] : '');
+    }, [disabled, multiple, onChange, onFileChange, onEntriesChange]);
 
     const checkFileSize = (file) => {
         const maxSize = (bishengConfig?.uploaded_files_maximum_size || 50) * 1024 * 1024;
@@ -58,159 +120,94 @@ export default function InputFileComponent({
         return ''
     }
 
+    /**
+     * Upload one local file and return its entry, keeping the `File` object on
+     * it: the submit-time archive step re-uploads it to pre-check duplicates,
+     * which is impossible once the blob is gone (design 决策 5 / 坑 12).
+     */
+    const uploadOne = (file: File): Promise<FormFileEntry> => {
+        if (isSSO) {
+            return uploadFileWithProgress(file, () => { }).then((res) => {
+                if (typeof res === 'string' || !res?.file_path) {
+                    throw new Error(typeof res === 'string' && res ? res : t('com_inputfiles_upload_failed', { 0: file.name }));
+                }
+                return { name: file.name, value: res.file_path, source: 'local', file } as FormFileEntry;
+            });
+        }
+        return uploadFile(file, flow.id).then((data) => {
+            const filePath = data?.data?.file_path;
+            if (!filePath) throw new Error(t('com_inputfiles_upload_failed', { 0: file.name }));
+            return { name: file.name, value: filePath, source: 'local', file } as FormFileEntry;
+        });
+    }
+
+    const handleLocalPick = (picked: FileList | null) => {
+        const files = picked ? Array.from(picked) : [];
+        if (!files.length) return;
+
+        const errors = files.map((file) => checkFileSize(file)).filter(Boolean);
+        const accepted = files.filter((file) => !checkFileSize(file));
+        if (errors.length) {
+            showToast({ message: errors.join('\n'), status: 'error' });
+            if (!accepted.length) return;
+        }
+
+        setLoading(true);
+        Promise.allSettled(accepted.map((file) => uploadOne(file))).then((results) => {
+            const uploaded: FormFileEntry[] = [];
+            const failures: string[] = [];
+            results.forEach((result, index) => {
+                if (result.status === 'fulfilled') uploaded.push(result.value);
+                else failures.push(result.reason?.message || accepted[index].name);
+            });
+            if (failures.length) {
+                showToast({ message: failures.join('\n'), status: 'error' });
+            }
+            if (uploaded.length) {
+                // Merge, don't replace: multi-select accumulates and drops name
+                // collisions; single-select keeps only the newest (AC-09 ~ AC-12).
+                commit(mergeSelectedFiles(entriesRef.current, uploaded, multiple));
+            }
+            setLoading(false);
+        });
+    }
+
     const handleButtonClick = () => {
-        if (multiple) return batchUpload()
-        // Create a file input element
         const input = document.createElement("input");
         input.type = "file";
         input.accept = suffixes.join(",");
-        input.style.display = "none"; // Hidden from view
-        input.multiple = false; // Allow only one file selection
-
-        input.onchange = (e: Event) => {
-            setLoading(true);
-
-            // Get the selected file
-            const file = (e.target as HTMLInputElement).files?.[0];
-
-            const errorMsg = checkFileSize(file)
-            if (errorMsg) {
-                showToast({ message: errorMsg, status: 'error' });
-
-                return setLoading(false);
-            }
-            // Check if the file type is correct
-            // if (file && checkFileType(file.name)) {
-            // Upload the file
-            isSSO ? uploadFileWithProgress(file, (progress) => { }).then(res => {
-                setLoading(false);
-                
-                if (typeof res === 'string') return showToast({ message: res, status: 'error' });
-                const { file_path } = res;
-                setMyValue(file.name);
-                onChange(file.name);
-                // sets the value that goes to the backend
-                onFileChange(file_path);
-            }) : uploadFile(file, flow.id)
-                .then((data) => {
-                    console.log("File uploaded successfully");
-                    // Get the file name from the response
-                    const { file_path } = data.data;
-
-                    // Update the state and callback with the name of the file
-                    // sets the value to the user
-                    setMyValue(file.name);
-                    onChange(file.name);
-                    // sets the value that goes to the backend
-                    onFileChange(file_path);
-                    setLoading(false);
-                })
-                .catch(() => {
-                    console.error("Error occurred while uploading file");
-                    setLoading(false);
-                });
-            // } else {
-            //   // Show an error if the file type is not allowed
-            //   setErrorData({
-            //     title:
-            //       "请选择有效文件。只允许使用这些文件类型：",
-            //     list: fileTypes,
-            //   });
-            //   setLoading(false);
-            // }
-        };
-
-        // Trigger the file selection dialog
+        input.style.display = "none";
+        input.multiple = !!multiple;
+        input.onchange = (e: Event) => handleLocalPick((e.target as HTMLInputElement).files);
         input.click();
-    };
+    }
 
-    const batchUpload = () => {
-        // Create a file input element
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = suffixes.join(",");
-        input.style.display = "none"; // Hidden from view
-        input.multiple = true; // Allow multiple file selection
-
-        input.onchange = (e: Event) => {
-            setLoading(true);
-
-            // Get the selected files
-            const _files = (e.target as HTMLInputElement).files;
-
-            if (_files && _files.length > 0) {
-                const filePaths = []; // This will hold the file paths after successful upload
-
-                const errorMsgs = []
-                const files = []
-                for (let i = 0; i < _files.length; i++) {
-                    const errorMsg = checkFileSize(_files[i])
-                    errorMsg ? errorMsgs.push(errorMsg) : files.push(_files[i])
-                }
-
-                if (errorMsgs.length) {
-                    showToast({ message: errorMsgs.join('\n'), status: 'error' });
-
-
-                    // 文件都不符合要求 结束上传
-                    if (errorMsgs.length === _files.length) {
-                        return setLoading(false);
-                    }
-                }
-
-                const fileNames = Array.from(files).map(file => file.name); // Extract file names
-
-                // Perform the upload for each file
-                const uploadPromises = Array.from(files).map(file => {
-                    return isSSO
-                        ? uploadFileWithProgress(file, (progress) => { }) // Adjust upload method if needed
-                            .then(res => {
-                                if (typeof res === 'string') {
-                                    // setErrorData({ title: "Error", list: [res] });
-                                    showToast({ message: res, status: 'error' });
-
-                                    setLoading(false);
-                                    throw new Error(res); // Exit the upload if error occurs
-                                }
-                                return res.file_path
-                            })
-                        : uploadFile(file, flow.id).then((data) => {
-                            console.log("File uploaded successfully");
-                            return data.data.file_path
-                        });
-                });
-
-                // Wait for all file uploads to finish
-                Promise.all(uploadPromises)
-                    .then((filePaths) => {
-                        // After all files are uploaded successfully, update the state
-                        setMyValue(fileNames.join(",")); // Join file names with commas
-                        onChange(fileNames); // Pass an array of file names
-                        onFileChange(filePaths); // Pass an array of file paths
-
-                        setLoading(false); // Hide loading state
-                    })
-                    .catch((error) => {
-                        console.error("Error occurred while uploading files", error);
-                        setLoading(false); // Hide loading state if an error occurs
+    const handlePickedConfirm = (picked: PickedKnowledgeFile[]) => {
+        setPickerOpen(false);
+        if (!picked.length) return;
+        setLoading(true);
+        resolvePickedValues(picked)
+            .then(({ entries: resolved, failed }) => {
+                if (failed.length) {
+                    showToast({
+                        message: failed.map((name) => t('com_knowledge.pick_resolve_failed', { 0: name })).join('\n'),
+                        status: 'error',
                     });
-            } else {
-                showToast({ message: t('com_inputfile_no_file_selected'), status: 'error' });
+                }
+                if (resolved.length) {
+                    commit(mergeSelectedFiles(entriesRef.current, resolved, multiple));
+                }
+            })
+            .finally(() => setLoading(false));
+    }
 
-                setLoading(false); // Hide loading state if no files were selected
-            }
-        };
-
-        // Trigger the file selection dialog
-        input.click();
-    };
-
-
+    const displayValue = entries.map((entry) => entry.name).join(',');
 
     return (
         <div className={disabled ? "input-component-div" : "w-full"}>
             <div className="input-file-component flex items-center gap-2 border bg-search-input rounded-md px-2 justify-between">
                 <span
+                    data-testid="file-pick-trigger"
                     onClick={handleButtonClick}
                     className={
                         editNode
@@ -220,8 +217,21 @@ export default function InputFileComponent({
                                 : "w-full input-dialog input-primary text-muted-foreground cursor-pointer"
                     }
                 >
-                    {myValue !== "" ? myValue : placeholder}
+                    {displayValue !== "" ? displayValue : placeholder}
                 </span>
+                {knowledgePicker && (
+                    <Button
+                        size="icon"
+                        variant="ghost"
+                        disabled={disabled}
+                        data-testid="knowledge-picker-trigger"
+                        aria-label={t('com_knowledge.pick_from_space')}
+                        title={t('com_knowledge.pick_from_space')}
+                        onClick={() => setPickerOpen(true)}
+                    >
+                        <FolderOpen strokeWidth={1.5} size={18} />
+                    </Button>
+                )}
                 <Button size="icon" variant="ghost" onClick={handleButtonClick}>
                     {!editNode && !loading && (
                         <FileSearch2
@@ -235,6 +245,18 @@ export default function InputFileComponent({
                     {!editNode && loading && (<Loader2 className="text-primary animate-spin duration-300 pointer-events-none" />)}
                 </Button>
             </div>
+            {knowledgePicker && (
+                <KnowledgeFilePicker
+                    open={pickerOpen}
+                    multiple={!!multiple}
+                    // Same list the local `<input accept>` gets, so a file this
+                    // field would refuse on upload cannot be picked from a space
+                    // either (AC-29).
+                    suffixes={suffixes}
+                    onClose={() => setPickerOpen(false)}
+                    onConfirm={handlePickedConfirm}
+                />
+            )}
         </div>
     );
 }
