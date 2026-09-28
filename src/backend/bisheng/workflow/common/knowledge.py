@@ -271,7 +271,14 @@ class RagUtils(BaseNode):
         if self._knowledge_type == "space":
             return self._retrieve_space_question(question)
 
-        if self._knowledge_type == "file":
+        # F066: stored flows say "tmp" (see the node template in
+        # bisheng/database/data/template.json), and this branch used to test for
+        # "file" only — so a tmp node fell through to the document-KB branch and
+        # handed its variable reference (input_xxx.file) to
+        # retrieve_knowledge_documents as knowledge_ids: silent retrieval
+        # failure, no exception. Both spellings are accepted so pre-existing
+        # flows keep working either way.
+        if self._knowledge_type in ("file", "tmp"):
             # User-uploaded temp files: no KB weight/priority/tags/effective period.
             finally_docs = invoke_knowledge_retriever_tool(
                 self._multi_milvus_retriever,
