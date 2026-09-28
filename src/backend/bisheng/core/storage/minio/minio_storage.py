@@ -538,6 +538,21 @@ class MinioStorage(BaseStorage, ABC):
                 return False
             raise _thaw_s3_error(e)
 
+    def get_object_size_sync(self, bucket_name: str | None = None, object_name: str = None) -> int:
+        if bucket_name is None:
+            bucket_name = self.bucket
+
+        if object_name is None:
+            raise ValueError("get_object_size_sync: object_name must be provided")
+
+        return self.minio_client_sync.stat_object(bucket_name, object_name).size
+
+    def list_objects_sync(self, bucket_name: str | None = None, prefix: str = "") -> list:
+        if bucket_name is None:
+            bucket_name = self.bucket
+
+        return list(self.minio_client_sync.list_objects(bucket_name, prefix=prefix, recursive=True))
+
     async def copy_object(
         self, source_bucket: str = None, source_object: str = None, dest_bucket: str = None, dest_object: str = None
     ) -> None:

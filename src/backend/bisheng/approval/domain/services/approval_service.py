@@ -170,8 +170,7 @@ class ApprovalService:
                 return None
 
             minio_storage = get_minio_storage_sync()
-            stat = minio_storage.minio_client_sync.stat_object(bucket, object_name)
-            return stat.size
+            return minio_storage.get_object_size_sync(bucket, object_name)
         except Exception:
             return None
 

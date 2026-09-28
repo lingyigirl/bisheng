@@ -130,13 +130,9 @@ class BrandService:
 
         try:
             objects = await asyncio.to_thread(
-                lambda: list(
-                    minio_client.minio_client_sync.list_objects(
-                        bucket,
-                        prefix=prefix,
-                        recursive=True,
-                    )
-                )
+                minio_client.list_objects_sync,
+                bucket,
+                prefix,
             )
         except Exception:
             logger.exception("Failed to list brand asset options for category: %s", category)

@@ -233,7 +233,7 @@ class EvaluationService:
             df = None
             if ev.status == EvaluationTaskStatus.success.value and ev.result_file_path:
                 try:
-                    data = minio_client.minio_client_sync.get_object(minio_client.bucket, ev.result_file_path).read()
+                    data = minio_client.get_object_sync(minio_client.bucket, ev.result_file_path)
                     # utf-8-sig: strips the BOM written since 2026-09-06 and still
                     # reads historical BOM-less files unchanged
                     df = pd.read_csv(io.BytesIO(data), encoding="utf-8-sig")

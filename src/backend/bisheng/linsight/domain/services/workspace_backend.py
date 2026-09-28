@@ -331,13 +331,13 @@ async def seed_workspace_from_previous(
 
         # Idempotency: skip if the new turn's workspace already has any object
         # (already seeded, or the turn has started writing).
-        for _ in minio.minio_client_sync.list_objects(bucket, prefix=dst_root, recursive=True):
+        for _ in minio.list_objects_sync(bucket, dst_root):
             return 0
 
         src_keys: list[tuple[str, int]] = []
         for zone in zones:
             prefix = f"{WORKSPACE_PREFIX}/{src_svid}/{zone}/"
-            for obj in minio.minio_client_sync.list_objects(bucket, prefix=prefix, recursive=True):
+            for obj in minio.list_objects_sync(bucket, prefix):
                 src_keys.append((obj.object_name, int(getattr(obj, "size", 0) or 0)))
         # manifest.json is a top-level pointer file (not under a zone).
         src_keys.append((f"{WORKSPACE_PREFIX}/{src_svid}/{MANIFEST_NAME}", 0))
@@ -538,7 +538,7 @@ class WorkspaceBackend(FilesystemBackend):
         entries: list[FileInfo] = []
         key_prefix = f"{WORKSPACE_PREFIX}/{self.svid}/"
         try:
-            objects = self.minio.minio_client_sync.list_objects(self._bucket(), prefix=object_prefix, recursive=True)
+            objects = self.minio.list_objects_sync(self._bucket(), object_prefix)
             for obj in objects:
                 # Return workspace-relative paths (strip the ``workspace/{svid}/``
                 # object-key prefix). Otherwise the agent reads back the listed
