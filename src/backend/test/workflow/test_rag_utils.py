@@ -124,6 +124,39 @@ def test_retrieve_question_file_path_uses_shared_tool_invocation():
     assert invoke_mock.call_args.args[:2] == (obj._multi_milvus_retriever, obj._multi_es_retriever)
 
 
+def test_retrieve_question_tmp_path_uses_shared_tool_invocation():
+    """F066: a temp-session-file node must reach the file branch, not the KB one.
+
+    Real flows store ``knowledge.type = "tmp"`` — see the node template in
+    ``bisheng/database/data/template.json``, where the value is
+    ``{"type": "tmp", "value": [{"key": "input_51222.file"}]}`` and the key is a
+    *variable reference*, not a knowledge id. The dispatch in
+    ``retrieve_question`` tested for ``"file"``, so a tmp node fell through to
+    the document-KB branch and handed ``["input_51222.file"]`` to
+    ``retrieve_knowledge_documents`` as ``knowledge_ids`` — silent retrieval
+    failure, no exception.
+
+    The sibling test above uses ``"file"``, which is exactly why the mismatch
+    went unnoticed: it was written against the implementation rather than
+    against the stored flow data. This one uses the real value.
+    """
+    obj = _make_rag_utils(knowledge_vector_list={})
+    _wire_knowledge_node(obj, ["input_51222.file"])
+    obj._knowledge_type = "tmp"
+    obj._multi_milvus_retriever = MagicMock()
+    obj._multi_es_retriever = MagicMock()
+
+    with patch(
+        "bisheng.workflow.common.knowledge.invoke_knowledge_retriever_tool", return_value=[]
+    ) as invoke_mock, patch(
+        "bisheng.workflow.common.knowledge.retrieve_knowledge_documents", return_value=[]
+    ) as kb_mock:
+        obj.retrieve_question("q?")
+
+    assert invoke_mock.call_args.args[:2] == (obj._multi_milvus_retriever, obj._multi_es_retriever)
+    assert not kb_mock.called, "a tmp node must not be routed to the document-KB branch"
+
+
 # ---------------------------------------------------------------------------
 # Integration: verify build_primary_only_filter is used (not mocked)
 # ---------------------------------------------------------------------------
