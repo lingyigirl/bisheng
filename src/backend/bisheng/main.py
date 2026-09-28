@@ -91,6 +91,30 @@ async def lifespan(app: FastAPI):
     await close_app_context()
 
 
+def _mount_local_storage(app: FastAPI) -> None:
+    """Local-storage mode: answer /<bucket>/<object> straight off disk.
+
+    MinIO deployments route these paths through nginx / vite to MinIO; when the
+    local backend is active the objects live on this host, so the app serves
+    them itself. No-op for any other storage type.
+    """
+    object_storage = settings.object_storage
+    if (object_storage.type or "").strip().lower() != "local" or not object_storage.local:
+        return
+
+    from pathlib import Path
+
+    from starlette.staticfiles import StaticFiles
+
+    local = object_storage.local
+    root = Path(local.root)
+    for bucket in (local.public_bucket, local.tmp_bucket):
+        app.mount(
+            f"/{bucket}",
+            StaticFiles(directory=str(root / bucket), check_dir=False),
+            name=f"local-storage-{bucket}",
+        )
+
 def create_app():
     """Create the FastAPI app and include the router."""
 
@@ -151,6 +175,8 @@ def create_app():
         prefix="/api/department-limit",
         tags=["Department traffic"],
     )
+    _mount_local_storage(app)
+
     if settings.debug:
         import tracemalloc
 
