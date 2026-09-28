@@ -11,11 +11,23 @@ const DocxPreview = ({ filePath }) => {
 
     useEffect(() => {
         const fetchAndConvertDocx = async () => {
+            // The stored URL may carry the storage host (or be host-less, e.g.
+            // `/tmp-dir/...` for report documents) — either way it is served
+            // under the workspace origin.
+            const resolvedUrl = filePath.replace(/https?:\/\/[^\/]+/, __APP_ENV__.BASE_URL);
             try {
                 setLoading(true);
                 // 1. 下载 DOCX 文件
-                const response = await fetch(filePath.replace(/https?:\/\/[^\/]+/, __APP_ENV__.BASE_URL));
-                if (!response.ok) throw new Error(`Failed to fetch file: ${response.status}`);
+                const response = await fetch(resolvedUrl);
+                if (!response.ok) {
+                    // Path only in the visible message: the query string carries a
+                    // presigned signature, and this text ends up in screenshots.
+                    // The full URL goes to the console for diagnosis.
+                    console.error('[DocxPreview] fetch failed', response.status, resolvedUrl);
+                    throw new Error(
+                        `Failed to fetch file: ${response.status} (${resolvedUrl.split('?')[0]})`,
+                    );
+                }
 
                 // 2. 获取文件 ArrayBuffer
                 const arrayBuffer = await response.arrayBuffer();
