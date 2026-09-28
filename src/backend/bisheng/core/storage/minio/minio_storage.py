@@ -2,7 +2,6 @@ import asyncio
 import functools
 import json
 import os
-import re
 import time
 from abc import ABC
 from contextlib import contextmanager
@@ -19,18 +18,10 @@ from minio.error import S3Error
 from minio.lifecycleconfig import Expiration, LifecycleConfig, Rule
 from urllib3 import BaseHTTPResponse
 
-from bisheng.common.services.config_service import settings as _bisheng_settings
 from bisheng.common.services.metric_log import emit_metric
 from bisheng.core.config.settings import MinioConf
-from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.core.storage.base import BaseStorage
-
-# F017 AC-06: prefix pattern installed by multi_tenant layout —
-#   Root       → no prefix (e.g. ``knowledge/<file>``)
-#   Child N    → ``tenant_{code}/knowledge/<file>``
-# The regex is deliberately permissive (tenant_* then a slash) because
-# Tenant codes are deployment-specific (e.g. 'subA', 'legal-co', '01').
-_TENANT_PREFIX_RE = re.compile(r"^tenant_[^/]+/")
+from bisheng.core.storage.tenant_storage import should_fallback_to_root, translate_to_root_prefix
 
 
 def _is_no_such_key_error(exc: Exception) -> bool:
@@ -168,31 +159,6 @@ def _metered(op: str):
         return wrapper
 
     return deco
-
-
-def _translate_to_root_prefix(object_name: str) -> str | None:
-    """Strip a leading ``tenant_{code}/`` prefix so the key falls back to
-    the Root layout. Returns None when there's no tenant prefix to remove
-    (i.e. caller is already reading a Root-shaped path and fallback would
-    be a no-op).
-    """
-    if not object_name:
-        return None
-    new_name, replaced = _TENANT_PREFIX_RE.subn("", object_name, count=1)
-    if replaced == 0 or new_name == object_name:
-        return None
-    return new_name
-
-
-def _should_fallback_to_root() -> bool:
-    """F017 AC-06: fall back to Root prefix only when
-    1. multi_tenant is enabled in this deployment;
-    2. the caller's leaf tenant is a Child (tenant_id != 1 and not None).
-    """
-    if not getattr(getattr(_bisheng_settings, "multi_tenant", None), "enabled", False):
-        return False
-    tid = get_current_tenant_id()
-    return tid is not None and tid != 1
 
 
 class MinioStorage(BaseStorage, ABC):
@@ -442,10 +408,10 @@ class MinioStorage(BaseStorage, ABC):
             # NoSuchKey for their own tenant prefix — retry with the Root
             # prefix (shared resources live under default/ without the
             # tenant_{code}/ segment). Only fall back in multi-tenant mode
-            # and only for Child callers (see _should_fallback_to_root).
-            if not _is_no_such_key_error(e) or not _should_fallback_to_root():
+            # and only for Child callers (see should_fallback_to_root).
+            if not _is_no_such_key_error(e) or not should_fallback_to_root():
                 raise _thaw_s3_error(e)
-            root_name = _translate_to_root_prefix(object_name)
+            root_name = translate_to_root_prefix(object_name)
             if root_name is None:
                 raise _thaw_s3_error(e)
             logger.info(
@@ -488,9 +454,9 @@ class MinioStorage(BaseStorage, ABC):
             # F017 AC-06: mirror get_object_sync's Root-prefix fallback so
             # streaming downloads of Root-shared files also succeed for
             # Child users.
-            if not _is_no_such_key_error(e) or not _should_fallback_to_root():
+            if not _is_no_such_key_error(e) or not should_fallback_to_root():
                 raise _thaw_s3_error(e)
-            root_name = _translate_to_root_prefix(object_name)
+            root_name = translate_to_root_prefix(object_name)
             if root_name is None:
                 raise _thaw_s3_error(e)
             logger.info(
@@ -527,8 +493,8 @@ class MinioStorage(BaseStorage, ABC):
                 # for Child callers. No exception here — existence check
                 # is advisory and pre-existing callers expect False/True,
                 # not ``StorageSharingFallbackError``.
-                if _should_fallback_to_root():
-                    root_name = _translate_to_root_prefix(object_name)
+                if should_fallback_to_root():
+                    root_name = translate_to_root_prefix(object_name)
                     if root_name is not None:
                         try:
                             self.minio_client_sync.stat_object(bucket_name, root_name)

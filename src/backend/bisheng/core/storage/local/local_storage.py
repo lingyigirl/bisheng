@@ -7,6 +7,7 @@ from typing import BinaryIO, Union
 
 from bisheng.core.config.settings import LocalConf
 from bisheng.core.storage.base import BaseStorage
+from bisheng.core.storage.tenant_storage import should_fallback_to_root, translate_to_root_prefix
 
 
 class _LocalDownloadResponse:
@@ -150,15 +151,22 @@ class LocalStorage(BaseStorage):
         if object_name is None:
             raise ValueError("get_object_sync: object_name must be provided")
         target = self._object_path(bucket_name, object_name)
-        if not target.is_file():
-            return None
-        return target.read_bytes()
+        if target.is_file():
+            return target.read_bytes()
+        # F017: 子租户读不到时，剥掉租户前缀回退到 root 共享路径
+        if should_fallback_to_root():
+            root_name = translate_to_root_prefix(object_name)
+            if root_name is not None:
+                root_target = self._object_path(bucket_name, root_name)
+                if root_target.is_file():
+                    return root_target.read_bytes()
+                from bisheng.common.errcode.tenant_sharing import StorageSharingFallbackError
+
+                raise StorageSharingFallbackError()
+        raise FileNotFoundError(f"object not found: {bucket_name}/{object_name}")
 
     def download_object_sync(self, bucket_name: str | None = None, object_name: str = None):
-        data = self.get_object_sync(bucket_name, object_name)
-        if data is None:
-            raise FileNotFoundError(f"object not found: {object_name}")
-        return _LocalDownloadResponse(data)
+        return _LocalDownloadResponse(self.get_object_sync(bucket_name, object_name))
 
     async def object_exists(self, bucket_name: str | None = None, object_name: str = None) -> bool:
         return self.object_exists_sync(bucket_name, object_name)
@@ -167,7 +175,14 @@ class LocalStorage(BaseStorage):
         if not object_name:
             return False
         try:
-            return self._object_path(bucket_name, object_name).is_file()
+            if self._object_path(bucket_name, object_name).is_file():
+                return True
+            # F017: 子租户读不到时，看 root 共享路径是否存在
+            if should_fallback_to_root():
+                root_name = translate_to_root_prefix(object_name)
+                if root_name is not None:
+                    return self._object_path(bucket_name, root_name).is_file()
+            return False
         except ValueError:
             return False
 

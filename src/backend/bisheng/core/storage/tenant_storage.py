@@ -8,7 +8,36 @@ These functions define the prefix convention only. Actual storage call sites
 are modified in F008-resource-rebac-adaptation, not here.
 """
 
-from bisheng.core.context.tenant import DEFAULT_TENANT_ID
+import re
+
+from bisheng.core.context.tenant import DEFAULT_TENANT_ID, get_current_tenant_id
+
+_TENANT_PREFIX_RE = re.compile(r"^tenant_[^/]+/")
+
+
+def should_fallback_to_root() -> bool:
+    """F017 AC-06: allow Root-prefix fallback only when multi-tenant is enabled
+    and the caller is a Child tenant (tenant_id != 1).
+    """
+    from bisheng.common.services.config_service import settings
+
+    if not getattr(getattr(settings, "multi_tenant", None), "enabled", False):
+        return False
+    tenant_id = get_current_tenant_id()
+    return tenant_id is not None and tenant_id != DEFAULT_TENANT_ID
+
+
+def translate_to_root_prefix(object_name: str) -> str | None:
+    """Strip a leading ``tenant_{code}/`` prefix to reach the Root layout.
+
+    Returns None when there is no tenant prefix to remove.
+    """
+    if not object_name:
+        return None
+    new_name, replaced = _TENANT_PREFIX_RE.subn("", object_name, count=1)
+    if replaced == 0 or new_name == object_name:
+        return None
+    return new_name
 
 
 def get_minio_prefix(tenant_id: int, tenant_code: str) -> str:
