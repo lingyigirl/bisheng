@@ -16,6 +16,7 @@ from bisheng.worker.knowledge.scheduler import (
     trigger_dispatch_task,
 )
 from bisheng.worker.permission.retry_failed_tuples import retry_failed_tuples
+from bisheng.worker.storage.cleanup import cleanup_tmp_storage
 from bisheng.worker.telemetry.mid_table import (
     sync_mid_agent_run_dtl,
     sync_mid_app_increment,

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import shutil
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO, Union
@@ -267,6 +268,32 @@ class LocalStorage(BaseStorage):
         if share_host and file_url.startswith(share_host):
             return file_url[len(share_host):]
         return file_url
+
+    # ----------------------------------------------------------------- cleanup
+
+    def cleanup_expired_tmp(self) -> int:
+        """Purge tmp files older than ``local_config.tmp_expire_days``; returns count."""
+        bucket_dir = self._bucket_dir(self.tmp_bucket)
+        if not bucket_dir.is_dir():
+            return 0
+        cutoff = time.time() - self.local_config.tmp_expire_days * 86400
+        removed = 0
+        # topdown=False so a directory is only tried after its files were removed
+        for dirpath, dirnames, filenames in os.walk(bucket_dir, topdown=False):
+            for filename in filenames:
+                full = Path(dirpath) / filename
+                try:
+                    if full.stat().st_mtime < cutoff:
+                        full.unlink()
+                        removed += 1
+                except FileNotFoundError:
+                    continue
+            for dirname in dirnames:
+                try:
+                    os.rmdir(Path(dirpath) / dirname)
+                except OSError:
+                    pass
+        return removed
 
     # ---------------------------------------------------------------- lifecycle
 

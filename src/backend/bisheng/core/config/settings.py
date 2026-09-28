@@ -149,6 +149,7 @@ class LocalConf(BaseModel):
     public_bucket: str = Field(default="bisheng", description="Bucket for permanent files")
     tmp_bucket: str = Field(default="tmp-dir", description="Bucket for temporary files")
     share_host: str = Field(default="", description="Public host used to build share links")
+    tmp_expire_days: int = Field(default=3, ge=1, description="Days before tmp files are purged")
 
 
 class ObjectStore(BaseModel):
@@ -264,6 +265,13 @@ class CeleryConf(BaseModel):
             self.beat_schedule["file_scheduler_reconcile"] = {
                 "task": "bisheng.worker.knowledge.scheduler.reconcile_file_scheduler_task",
                 "schedule": 300.0,
+            }
+        if "storage_tmp_cleanup" not in self.beat_schedule:
+            self.beat_schedule["storage_tmp_cleanup"] = {
+                # Purge stale tmp-bucket objects once a day. MinIO handles this
+                # via bucket lifecycle; LocalStorage walks its tmp directory.
+                "task": "bisheng.worker.storage.cleanup.cleanup_tmp_storage",
+                "schedule": crontab.from_string("0 3 * * *"),
             }
 
         # convert str to crontab

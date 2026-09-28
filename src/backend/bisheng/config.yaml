@@ -69,6 +69,13 @@ object_storage:
     secret_key: 'minioadmin'
     public_bucket: 'bisheng'
     tmp_bucket: 'tmp-dir'
+  # 本地文件系统存储：type 改为 local 后生效（此时 minio 段可留可删）
+  local:
+    root: ./data/storage            # 本地存储根目录，实际布局为 {root}/{bucket}/{object_name}
+    public_bucket: bisheng          # 持久文件目录
+    tmp_bucket: tmp-dir             # 临时文件目录，按 tmp_expire_days 定期清理
+    tmp_expire_days: 3              # 临时文件保留天数
+    share_host: ""                  # 对外可访问地址前缀，留空则用相对路径
 
 environment:
   env: dev

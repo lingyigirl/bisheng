@@ -98,3 +98,11 @@ class BaseStorage(ABC):
     def remove_object_sync(self, bucket_name: str, object_name: str) -> None:
         """Remove an object from a storage bucket (synchronous)."""
         pass
+
+    def cleanup_expired_tmp(self) -> int:
+        """Purge expired objects from the temporary bucket; returns the count removed.
+
+        Default is a no-op: backends whose service expires tmp objects on its own
+        (e.g. MinIO bucket lifecycle) have nothing to do here.
+        """
+        return 0
