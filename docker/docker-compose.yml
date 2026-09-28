@@ -164,6 +164,8 @@ services:
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/nginx/nginx.conf:/etc/nginx/nginx.conf
       - ${DOCKER_VOLUME_DIRECTORY:-.}/nginx/conf.d:/etc/nginx/conf.d
+      # 本地存储模式：让 nginx 直接读本地文件（需同时启用 conf.d 里注释掉的 alias 规则）
+      # - ${DOCKER_VOLUME_DIRECTORY:-.}/data/bisheng/storage:/data/local-storage:ro
     restart: on-failure
     depends_on:
       - backend
