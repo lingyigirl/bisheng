@@ -42,12 +42,16 @@ export interface TermPayload {
     standard_term: string;
     definition: string;
     aliases: string[];
-    department_id: number | null;
 }
 
+/**
+ * The list parameters. No department narrowing: the term library is global.
+ *
+ * Both keys the server still accepts (`department_id`, `include_sub_departments`)
+ * are deliberately absent here rather than merely unused — a parameter this
+ * layer cannot express is one a future screen cannot quietly reintroduce.
+ */
 export function getTermsApi(params: {
-    department_id?: number;
-    include_sub_departments?: boolean;
     page?: number;
     page_size?: number;
 } = {}) {

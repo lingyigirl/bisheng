@@ -14,8 +14,60 @@
 | design.md | ✅ 已评审 | 2026-09-22 编写并通过 `/sdd-review design`（13 条决策，24 项检查）。首轮 5 项修复（新增**决策 13**「功能关闭不得销毁档位」、决策 3 补 C1 分层落点、C3 笔误、§6.2 无二进制依赖、§7 实跑命令与账号口径；坑表补 13/14）。**★ 后两项变更**：决策 8 重写为「不做迁移」；**拆 tasks 时发现决策 3 落点与 C1 第 30 行冲突（BLOCKER）**，已改为「复用两处既有入口、本特性零新增」（决策本身不变） |
 | tasks.md | ✅ 已拆解 | 2026-09-22 拆解完成（**19 个任务 / 7 个 Wave**），同日两轮 `/sdd-review tasks`（21 项）。首轮抓出 5 项（**AC-13~17 只有实现、没有测试任务**；Wave 4 的 Test-First 顺序写反；标记项读写两处重复；Platform 分区行缺失；一处软推迟），第二轮又抓出 2 条 medium（**AC-12 无具体断言**、AC-20 的第二处持久化未入核对清单），已全部修复。最终 **25 条 AC 全覆盖，其中 19 条有测试任务直接覆盖** |
 | 实现 | ✅ 完成 | 19 / 19（T-01~T-18；T-03/T-05/T-07/T-09/T-12/T-14/T-17 均按 Test-First 红→绿，变异验证见偏差记录）。偏差处理见 design.md 顶部调整原则 + `docs/SDD-Guide.md` §3-§4 |
-| e2e-test | ✅ 已完成（有待重启后补跑项） | `/e2e-test`（强制）已执行。自动化半边 `test/e2e/test_e2e_f063_chat_knowledge_scope.py` **8/8 通过**（真后端 + 远端中间件 `172.19.70.189` + 真模型 deepseek-v4-flash）；人工半边 [e2e-checklist.md](./e2e-checklist.md)。**两项未结**：① e2e 断言的变异验证需重启后端（本地 uvicorn 无 `--reload`）—— 那次挂起的收尾在 code-review 期间暴露成 **H0**（注入行遗留工作区，见偏差记录）；② H1' 新增的落地页路径需要重启后补跑场景，且该场景的断言已改为落在**库里的具体 id 列表**上（断言 `org_knowledge_enabled` 无效，坑 16） |
-| code-review | ⏳ 已执行，待重审 | `/code-review --base feat/2.7.0/045-minimax-tts-adapter`。发现并已修：**H0**（遗留变异注入行，权限面 BLOCKER）、**H1**（`queryKey` 漏 `page_size`）、**H1'**（落地页档位对检索零作用，需求方裁决「落地页兑现承诺」）、**M1**（「不使用」档误报 + 空白 chip）、**M2**（附件条挂载门无测试，已补 `AiChatInput.test.tsx` 并变异反证）。docs 同步（维度 7）已完成：design 决策 14/坑 15 改写、新增坑 16/17、§4.2/§4.3/§6.1/§7/修订历史；e2e-checklist 落地页场景改为断言落库 id；偏差记录 H0/H1/H1'/M1/M2 已追加。**未结**：`pnpm typecheck` 6 个报错与 `pnpm lint` 的 platform 53 个报错均为**既有**（前者在他人文件 `stepTree.ts` / `TaskPanel.test.tsx`；后者在 `platform/` 三个 `controllers/API/*.ts`，超出其冻结抑制计数，与本特性零交集）；e2e 补跑待重启后端 |
+| e2e-test | ✅ 已完成（含变异验证，全部结清） | `/e2e-test`（强制）已执行。自动化半边 `test/e2e/test_e2e_f063_chat_knowledge_scope.py` **8/8 通过**（真后端 + 远端中间件 `172.19.70.189` + 真模型 deepseek-v4-flash）；人工半边 [e2e-checklist.md](./e2e-checklist.md)。**2026-09-23 复跑：8/8 通过**（52s，同一后端 + 同一远端中间件）——「需重启后端」这个前提**已被证实不存在**：本地 :7860 的进程启动于当日 09:20，而 F063 源码最后修改于 09-22 18:58，进程加载的就是当前代码。**两项仍未结**：① **e2e 断言的变异验证**（`变异验证是验收条件之一`，见「开发模式」§前端）——注意它现在需要「改坏 → **重启后端** → 跑 e2e → 还原 → 再重启」，因为运行中的 uvicorn 无 `--reload`；上次挂起的收尾正是在这里暴露成 **H0**（注入行遗留工作区，权限面 BLOCKER），所以必须成对操作；② **落地页路径的 e2e 场景——复核后确认它在自动化文件里根本不存在**（8 条全部走日常漏斗 `POST /workstation/chat/completions`，没有一条经过 `/api/v1/linsight/workbench/submit`），因此 `submit_user_question` 的提交期物化（本特性**唯一一处对外行为变化**）目前**零自动化全链路覆盖**；e2e-checklist 里那条手工场景也从未执行。断言必须落在**库里的具体 id 列表**上（断言 `org_knowledge_enabled` 无效，坑 16）。**② 已解决（2026-09-23）**：补了两条 `no_llm` 自动化用例 —— 断言提交响应里 `linsight_session_version.organization_knowledge_ids` 与**列表入口**（`GET /knowledge?type=0`）完全相同，且「不使用」档必须为空。两条**互为对照**（不认档位的实现必然挂其中一条：永远展开则第二条红，从不展开则第一条红），所以无需变异注入即可排除恒真；全量 **10/10 通过**（70s）。**① 已完成（2026-09-23）**：e2e 断言的**变异验证**已执行，见下「e2e 变异验证」小节。**本特性 e2e 验收项全部结清** |
+| code-review | ✅ 已执行两轮（第二轮 2026-09-23） | **第一轮** `/code-review --base feat/2.7.0/045-minimax-tts-adapter`。发现并已修：**H0**（遗留变异注入行，权限面 BLOCKER）、**H1**（`queryKey` 漏 `page_size`）、**H1'**（落地页档位对检索零作用，需求方裁决「落地页兑现承诺」）、**M1**（「不使用」档误报 + 空白 chip）、**M2**（附件条挂载门无测试，已补 `AiChatInput.test.tsx` 并变异反证）。docs 同步（维度 7）已完成：design 决策 14/坑 15 改写、新增坑 16/17、§4.2/§4.3/§6.1/§7/修订历史；e2e-checklist 落地页场景改为断言落库 id；偏差记录 H0/H1/H1'/M1/M2 已追加。**未结**：`pnpm typecheck` 6 个报错与 `pnpm lint` 的 platform 53 个报错均为**既有**（前者在他人文件 `stepTree.ts` / `TaskPanel.test.tsx`；后者在 `platform/` 三个 `controllers/API/*.ts`，超出其冻结抑制计数，与本特性零交集）；e2e 补跑待重启后端 |
+
+---
+
+### code-review 第二轮（2026-09-23，实现合入 `455e69c20` 后）
+
+**方式**：4 个 agent 并发审 7 个维度（后端权限链路 / 前端状态与 payload / 测试真实性 / 文档同步）。
+
+**后端**：五条核心安全要求**逐条对着代码核对，全部成立** —— 与检索侧同一份
+`filter_knowledge_ids_by_permission_async(..., "use_kb")`、**真 fail-closed**（收口异常返回 `[]` 而非候选集）、
+不手写 `tenant_id`、灵思不双重展开、旧形态逐字不变。**未发现越权或信息泄漏类实现缺陷。**
+
+**抓出并已修**：
+
+| 编号 | 维度 | 内容 |
+|---|---|---|
+| **H1** | 边界 | `AiChatInput` 两处 legacy 互斥用 `val.length > 0` 判「选了知识库」，而档位标记本身就是数组元素 ⇒ 点「不使用」（或取消最后一个空间）会**静默清空刚挂上的附件** |
+| **H2** | 测试 | **AC-20 / AC-24 完全没有自动化测试**，但验收表把它们记成已覆盖；对应手工项从未执行。已补 `knowledgeScopeCoverage.test.ts` 覆盖可自动化内核，并把虚报声明改为诚实标注 |
+| **H3** | 文档 | design §4.1 数据流停在开工前 —— 缺整条 `organization_knowledge_all` 分支与**落地页提交链路**（本特性唯一对外行为变化的载体） |
+| **M1** | 边界 | 三处清空走 `onSelectedOrgKbsChange([])`，把标记一起删掉 ⇒ 兜底重新生效，用户显式设的「不使用」**变成「全部」**。**其中 `AiChatInput.tsx:578` 一处是审查漏报、由实现者 grep 补出的** |
+| **M2** | 边界 | `bsConfig` 未进两个 `useCallback` 依赖 ⇒ 硬刷新后首条消息可能发 `organization_knowledge_all: true`；后端此路径**不再校验**管理员开关，前端这道门是唯一防线 |
+| **M3** | 测试 | AC-08 用例输入与 AC-02 **字面相同**；AC-18 是**同一表达式调用两次**；`ChatKnowledge.test.tsx` 的 `onChange` **从未被断言**（`onSelect` 改成空函数，30 条前端测试仍绿） |
+
+**验证**：**9 项变异逐一注入并即时还原**（6 项代码变异 + 3 项覆盖断言变异），**全部被捕获**；
+每次变异与还原在同一步完成，事后校验工作区无残留注入行。测试数 68 → **80**。
+
+**文档维度已收尾（2026-09-23）**：坑 6 / 坑 10 已改为当前事实、§1 非目标第 2 条已限定为**执行态**并指向决策 14、
+§6.1 展开结果拆成「原始 ORM / 漏斗出口 dict」两行、§6.2 修正调用方数量并补**跨域私有符号依赖**行、
+决策 2「两处」→**三处**、决策 3「4 个调用方」→**3 个**、新增**坑 19**（三态语义）、
+e2e-checklist 补上场景 6 的去向说明；本轮两处**自相矛盾**（T-17 消费者表、T-19 场景 6b）也已就地标注被 H1' / M1 推翻。
+
+**M4 已收口（2026-09-23）**：展开成本不封顶、不缓存（设计决策 11 已接受、AC-09 明文禁止收敛）此前只存在于审查记录里，**spec §3 没有对应条目** —— 现在已补：在「边界情况」中显式登记为**已知接受项**，写明触发方式（任意用户切「全部」即每轮触发）、不接受以收窄范围消除它（引 AC-09 / 决策 11）、以及测得出实际规模的两条日志。**本特性已无未结审查项。**
+
+---
+
+### e2e 变异验证（2026-09-23，验收条件之一 —— 已完成）
+
+运行中的 uvicorn 无 `--reload`，所以这是一次「注入 → **重启** → 跑 → 还原 → **重启**」的完整循环。
+为把重启压到最少，**三个变异一次注入**（它们分别打在互不干扰的代码路径上，各有**专属用例**指向，故可归因）：
+
+| 变异 | 位置 | 该用例变红 |
+|---|---|---|
+| **A** 跳过权限收口（`return candidates`，不 `filter_..._async`） | `_expand_all_org_knowledge` 末尾 | `test_ac11_...` ⇐ 无授权用户 **resolved 19 个组织库**（**越权**，本特性最严重的一类） |
+| **B** 落地页不物化（`if False:`） | `workbench_impl.submit_user_question` | `test_landing_page_all_tier_...` ⇐ `stored None — the tier never reached the task run` |
+| **C** 忽略档位、永远走「全部」分支（`if True:`） | `_resolve_user_kb_selection` | `test_ac04_ac06_none_tier_...` ⇐「不使用」仍拉进 19 个组织库 |
+
+**结果：3 个变异全部被捕获**，且各挂在预期的那条用例上；报错文本正是用例里写好的诊断话术（不是模糊的断言失败）。
+未被指向的 `test_landing_page_none_tier_stores_no_ids` 保持绿灯，符合预期（B 让它也满足「为空」）。
+
+**还原**：逐字节比对备份一致、`grep MUTATION` 残留 **0**、`git status` 与 HEAD **无差异**；
+重启后全量 **10/10 通过**（45s）。后端以 `Start-Process` 分离启动，不依赖任何会话存活。
+
+> 启动命令（供复现）：`src/backend$ .venv/Scripts/uvicorn.exe bisheng.main:app --host 0.0.0.0 --port 7860 --workers 1 --no-access-log`
 
 ---
 
@@ -458,7 +510,7 @@ toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)  // 请求体片段
 | `ChatKnowledge.tsx`（档位开关） | 按 `readOrgScope` / `withOrgScope` 读写 | T-12 / T-13 已覆盖 |
 | `MessagesView.tsx:38-41`（只持 setter，不读值） | 「开启新对话」的 `setSelectedOrgKbs([])` 把档位一并清空 ⇒ 回到 AC-02 兜底（「全部」，即本特性默认值）；`enableOrgKb` 是无消费方的遗留标记 | **加注释，不改行为** |
 | `useChatFunctions.ts:63 / 94-102`（`knowledges: selectedOrgKbs`） | **死代码**：`src` 内无 `<ChatContext.Provider>` 挂载点（`useChatContext()` 恒为默认空对象），其产物 `store.submission` 无任何读者 | **只加注释**（警示「若复活必须走 `toPayloadKnowledgeScope`」），不删 |
-| `TaskModeInput.tsx:215 / 232`（执行态） | 走 `context.knowledge.length > 0`；与落地页共用原子但 key 不同（落地页 `'new'`；执行态为会话 id），实际不相遇 | **加注释（坑 15），行为零改动**（AC-25） |
+| `TaskModeInput.tsx:215 / 232`（执行态） | 走 `context.knowledge.length > 0` —— 会把档位标记当成「已选组织库」 | ⚠️ **本行是 T-17 的原结论，已被 M1 推翻**：当时判为「与落地页 key 不同、实际不相遇 ⇒ 只加注释、行为零改动」，但 `ExecutionFlow` 在 `linsight.session_id` 未落 store 时**也**回退到 `'new'` —— 正是落地页写入的 key，**真实窗口存在**。实际**改了行为**：判定改走 `hasPickedKnowledge(context.knowledge)`（见偏差记录 M1、坑 15 改写） |
 | `TaskModeChatInput.tsx`（任务模式**落地页**） | 原判定把档位标记当「已选组织库」⇒「不使用」档误报 `org_knowledge_enabled=true` | **改为按档位判定**（`isOrgScopeAll`）；见 design 决策 14 与 spec AC-25 修订 |
 | `KnowledgeSpaceSelect.tsx`（执行态逐库选择器） | 数据源是 `useGetOrgToolList` 全量，**不读** `selectedOrgKbs` ⇒ 见不到标记 | 零改动 |
 | `useAiChat.ts` / `useSubmitMessage.ts`（日常 payload） | 经 `toPayloadKnowledgeScope` 构造，标记项被排除 | T-11 已覆盖 |
@@ -502,7 +554,7 @@ toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)  // 请求体片段
 | 4 | 移除汇总卡后发起该轮 | 该轮不检索组织知识库 |
 | 5 | 刷新页面 / **重新生成** | 档位保持（含显式「不使用」这种**与兜底结果相同**的状态）；重新生成走的是与发送同源的 payload（T-11 的接线验收） |
 | 6a | 任务模式**执行态**（灵思任务已创建后的输入区） | UI 与行为**零改动**（AC-25 修订后的保护范围）：逐库选择器照旧可用，提交的 `org_knowledge_enabled` 与升级前同义 |
-| 6b | 任务模式**落地页**（`/linsight/new`） | 跟随新口径（AC-24）：默认显示「全部组织知识库」汇总卡；不选任何东西直接发起任务 ⇒ 提交体 `org_knowledge_enabled=true`（**这是本次唯一一处对外行为变化**，已由需求方确认）；把卡片移除成「不使用」后再发起 ⇒ `org_knowledge_enabled=false`（旧实现在此处会误报 true） |
+| 6b | 任务模式**落地页**（`/linsight/new`） | 跟随新口径（AC-24）：默认显示「全部组织知识库」汇总卡；不选任何东西直接发起任务 ⇒ **落库的 `linsight_session_version.organization_knowledge_ids` 是该用户有权限的全部组织库 id**；把卡片移除成「不使用」后再发起 ⇒ 该列为 `NULL`/空。⚠️ **断言已修订（H1'，2026-09-22）**：原写「提交体 `org_knowledge_enabled=true/false`」**无效** —— 该布尔在任务执行期**不被读取**（坑 16），断言它等于测一个死字段。**2026-09-23 已由自动化覆盖**：`test_landing_page_all_tier_materialises_the_same_set_as_the_list_entry` / `test_landing_page_none_tier_stores_no_ids`（均 `no_llm`） |
 | 7 | **档位切到「不使用」后，看平台侧知识库列表与组织树角标** | 数字与集合**一律不变**（AC-12：「不使用」是本轮问答的**作用域选择**，不产生任何授权语义，也不改变其他入口的可见性）——本场景是 AC-12 的具体断言，不能只靠「代码里没写负向授权」这类推断 |
 
 **入口覆盖（AC-24）**：日常问答页、**订阅模块的 AI 助手面板**、独立对话页、分享页——至少各验一次「本口径生效且不因入口分叉」；其中订阅面板刷新后应恢复为日常问答页所保存的选择（AC-20）。
@@ -545,7 +597,18 @@ toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)  // 请求体片段
 | AC-24 | T-13, T-15, T-17, T-19 |
 | AC-25 | T-05, T-06, T-18, T-19（**2026-09-22 修订**：保护范围限定到**执行态**；任务模式**落地页**改归属 AC-24，由 T-17 落点、T-19 场景 6 验收） |
 
-**未覆盖项**：无。25 条 AC 全部有归属任务；其中 **19 条**有**测试任务**直接覆盖（AC-13~17 由 T-12 / T-14 补上，此前是缺口）。
+**未覆盖项**：无 —— 25 条 AC 都有归属任务。
+
+> ⚠️ **2026-09-23 复审修正**：「有**测试任务**」不等于「有**测试**」。逐条核对代码后发现，本句当时声称的 **19 条**
+> 实际只有 **16 条** 有能失败的自动化断言：
+> - **AC-08 / AC-18 的用例是假断言** —— 前者输入与 AC-02 用例**字面相同**（「清空空间」这个动作从未被建模），
+>   后者是**同一表达式调用两次**（「关闭期」从未被表示）；
+> - **AC-20 / AC-24 完全没有自动化测试** —— T-10 的证据是「只有一处读写」的 `grep` **审计结论**而非断言；
+>   T-19 的四入口项在 e2e-checklist 里**从未执行**（本文件此前的「T-19 场景 6 验收」是空头支票）。
+>
+> 四项已于同日补齐：AC-08 / AC-18 改写为可失败并**经变异验证**的用例；AC-20 / AC-24 由
+> `components/Chat/knowledgeScopeCoverage.test.ts` 覆盖其**可自动化内核**（「org 入口只有一个渲染方」
+> 「知识范围只有一处写盘」「读写同 key」），**四个入口逐个点击仍是未执行的手工项**。
 
 ---
 
@@ -576,7 +639,7 @@ toPayloadKnowledgeScope(items, hasSpaces, featureEnabled)  // 请求体片段
 - **T-17 消费者审计（2026-09-22，已合入）**：清单（消费者 × 行为）与 AC-20 写盘点名见 **T-17 任务的产出表**；论证在 **design 决策 14 + 坑 15 / 坑 7 更新**。三项要点：
   ① **`useChatFunctions` 判定为死代码**（不是「被引入就是活代码」的反例）：`src` 内**没有任何** `<ChatContext.Provider>` 挂载点（只有 `StandaloneChatContext` 这个无关的 context），`useChatContext()` 恒为默认空对象；其唯一产物 `store.submission` 全仓**无读者**。按根 `AGENTS.md §3`「与需求无关的死代码只标注不删除」，只在原处加注释，并写明**若复活必须改走 `toPayloadKnowledgeScope`**（否则会把 `__org_scope__` 当知识库 id 发给服务端）。
   ② **发现 AC-25 的前提只对执行态成立，超出原计划范围 → 已停下交需求方裁决**：任务模式**落地页**（`TaskModeChatInput`）整个复用日常 `AiChatInput`，必然继承两档入口与汇总卡；且其 `handleSend` 用 `some(k => k.type === 'org')` / `length > 0` 推导 `checked`(→`org_knowledge_enabled`) 与 `useKnowledgeBase`，而档位标记的 `type` 也是 `'org'`（坑 13）⇒ **「不使用」档会误报「用了组织知识库」**。澄清过程中还确认：落地页的**逐库 id 从未上过线**（`convertTools` 只读 `checked` 布尔，提交 payload 只有 `org_knowledge_enabled` / `personal_knowledge_enabled`），所以对齐两档不丢失任何已生效能力。**裁决：落地页跟随新口径**（默认档位「全部」），执行态维持原样；并接受由此产生的**唯一一处对外行为变化**——落地页首次提问的默认行为由「不检索组织库」变为「检索全部组织库」。同步产出：`isOrgScopeAll(items, enabled)` 成为**唯一档位判定入口**（与 payload 的 `organization_knowledge_all` 同源同值）、**spec AC-25 修订**（保护范围限定到执行态 + 记录落地页跟随与该默认翻转）、**design 决策 14 + 坑 15**。落地页注释统一英文（前端硬规则），文档为中文。
-  ③ **两处遗留注释/零改动落点**：`MessagesView`「开启新对话」`setSelectedOrgKbs([])` ⇒ 档位回到兜底（「全部」）而非「不使用」——这是**清空即默认**的语义，与 AC-08 一致，且 `enableOrgKb` 是无消费方的遗留标记，故**不改行为只加注释**；`TaskModeInput` 的 `length > 0` 与落地页共用原子但 key 不同（坑 15），同样只加注释。
+  ③ **两处遗留注释/零改动落点**：`MessagesView`「开启新对话」`setSelectedOrgKbs([])` ⇒ 档位回到兜底（「全部」）而非「不使用」——这是**清空即默认**的语义，与 AC-08 一致，且 `enableOrgKb` 是无消费方的遗留标记，故**不改行为只加注释**；`TaskModeInput` 的 `length > 0`（**已被 M1 推翻**：「key 不同」的判断是错的，`ExecutionFlow` 也回退到 `'new'`，实际改了行为，见偏差记录 M1）。
 - **T-17 新增用例与变异验证（本次）**：`utils/knowledgeScope.test.ts` 新增 `isOrgScopeAll` / `showsOrgKbSummary` 一组 5 条（含一条**跨函数一致性**：对 7 种状态 × 开关两态，逐项断言 `isOrgScopeAll(...) === toPayloadKnowledgeScope(...).organization_knowledge_all` —— 钉住「界面说的档位」与「请求发的档位」是同一个答案）。变异：把 `isOrgScopeAll` 改成 `return enabled`（丢掉档位判定）⇒ **4 条红**，已还原。三条描述文案里的「全部/不使用」因 `no-restricted-syntax`（硬编码中文，Ledger #28）改为 `tier 'all' / 'none'`——该规则连**字符串字面量**里的中文也拦（注释里的中文不拦）。
 - **T-18 回归实跑（2026-09-22，本次）**：本特性只改后端两个文件（`chat_schema.py` / `chat_service.py`），故基线对比用「备份 → `git checkout --` 这两个文件 → 重跑 → 还原」完成（**不走 `git stash`**：共享工作区里 stash 会被并行工作流的提交冲掉；备份落 `/tmp/f063_backup/`，还原后 `md5sum` 与备份逐字节一致）。**结果：零退化。**
   ① `test/workstation/`：有 F063 **26 failed / 191 passed**，无 F063 **26 failed / 165 passed** —— 失败集**逐条相同**，F063 净增的 26 条用例全绿。既有失败均为**环境性**，与本次改动无关：`test_workstation_apps_rebac.py` 硬编码了他人机器路径 `D:\Users/zhou/Code/bisheng/...`（`FileNotFoundError`），`test_conversation_export_import.py` 等因缺中间件撞 `object MagicMock can't be used in 'await' expression` 与消息落库乱码。

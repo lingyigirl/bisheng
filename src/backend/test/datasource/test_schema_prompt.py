@@ -59,6 +59,99 @@ def test_a_table_with_no_comment_renders_without_a_placeholder():
     assert '说明' not in rendered
 
 
+# --- F064: per-field overrides ----------------------------------------------
+
+
+def _with_overrides(table, overrides):
+    table['column_overrides'] = overrides
+    return table
+
+
+def test_a_field_override_replaces_the_in_database_comment():
+    """F064 AC-06: for that column, the override is what the model reads."""
+    table = _table('orders', columns=[('amount', 'DECIMAL(10,2)', '库里的旧注释')])
+
+    rendered = schema_prompt.render_table(_with_overrides(table, {'amount': '含税金额'}))
+
+    assert '含税金额' in rendered
+    assert '库里的旧注释' not in rendered, (
+        'the override REPLACES the collected comment for that column; showing both '
+        'would hand the model two descriptions of one field, which is the ambiguity '
+        'the override exists to remove'
+    )
+
+
+def test_columns_without_an_override_keep_their_collected_comment():
+    """The fallback is per COLUMN, not per table.
+
+    Overriding one field must not blank the others -- a whole-table switch here
+    would silently strip every comment the collector had gathered.
+    """
+    table = _table('orders', columns=[('id', 'INT', '主键'), ('amount', 'DECIMAL(10,2)', '旧注释')])
+
+    rendered = schema_prompt.render_table(_with_overrides(table, {'amount': '含税金额'}))
+
+    assert '主键' in rendered, 'a column with no override keeps what was collected'
+    assert '含税金额' in rendered
+    assert '旧注释' not in rendered
+
+
+def test_an_override_for_a_column_that_is_gone_is_not_injected():
+    """F064 AC-05: a dangling key is KEPT, not rendered.
+
+    Injection walks the snapshot, so a key with no matching column is never
+    looked up. AC-05 wants it kept in storage (the admin should see that their
+    note still exists) while staying out of what the model reads.
+    """
+    table = _table('orders', columns=[('id', 'INT', None)])
+
+    rendered = schema_prompt.render_table(_with_overrides(table, {'old_column': '已删除字段的说明'}))
+
+    assert '已删除字段的说明' not in rendered
+
+
+def test_retrieval_matches_on_a_field_override():
+    """F064 AC-07, in the form that cannot pass by accident.
+
+    `授信额度` appears ONLY in the field override -- every other string on that
+    table is worded to exclude it -- so this goes red the moment `_haystack`
+    stops reading overrides.
+
+    Fixture layout is load-bearing in two ways. The target is placed LAST and a
+    control that legitimately contains the term FIRST, because `_retrieve` falls
+    back to the first few tables when nothing matches at all: with the target in
+    front, a matcher that read nothing would still return it and the assertion
+    would pass for the wrong reason. The control also arms the fixture by proving
+    that matching works at all.
+    """
+    control = _table('credit_limit', desc='授信额度台账')
+    filler = [_table(f'filler_{i}', desc='填充表' * 400) for i in range(60)]
+    target = _table('t_9001', desc='一张表', comment='表注释', columns=[('f_1', 'INT', '字段注释')])
+
+    chosen, mode = schema_prompt.select_tables(
+        [control, *filler, _with_overrides(target, {'f_1': '授信额度'})], '授信额度是多少'
+    )
+    names = [t['table_name'] for t in chosen]
+
+    assert mode == INJECTION_RETRIEVED, 'the fixture must be large enough to force retrieval'
+    assert 'credit_limit' in names, 'the control must match, or the fixture proves nothing'
+    assert 't_9001' in names, (
+        'the table was not matched on its override text -- retrieval has to search '
+        'the words the model is shown, or an override describes a column the '
+        'question can never reach'
+    )
+
+
+def test_a_table_with_no_overrides_key_at_all_renders_as_before():
+    """Older callers build the dict without the key (the workflow path, tests).
+
+    Reading it defensively is what keeps F064 additive for them.
+    """
+    rendered = schema_prompt.render_table(_table('orders', columns=[('id', 'INT', '主键')]))
+
+    assert '主键' in rendered
+
+
 # --- AC-13: no sample values ------------------------------------------------
 
 

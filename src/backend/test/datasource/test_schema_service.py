@@ -35,11 +35,11 @@ def _collected(*names):
     )
 
 
-def _row(table_id, name, *, desc='人工描述', enabled=1):
+def _row(table_id, name, *, desc='人工描述', enabled=1, overrides=None):
     from unittest.mock import MagicMock
 
     row = MagicMock(id=table_id, table_name=name, business_desc=desc, enabled=enabled,
-                    table_comment=None, structure_snapshot=[])
+                    table_comment=None, structure_snapshot=[], column_overrides=overrides)
     return row
 
 
@@ -51,7 +51,7 @@ async def test_refresh_updates_structure_and_never_touches_the_description():
 
     A single "save this table row" call would pass every assertion about the
     structure being updated while silently clearing the description — so the
-    assertion is that `aupdate_business_desc` is NOT called, and that the write
+    assertion is that `aupdate_human_fields` is NOT called, and that the write
     that does happen is the snapshot-only one.
     """
     row = _row(11, 'orders')
@@ -61,7 +61,7 @@ async def test_refresh_updates_structure_and_never_touches_the_description():
     ), patch.object(
         schema_service.DbDatasourceTableDao, 'areplace_snapshot', AsyncMock()
     ) as replace, patch.object(
-        schema_service.DbDatasourceTableDao, 'aupdate_business_desc', AsyncMock()
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
     ) as desc_write, patch.object(
         schema_service.DbDatasourceTableDao, 'acreate', AsyncMock()
     ):
@@ -121,14 +121,124 @@ async def test_a_table_that_vanished_from_the_database_keeps_its_row():
 
 async def test_setting_a_description_does_not_rewrite_the_snapshot():
     with patch.object(
-        schema_service.DbDatasourceTableDao, 'aupdate_business_desc', AsyncMock()
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
     ) as desc_write, patch.object(
         schema_service.DbDatasourceTableDao, 'areplace_snapshot', AsyncMock()
     ) as replace:
         await schema_service.update_description(5, '存客户主数据')
 
-    desc_write.assert_awaited_once_with(5, '存客户主数据')
+    desc_write.assert_awaited_once_with(5, business_desc='存客户主数据')
     replace.assert_not_awaited()
+
+
+# --- F064: per-field overrides ----------------------------------------------
+
+
+async def test_setting_column_overrides_goes_through_the_human_writer():
+    """F064 AC-01: the overrides are written, and the snapshot is not.
+
+    Two service functions, one DAO writer. The assertion names the DAO call
+    because "which columns did it write" is the property that has to stay true
+    -- not "some write happened".
+    """
+    with patch.object(
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
+    ) as human_write, patch.object(
+        schema_service.DbDatasourceTableDao, 'areplace_snapshot', AsyncMock()
+    ) as replace:
+        await schema_service.update_column_overrides(5, {'amount': '含税金额'})
+
+    human_write.assert_awaited_once_with(5, column_overrides={'amount': '含税金额'})
+    assert replace.await_count == 0
+
+
+async def test_blank_overrides_are_dropped_and_all_blank_becomes_null():
+    """决策 5 / AC-09. `{"a": " ", "b": "x"}` stores `{"b": "x"}`; nothing left stores NULL.
+
+    The second half is the load-bearing one: `{}` would be a third state that
+    the UI and the injection path would each have to agree about, and AC-09
+    admits exactly two ("订正过" / "从未订正").
+    """
+    with patch.object(
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
+    ) as human_write:
+        await schema_service.update_column_overrides(5, {'a': ' ', 'b': 'x'})
+        await schema_service.update_column_overrides(5, {'a': '   '})
+        await schema_service.update_column_overrides(5, {})
+
+    assert [c.kwargs['column_overrides'] for c in human_write.await_args_list] == [
+        {'b': 'x'},
+        None,
+        None,
+    ]
+
+
+async def test_a_padded_override_is_stored_trimmed():
+    """Not merely "non-blank survives" -- the padding is gone from what is stored.
+
+    Otherwise the admin's next visit shows them whitespace they did not type,
+    and `_haystack` matches against padding they never meant to include.
+    """
+    with patch.object(
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
+    ) as human_write:
+        await schema_service.update_column_overrides(5, {'amount': '  含税金额  '})
+
+    assert human_write.await_args.kwargs['column_overrides'] == {'amount': '含税金额'}
+
+
+async def test_the_admin_list_carries_the_overrides():
+    """F064 AC-08: the UI resolves each field's effective comment from this key."""
+    row = _row(11, 'orders', overrides={'amount': '含税金额'})
+
+    with patch.object(
+        schema_service.DbDatasourceTableDao, 'alist_by_datasource', AsyncMock(return_value=[row])
+    ):
+        tables = await schema_service.list_tables_for_admin(7)
+
+    assert tables[0]['column_overrides'] == {'amount': '含税金额'}
+
+
+async def test_the_admin_list_presents_no_overrides_as_an_empty_mapping():
+    """NULL is the STORED form; the read path normalises it for the front end.
+
+    Asserted as its own case so the default is a decision rather than an
+    accident of whatever the row happened to hold.
+    """
+    row = _row(11, 'orders', overrides=None)
+
+    with patch.object(
+        schema_service.DbDatasourceTableDao, 'alist_by_datasource', AsyncMock(return_value=[row])
+    ):
+        tables = await schema_service.list_tables_for_admin(7)
+
+    assert tables[0]['column_overrides'] == {}
+
+
+async def test_a_recollect_never_reaches_the_override_writer():
+    """F064 AC-04, at the service layer.
+
+    The DAO test already pins the other half (the re-collect's UPDATE names
+    `structure_snapshot` and `table_comment` and nothing else). What this adds
+    is the call: a re-collect must not reach for the human writer at all, since
+    that is the one method able to name `column_overrides`.
+    """
+    with patch.object(
+        schema_collector, 'collect', return_value=_collected('orders')
+    ), patch.object(
+        schema_service.DbDatasourceTableDao, 'alist_by_datasource', AsyncMock(return_value=[_row(11, 'orders')])
+    ), patch.object(
+        schema_service.DbDatasourceTableDao, 'areplace_snapshot', AsyncMock()
+    ) as replace, patch.object(
+        schema_service.DbDatasourceTableDao, 'aupdate_human_fields', AsyncMock()
+    ) as human_write:
+        await schema_service.refresh_tables(_datasource(), ['orders'])
+
+    assert replace.await_count == 1, 'the structure must still be refreshed'
+    assert human_write.await_count == 0, (
+        'a re-collect wrote through the human-columns writer -- that is the one '
+        'path that can overwrite an admin override (F064 AC-04)'
+    )
 
 
 async def test_unticking_a_table_hides_it_and_keeps_its_description():

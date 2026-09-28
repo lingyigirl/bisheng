@@ -11,6 +11,7 @@ import {
 } from "@/components/bs-icons";
 import { LoadingIcon } from "@/components/bs-icons/loading";
 import { DatasetIcon } from "@/components/bs-icons/menu/dataset";
+import { LabelIcon } from "@/components/bs-icons";
 import { DashboardIcon } from "@/components/bs-icons/menu/system";
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
 import { SelectHover, SelectHoverItem } from "@/components/bs-ui/select/hover";
@@ -227,6 +228,18 @@ export default function MainLayout() {
                             showAdminNav('knowledge') &&
                             <NavLink to={isMenu('knowledge') ? '/filelib' : '/menu-pending?menu=knowledge'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
                                 <KnowledgeIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.knowledge')}</span>
+                            </NavLink>
+                        }
+                        {/* QA 知识库 was a menu entry here; it is HIDDEN on product
+                            instruction (no operating entry point in this build —
+                            its node in the builder is hidden for the same reason).
+                            The route still exists, so this is an entry-point hide,
+                            not a removal: re-enabling is putting the NavLink back.
+                            ！ 术语库 stays visible. */}
+                        {
+                            showAdminNav('knowledge') &&
+                            <NavLink to={isMenu('knowledge') ? '/termlib' : '/menu-pending?menu=knowledge'} className={`navlink inline-flex rounded-lg w-full px-6 hover:bg-nav-hover h-12 mb-[3.5px]`}>
+                                <LabelIcon className="h-6 w-6 my-[12px]" /><span className="mx-[14px] max-w-[48px] text-[14px] leading-[48px]">{t('menu.termLibrary')}</span>
                             </NavLink>
                         }
                         {

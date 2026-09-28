@@ -12,10 +12,15 @@ import { SearchInput } from "@/components/bs-ui/input";
 import AutoPagination from "@/components/bs-ui/pagination/autoPagination";
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
 import { PermissionDialog } from "@/components/bs-comp/permission/PermissionDialog";
-import { deleteDatasourceApi, updateDatasourceApi, type DatasourceRow } from "@/controllers/API/datasource";
+import {
+  deleteDatasourceApi,
+  getDatasourceReferencesApi,
+  updateDatasourceApi,
+  type DatasourceRow,
+} from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { useDebounce } from "@/util/hook";
-import { Plus, Shield } from "lucide-react";
+import { Plus, Shield, Table2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DatasourceFormDialog } from "./DatasourceFormDialog";
@@ -51,7 +56,43 @@ export function DatasourceListTab({ queries }: Props) {
   );
   const debouncedSearch = useDebounce(handleSearch, 300, false);
 
-  const handleDelete = (row: DatasourceRow) => {
+  const handleDelete = async (row: DatasourceRow) => {
+    // Ask who still binds it BEFORE offering the confirm. The backend refuses
+    // while anything is bound (11711), but its refusal cannot name the
+    // workflow that is in the way — nothing else in the product shows that a
+    // flow is using this datasource, so this dialog is the only place the
+    // admin can find out.
+    const references = await captureAndAlertRequestErrorHoc(getDatasourceReferencesApi(row.id));
+    if (!references) return;
+
+    const { assistants, flows } = references;
+    if (assistants.length || flows.length) {
+      bsConfirm({
+        title: t("datasource.list.inUseTitle"),
+        desc: (
+          <span className="block space-y-1">
+            <span className="block">{t("datasource.list.inUseDesc", { name: row.name })}</span>
+            {assistants.length > 0 && (
+              <span className="block">
+                {t("datasource.list.inUseAssistants", {
+                  names: assistants.map((one) => one.name).join("、"),
+                })}
+              </span>
+            )}
+            {flows.length > 0 && (
+              <span className="block">
+                {t("datasource.list.inUseFlows", {
+                  names: flows.map((one) => one.name).join("、"),
+                })}
+              </span>
+            )}
+          </span>
+        ),
+        okTxt: t("datasource.list.inUseOk"),
+      });
+      return;
+    }
+
     bsConfirm({
       title: `${t("datasource.list.deleteTitle")}`,
       desc: t("datasource.list.deleteConfirm", { name: row.name }),
@@ -141,17 +182,26 @@ export function DatasourceListTab({ queries }: Props) {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={row.enabled ? "secondary" : "gray"}>
+                  {/* Green/red, not two near-whites. The previous pair
+                      (`secondary` = hsl(210 40% 96.1%) vs `gray` = #E8EBF2) were
+                      the same colour to the eye, so the column that exists to
+                      answer "is this switched on?" could not. */}
+                  <Badge variant={row.enabled ? "success" : "error"}>
                     {row.enabled ? t("datasource.list.enabled") : t("datasource.list.disabled")}
                   </Badge>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-1">
+                    {/* The entry into a datasource's tables. `outline` + an icon
+                        rather than the `ghost` it shared with 编辑/授权/删除: as
+                        plain text reading 「表」 it gave no sign it was the way
+                        in, which is the one thing this row exists to offer. */}
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       onClick={() => queries.setTablesDatasourceId(row.id)}
                     >
+                      <Table2 className="mr-1 size-4" />
                       {t("datasource.list.tables")}
                     </Button>
                     <Button
@@ -172,14 +222,24 @@ export function DatasourceListTab({ queries }: Props) {
                     >
                       <Shield className="size-4" />
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleToggleEnabled(row)}>
+                    {/* Coloured to match the status badge beside it, so the row
+                        reads the same whichever of the two the eye lands on
+                        first. Text colour, not a background: this is one of five
+                        ghost buttons in a row, and a filled one here would
+                        compete with 「表」 for the eye. */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={row.enabled ? "text-error-foreground" : "text-success-foreground"}
+                      onClick={() => handleToggleEnabled(row)}
+                    >
                       {row.enabled ? t("datasource.list.disable") : t("datasource.list.enable")}
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       className="text-red-500"
-                      onClick={() => handleDelete(row)}
+                      onClick={() => void handleDelete(row)}
                     >
                       {t("datasource.list.delete")}
                     </Button>

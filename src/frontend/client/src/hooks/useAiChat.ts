@@ -685,7 +685,12 @@ export default function useAiChat(initialConversationId: string = "new", isLings
             setIsStreaming(true);
             setSseSubmission(submission);
         },
-        [conversationId, isStreaming, chatModel, selectedOrgKbs, searchType, selectedAgentTools, dailyTaskSkills, isLingsi, createLinsight, updateLinsight, localize, showToast, queryClient]
+        // F063 review M2 — `bsConfig` belongs here: the payload above reads the
+        // admin switch off it, and without the dep the first send after a hard
+        // refresh closes over `undefined`, which reads as "feature on" and sends
+        // `organization_knowledge_all: true`. The server does not re-check that
+        // switch on this path, so this gate is the only one there is.
+        [conversationId, isStreaming, chatModel, selectedOrgKbs, searchType, selectedAgentTools, dailyTaskSkills, isLingsi, createLinsight, updateLinsight, localize, showToast, queryClient, bsConfig]
     );
 
     // --- Stop generating ---
@@ -861,7 +866,9 @@ export default function useAiChat(initialConversationId: string = "new", isLings
             setIsStreaming(true);
             setSseSubmission(submission);
         },
-        [conversationId, isStreaming, chatModel, selectedOrgKbs, searchType, selectedAgentTools, localize]
+        // Same as the send path above (F063 review M2): the regenerate payload
+        // reads the admin switch off `bsConfig`, so it must be a dep here too.
+        [conversationId, isStreaming, chatModel, selectedOrgKbs, searchType, selectedAgentTools, localize, bsConfig]
     );
 
     return {

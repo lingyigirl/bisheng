@@ -4,7 +4,6 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Input, Textarea } from "@/components/bs-ui/input";
 import { Label } from "@/components/bs-ui/label";
 import { useToast } from "@/components/bs-ui/toast/use-toast";
-import { TreeDepartmentSelect } from "@/components/bs-comp/department";
 import {
     createTermApi,
     deleteTermApi,
@@ -61,7 +60,6 @@ function TermDialog({ open, onOpenChange, editing, onSaved }: TermDialogProps) {
     const [standardTerm, setStandardTerm] = useState("");
     const [aliasText, setAliasText] = useState("");
     const [definition, setDefinition] = useState("");
-    const [departmentId, setDepartmentId] = useState<number | null>(null);
     const [busy, setBusy] = useState(false);
 
     useEffect(() => {
@@ -69,7 +67,6 @@ function TermDialog({ open, onOpenChange, editing, onSaved }: TermDialogProps) {
         setStandardTerm(editing?.standard_term ?? "");
         setAliasText((editing?.aliases ?? []).join("、"));
         setDefinition(editing?.definition ?? "");
-        setDepartmentId(editing?.department_id ?? null);
         setBusy(false);
     }, [open, editing]);
 
@@ -79,7 +76,6 @@ function TermDialog({ open, onOpenChange, editing, onSaved }: TermDialogProps) {
             standard_term: standardTerm.trim(),
             definition: definition.trim(),
             aliases: parseAliases(aliasText),
-            department_id: departmentId,
         };
         const result = editing
             ? await captureAndAlertRequestErrorHoc(updateTermApi(editing.id, payload))
@@ -147,27 +143,13 @@ function TermDialog({ open, onOpenChange, editing, onSaved }: TermDialogProps) {
                         </p>
                     </div>
 
-                    <div>
-                        <Label>{t("termLibrary.department")}</Label>
-                        {/* `modal={false}`: this select is nested in a Dialog, and
-                            Radix's nested focus traps make the tree unusable
-                            otherwise (see TreeDepartmentSelect). */}
-                        <div className="mt-2">
-                            <TreeDepartmentSelect
-                                modal={false}
-                                allowNone
-                                noneLabel={t("termLibrary.departmentNone")}
-                                value={departmentId}
-                                placeholder={t("termLibrary.departmentPlaceholder")}
-                                onChange={(id) => setDepartmentId(id)}
-                            />
-                        </div>
-                        {/* INV-17: the department only groups the list. It is not a
-                            permission and it does not narrow which terms reach a
-                            conversation — saying so here is the only place an admin
-                            would look for it. */}
-                        <p className="mt-1 text-xs text-[#86909C]">{t("termLibrary.departmentHint")}</p>
-                    </div>
+                    {/* The 归属部门 field that used to sit here is gone: the term
+                        library is global, so there is nothing for an admin to
+                        categorise it by. The column survives in the database (and
+                        is being cleared separately), but nothing here reads or
+                        writes it -- and INV-17 already said it never narrowed
+                        which terms reach a conversation, so no behaviour moves
+                        with it. */}
                 </div>
 
                 <DialogFooter>
@@ -337,23 +319,24 @@ function ImportDialog({ open, onOpenChange, onImported }: ImportDialogProps) {
     );
 }
 
-export interface TermLibraryTabProps {
-    /** Numeric department id from the page-level tree, or null for "all". */
-    departmentId: number | null;
-    /** Whether the selected department includes its descendants (AC-13). */
-    includeSubDepartments: boolean;
-}
-
 /**
- * The term library, as the third tab of the knowledge page (spec AC-12).
+ * The term library (spec AC-12), a page of its own since the menu change.
  *
- * Permissions match the API and the page it lives on: reaching this tab at all
+ * It takes NO department props: the library is global now. Until this change it
+ * was narrowed by a page-level department tree — and had a second, form-local
+ * department picker of its own, which is why both had to go rather than one.
+ *
+ * INV-17 always said the department was grouping only and never an authority on
+ * which terms reach a conversation, so no behaviour moves with it. What changes
+ * is that the affordance stops suggesting otherwise.
+ *
+ * Permissions match the API and the page it lives on: reaching this page at all
  * requires the `knowledge` menu, and every write additionally requires
  * `create_knowledge` (AC-16 ~ AC-18). Hiding the buttons is an AFFORDANCE, not a
  * boundary — the backend rejects regardless, and 403s are handled by the
  * response interceptor, so there is deliberately no 403 branch in this file.
  */
-export function TermLibraryTab({ departmentId, includeSubDepartments }: TermLibraryTabProps) {
+export function TermLibraryTab() {
     const { t } = useTranslation();
     const { toast } = useToast();
     const { user } = useContext(userContext);
@@ -373,8 +356,6 @@ export function TermLibraryTab({ departmentId, includeSubDepartments }: TermLibr
         setLoading(true);
         const result = await captureAndAlertRequestErrorHoc(
             getTermsApi({
-                department_id: departmentId ?? undefined,
-                include_sub_departments: includeSubDepartments,
                 page,
                 page_size: PAGE_SIZE,
             }),
@@ -383,18 +364,11 @@ export function TermLibraryTab({ departmentId, includeSubDepartments }: TermLibr
         if (!result) return;
         setTerms(result.data);
         setTotal(result.total);
-    }, [departmentId, includeSubDepartments, page]);
+    }, [page]);
 
     useEffect(() => {
         load();
     }, [load]);
-
-    // Changing the department filter restarts paging: page 3 of the old scope is
-    // meaningless in the new one, and the backend would happily serve whatever
-    // happened to be there.
-    useEffect(() => {
-        setPage(1);
-    }, [departmentId, includeSubDepartments]);
 
     const handleDelete = (term: Term) => {
         bsConfirm({

@@ -147,6 +147,14 @@ class FolderRenameReq(BaseModel):
 class FileCreateReq(BaseModel):
     file_path: list[str] = Field(..., description="File Path")
     parent_id: int | None = Field(None, description="Parent Folder ID")
+    dedup_scope: Literal["space", "folder"] = Field(
+        default="space",
+        description=(
+            "Where duplicates are looked for: the whole space (default, historical "
+            "behaviour) or only inside parent_id — the latter lets the same content "
+            "be filed under several folders of one space (F065)."
+        ),
+    )
 
 
 class WebLinkCreateReq(BaseModel):

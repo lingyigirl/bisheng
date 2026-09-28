@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.datasource import (
+    DatasourceInUseError,
     DatasourceNameDuplicateError,
     DatasourceNotFoundError,
     DatasourceUnsupportedEngineError,
@@ -45,6 +46,7 @@ from bisheng.datasource.domain.services import schema_collector, schema_service
 from bisheng.datasource.domain.services.credentials import encrypt_password, to_safe_dict
 from bisheng.datasource.domain.services.datasource_service import DatasourceService
 from bisheng.datasource.domain.services.engine_registry import canonical_engine
+from bisheng.datasource.domain.services.references import alist_references
 
 router = APIRouter(prefix='/datasource', tags=['datasource'])
 
@@ -309,6 +311,40 @@ async def update_datasource(
     return resp_200(to_safe_dict(datasource))
 
 
+@router.get('/{datasource_id:int}/references')
+async def list_datasource_references(
+    datasource_id: int,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+):
+    """Who still references this datasource — assistants and workflows.
+
+    The delete below refuses while this is non-empty, so the page asks first and
+    can name what is in the way rather than showing a bare refusal.
+
+    Permission, existence and the answer to "does it exist" are the same as the
+    delete's, deliberately: this endpoint returns assistant and workflow NAMES,
+    and an endpoint that answered differently for a caller without access would
+    turn into a way to probe another tenant.
+    """
+    from bisheng.permission.domain.services.permission_service import PermissionService
+
+    if not await PermissionService.check(
+        user_id=login_user.user_id,
+        relation='can_manage',
+        object_type='db_datasource',
+        object_id=str(datasource_id),
+        login_user=login_user,
+    ):
+        raise DatasourceNotFoundError()
+
+    with strict_tenant_filter():
+        existing = await DbDatasourceDao.aget_by_id(datasource_id)
+    if existing is None:
+        raise DatasourceNotFoundError()
+
+    return resp_200(await alist_references(datasource_id))
+
+
 @router.delete('/{datasource_id:int}')
 async def delete_datasource(
     datasource_id: int,
@@ -341,6 +377,21 @@ async def delete_datasource(
     if existing is None:
         raise DatasourceNotFoundError()
 
+    # Refuse while anything still binds it. Nothing downstream fails loudly on a
+    # dangling binding: the Agent node returns no tool and the flow just stops
+    # answering from the database, which reads as the model choosing not to
+    # query — not as a broken configuration. The page asks
+    # `GET /{id}/references` first, so this is the authority for a direct API
+    # caller and for the race between that fetch and this request.
+    references = await alist_references(datasource_id)
+    if references['assistants'] or references['flows']:
+        raise DatasourceInUseError(
+            msg=(
+                f'Datasource still referenced by {len(references["assistants"])} '
+                f'assistant(s) and {len(references["flows"])} workflow(s)'
+            )
+        )
+
     await DbDatasourceTableDao.adelete_by_datasource(datasource_id)
     await DbDatasourceDao.adelete(datasource_id)
     return resp_200({'deleted': datasource_id})
@@ -360,6 +411,13 @@ class TableSelectionPayload(BaseModel):
 
 class TableDescriptionPayload(BaseModel):
     business_desc: str | None = Field(default=None, description='人工维护的业务描述')
+    # F064. Optional, and OMITTING IT IS NOT THE SAME AS SENDING NULL: the
+    # endpoint writes only the keys that were submitted (`model_fields_set`), so
+    # an existing client that sends just `business_desc` keeps its overrides, and
+    # `"column_overrides": null` is how a caller clears them.
+    column_overrides: dict[str, str] | None = Field(
+        default=None, description='字段级人工订正 {"字段名": 人工说明}; 不提交该键即不改动'
+    )
 
 
 async def _require_manage(datasource_id: int, login_user) -> None:
@@ -492,7 +550,12 @@ async def update_table_description(
     payload: TableDescriptionPayload,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
 ):
-    """Set one table's business description (spec AC-11).
+    """Set one table's human-authored metadata: its description, its per-field
+    overrides, or both (spec AC-11; F064 AC-01).
+
+    Both live behind one PUT because the dialog edits them together and the
+    requirement is one save action -- two endpoints would mean two buttons and
+    a half-finished edit whenever the second call failed.
 
     The path is `/table-metadata/{id}`, not `/tables/{id}`, deliberately: a bare
     `/datasource/tables/{x}` would be matched by `/datasource/{datasource_id}`
@@ -511,5 +574,17 @@ async def update_table_description(
         raise DatasourceNotFoundError()
 
     await _require_manage(rows[0].datasource_id, login_user)
-    await schema_service.update_description(table_id, payload.business_desc)
+
+    # Presence, not value, decides what is written. After validation an absent
+    # key and an explicit `null` are both `None`, so `model_fields_set` is the
+    # only place that distinction still exists -- and it has to survive all the
+    # way down, because writing "the fields we happen to have" would clear the
+    # description (or the overrides) on every save that omits them. Existing
+    # clients send only `business_desc` and are not being upgraded with this.
+    submitted = payload.model_fields_set
+    if 'business_desc' in submitted:
+        await schema_service.update_description(table_id, payload.business_desc)
+    if 'column_overrides' in submitted:
+        await schema_service.update_column_overrides(table_id, payload.column_overrides)
+
     return resp_200({'id': table_id})

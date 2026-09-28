@@ -262,7 +262,8 @@ async def test_one_tool_per_datasource_and_only_the_exposed_tables(monkeypatch):
     model, and that filter lives in the DAO call."""
     rows = [
         SimpleNamespace(table_name='orders', table_comment=None, business_desc='订单',
-                        structure_snapshot=[{'name': 'id', 'type': 'INT', 'comment': None}]),
+                        structure_snapshot=[{'name': 'id', 'type': 'INT', 'comment': None}],
+                        column_overrides=None),
     ]
     with patch(
         'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
@@ -277,6 +278,45 @@ async def test_one_tool_per_datasource_and_only_the_exposed_tables(monkeypatch):
     for call in alist.await_args_list:
         assert call.kwargs.get('enabled_only') is True, 'a disabled table would reach the model'
     assert tools[0].tables[0]['business_desc'] == '订单'
+
+
+async def test_the_tool_carries_the_field_overrides(monkeypatch):
+    """F064 AC-06, at the SECOND dict-construction site.
+
+    `tool.py` and `schema_service.list_tables_for_admin` build the table dict
+    independently (design §5 pitfall 1). Dropping the key here is a silent
+    half-failure: the admin's override renders in the UI, `render_table` and
+    `_haystack` see it as absent, and the model answers from the raw in-database
+    comment -- with nothing reporting a problem anywhere.
+    """
+    rows = [
+        SimpleNamespace(table_name='orders', table_comment='旧注释', business_desc=None,
+                        structure_snapshot=[{'name': 'amount', 'type': 'DECIMAL', 'comment': '旧注释'}],
+                        column_overrides={'amount': '含税金额'}),
+    ]
+    with patch(
+        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        AsyncMock(return_value=rows),
+    ):
+        tools = await build_datasource_tools([_datasource(7)], user_id=3, login_user=_AllowedUser())
+
+    assert tools[0].tables[0]['column_overrides'] == {'amount': '含税金额'}
+
+
+async def test_a_row_with_no_overrides_reaches_the_tool_as_an_empty_mapping(monkeypatch):
+    """NULL is the STORED form; the tool dict normalises it the same way the admin
+    list does, so downstream never has to branch on the difference."""
+    rows = [
+        SimpleNamespace(table_name='orders', table_comment=None, business_desc=None,
+                        structure_snapshot=[], column_overrides=None),
+    ]
+    with patch(
+        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        AsyncMock(return_value=rows),
+    ):
+        tools = await build_datasource_tools([_datasource(7)], user_id=3, login_user=_AllowedUser())
+
+    assert tools[0].tables[0]['column_overrides'] == {}
 
 
 async def test_the_datasource_name_is_in_the_tool_description(monkeypatch):

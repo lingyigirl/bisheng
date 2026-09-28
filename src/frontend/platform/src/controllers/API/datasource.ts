@@ -90,6 +90,14 @@ export interface DatasourceTableRow {
   table_comment?: string | null;
   structure_snapshot: DatasourceColumn[];
   business_desc?: string | null;
+  /**
+   * F064 — the admin's per-field corrections, keyed by FIELD NAME.
+   *
+   * The server always sends an object (`{}` when nothing is overridden), so
+   * callers never have to branch on null; the optionality here is only for
+   * rows built by hand in tests.
+   */
+  column_overrides?: Record<string, string>;
   enabled: number;
 }
 
@@ -161,6 +169,29 @@ export async function deleteDatasourceApi(id: number): Promise<{ deleted: number
   return await axios.delete(`/api/v1/datasource/${id}`);
 }
 
+/** One thing still bound to a datasource — an assistant or a workflow. */
+export interface DatasourceReference {
+  id: string | number;
+  name: string;
+}
+
+export interface DatasourceReferences {
+  assistants: DatasourceReference[];
+  flows: DatasourceReference[];
+}
+
+/**
+ * Who still binds this datasource.
+ *
+ * The delete refuses while this is non-empty (11711), so the list asks first:
+ * the refusal alone says "cannot delete" without saying what to unbind, and
+ * the binding that matters most — a workflow — has no other screen that
+ * shows it.
+ */
+export async function getDatasourceReferencesApi(id: number): Promise<DatasourceReferences> {
+  return await axios.get(`/api/v1/datasource/${id}/references`);
+}
+
 /**
  * Probe a connection that may not exist yet, then close it. Persists nothing.
  *
@@ -211,12 +242,23 @@ export async function collectDatasourceTablesApi(
   });
 }
 
+/**
+ * Save a table's human-authored metadata (F061 AC-11; F064 AC-01).
+ *
+ * `columnOverrides` is OMITTED from the body when the caller does not pass it,
+ * and that is not cosmetic: the server writes a field only when the key is
+ * present, so sending `column_overrides: null`/`{}` from a caller that never
+ * meant to touch the overrides would clear them. Callers that only edit the
+ * description keep sending exactly what they used to.
+ */
 export async function updateTableDescriptionApi(
   tableId: number,
   businessDesc: string,
+  columnOverrides?: Record<string, string>,
 ): Promise<{ id: number }> {
   return await axios.put(`/api/v1/datasource/table-metadata/${tableId}`, {
     business_desc: businessDesc,
+    ...(columnOverrides === undefined ? {} : { column_overrides: columnOverrides }),
   });
 }
 

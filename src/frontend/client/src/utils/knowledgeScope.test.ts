@@ -24,7 +24,9 @@ import {
   isOrgScopeAll,
   isOrgScopeMarker,
   normalizeStoredItems,
+  onlyOrgScopeMarker,
   readOrgScope,
+  removeSelectedOrgKb,
   resolveOrgScope,
   showsOrgKbSummary,
   toPayloadKnowledgeScope,
@@ -69,10 +71,22 @@ describe('resolveOrgScope (F063 T-07)', () => {
     expect(resolveOrgScope([marker('all')], false)).toBe('all');
   });
 
-  it('6. no marker + spaces were cleared ⇒ back to all (AC-08)', () => {
-    // The spaces are gone and no explicit choice was ever made, so the fallback
-    // answers again — clearing the list is not a "none" decision.
-    expect(resolveOrgScope([], false)).toBe('all');
+  it('6. clearing every space records no choice, so the fallback answers all (AC-08)', () => {
+    // AC-08 is about the CLEARING — and `resolveOrgScope([], false)` on its own
+    // is case 1 restated, because it never performs the transition it claims to
+    // test. So start from the state that answers "none" and apply the very
+    // removal the attachment bar applies.
+    const starting = [space('7')];
+    expect(resolveOrgScope(starting, true)).toBe('none');
+
+    const cleared = removeSelectedOrgKb(starting, space('7'));
+
+    expect(cleared).toEqual([]);
+    // The load-bearing half: dropping the last space must not WRITE a "none"
+    // decision. A marker left behind would freeze the fallback forever, which is
+    // the opposite of what AC-08 promises (决策 8).
+    expect(readOrgScope(cleared)).toBeUndefined();
+    expect(resolveOrgScope(cleared, false)).toBe('all');
   });
 
   it('9. a marker with an illegal orgScope is treated as absent (dirty data)', () => {
@@ -148,6 +162,55 @@ describe('withOrgScope / withoutOrgScopeMarker (F063 T-07)', () => {
 
     withOrgScope(items, 'none');
     withoutOrgScopeMarker(items);
+
+    expect(items).toEqual(snapshot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// review M1 — the legacy "clear the picked KBs" mutex
+// ---------------------------------------------------------------------------
+
+describe('onlyOrgScopeMarker (F063 review, pitfall 13)', () => {
+  it('keeps the tier and drops every picked entry — including a real org one', () => {
+    const items = [space('7'), legacyOrg('12'), marker('none')];
+
+    const kept = onlyOrgScopeMarker(items);
+
+    expect(kept.filter(isOrgScopeMarker)).toHaveLength(1);
+    // 坑 13 from the other side: a real org entry shares the marker's `type`, so
+    // a `type === 'org'` filter would keep it and re-arm the very mutex this
+    // call exists to honour.
+    expect(kept.some((i) => i.id === '12')).toBe(false);
+    expect(kept.some((i) => i.type === 'space')).toBe(false);
+  });
+
+  it('stays empty when no tier was ever set', () => {
+    // Clearing the picked KBs on a state that never recorded a decision must not
+    // invent one — a marker written here would turn the fallback into a choice.
+    const kept = onlyOrgScopeMarker([space('7')]);
+
+    expect(kept).toEqual([]);
+    expect(readOrgScope(kept)).toBeUndefined();
+  });
+
+  it('the legacy clear does not re-open org search for the none tier (review M1)', () => {
+    // The regression this pins: clearing the whole array drops the marker, the
+    // fallback finds no spaces left and answers 全部 — so dragging in a file
+    // opened exactly the search the user had refused (AC-07/AC-16).
+    expect(resolveOrgScope([], false)).toBe('all');
+
+    const items = [space('7'), marker('none')];
+    const kept = onlyOrgScopeMarker(items);
+
+    expect(resolveOrgScope(kept, hasKnowledgeSpaces(kept))).toBe('none');
+  });
+
+  it('never mutates its input array', () => {
+    const items = [space('7'), marker('all')];
+    const snapshot = JSON.parse(JSON.stringify(items));
+
+    onlyOrgScopeMarker(items);
 
     expect(items).toEqual(snapshot);
   });
@@ -295,7 +358,7 @@ describe('normalizeStoredItems / hydrate round-trip (F063 T-09)', () => {
     expect(resolveOrgScope(hydrated, hydrated.some((i) => i.type === 'space'))).toBe('none');
   });
 
-  it('2 + 3. the tier survives a disabled period and is restored on reopen (AC-18)', () => {
+  it('2 + 3. a disabled period suppresses the request but never the tier (AC-18)', () => {
     // Stored archive: an explicit "none" tier plus a legacy org entry.
     const raw = [marker('none'), legacyOrg('12'), space('7')];
 
@@ -304,9 +367,18 @@ describe('normalizeStoredItems / hydrate round-trip (F063 T-09)', () => {
     // Constructive: the marker is IN the state, not merely "not applied".
     expect(hydrated.filter(isOrgScopeMarker)).toHaveLength(1);
     expect(resolveOrgScope(hydrated, true)).toBe('none');
-    // Reopening re-evaluates the very same state — nothing was destroyed while
-    // the feature was off (决策 13).
-    expect(resolveOrgScope(hydrated, true)).toBe('none');
+
+    // "While the feature is off" has no `enabled` input at this layer, because
+    // the switch gates the REQUEST and never the stored state (决策 13). So the
+    // two halves are asserted against the same state rather than by calling the
+    // same expression twice: with the switch off nothing is asked of the server
+    // (AC-18), and the tier is still there to answer with afterwards.
+    expect(toPayloadKnowledgeScope(hydrated, true, false).organization_knowledge_all).toBe(false);
+    expect(readOrgScope(hydrated)).toBe('none');
+
+    // Persist → reload → normalise IS the reopen, and the tier comes back.
+    const revived = normalizeStoredItems(JSON.parse(JSON.stringify(hydrated)));
+    expect(readOrgScope(revived)).toBe('none');
   });
 
   it('4. refresh persists the tier (AC-19)', () => {

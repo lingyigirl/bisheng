@@ -13,6 +13,18 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "react-query";
 import NodeLogo from "./FlowNode/NodeLogo";
 
+//: Node types kept out of the palette.
+//:
+//: `qa_retriever` (QA 知识库检索) is hidden on product instruction: the QA library
+//: has no operating entry point in this build either (its menu entry is hidden
+//: too), so offering a node that retrieves from it would hand people a flow they
+//: cannot configure.
+//:
+//: Listed here rather than deleted anywhere: the node type, its logo, its i18n
+//: and its template all still exist, so re-enabling is removing one line. Same
+//: shape as the tool filter below ("这几个产品说先不用").
+const HIDDEN_NODE_TYPES = ['qa_retriever']
+
 const ToolItem = ({ temp, index, dropdown, onDragStart, onClick }) => {
     const { t } = useTranslation('tool');
     const sortData = useMemo(() => {
@@ -110,6 +122,8 @@ export default function Sidebar({ dropdown = false, disabledNodes = [], onInitSt
         // TODO 追加MCP工具
         return tempData.reduce((list, temp) => {
             if (disabledNodes.includes(temp.type)) return list
+            // 产品要求先不开放：QA 知识库检索
+            if (HIDDEN_NODE_TYPES.includes(temp.type)) return list
             const newNode = getNodeDataByTemp(temp)
             temp.type === 'start' ? onInitStartNode(cloneDeep(temp)) : list.push(newNode)
             return list

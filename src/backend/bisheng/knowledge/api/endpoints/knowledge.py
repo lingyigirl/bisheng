@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import List, Optional, Any, Literal
 
 import pandas as pd
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
@@ -41,7 +41,11 @@ from bisheng.core.cache.redis_manager import get_redis_client
 from bisheng.core.cache.utils import save_uploaded_file
 from bisheng.core.logger import trace_id_var
 from bisheng.database.models.role_access import AccessType, WebMenuResource
-from bisheng.knowledge.api.dependencies import get_knowledge_service, get_knowledge_file_service
+from bisheng.knowledge.api.dependencies import (
+    get_knowledge_file_service,
+    get_knowledge_service,
+    get_knowledge_space_service,
+)
 from bisheng.knowledge.domain.models.knowledge import KnowledgeCreate, KnowledgeDao, KnowledgeTypeEnum, KnowledgeUpdate
 from bisheng.knowledge.domain.models.knowledge import KnowledgeState
 from bisheng.knowledge.domain.models.knowledge_file import (
@@ -69,6 +73,7 @@ from bisheng.knowledge.domain.schemas.knowledge_schema import (
 # document-KB path uses (design decision 7).
 from bisheng.knowledge.domain.services.knowledge_flow_retrieval import retrieve_knowledge_documents
 from bisheng.knowledge.domain.services.knowledge_service import KnowledgeService
+from bisheng.knowledge.domain.services.knowledge_space_service import KnowledgeSpaceService
 from bisheng.llm.domain import LLMService
 from bisheng.llm.domain.const import LLMModelType
 from bisheng.llm.domain.models import LLMDao
@@ -114,8 +119,16 @@ async def upload_knowledge_file(
     login_user: UserPayload = Depends(UserPayload.get_login_user),
     knowledge_id: int,
     file: UploadFile = File(...),
+    parent_id: int | None = Form(None),
+    dedup_scope: Literal["space", "folder"] = Form("space"),
+    space_svc: KnowledgeSpaceService = Depends(get_knowledge_space_service),
 ):
-    """Knowledge base upload file"""
+    """Knowledge base upload file
+
+    ``dedup_scope=folder`` asks the ``repeat`` flag about ``parent_id`` only —
+    the answer the caller needs to decide whether ITS folder already holds this
+    content, instead of whether the whole space does (F065).
+    """
 
     try:
         file_name = file.filename
@@ -133,9 +146,25 @@ async def upload_knowledge_file(
         # Calculate file md5
         file_md5 = await asyncio.to_thread(calc_data_sha256, file.file)
 
+        # F065: a folder-scoped pre-check must read an absent parent_id the same
+        # way `add_file` does — as the space root — or the two would disagree
+        # about where the file is about to land. Authorizing inside the resolver
+        # mirrors add_file's upload_file check, so this can never report on a
+        # folder the caller may not write into.
+        dedup_file_level_path: str | None = None
+        if dedup_scope == "folder":
+            dedup_file_level_path = (
+                await space_svc.resolve_folder_dedup_path(knowledge_id, parent_id)
+                if parent_id is not None
+                else ""
+            )
+
         # Check for duplicate files
         repeat_file = await KnowledgeFileDao.get_repeat_file(
-            knowledge_id=knowledge_id, file_name=file_name, md5_=file_md5
+            knowledge_id=knowledge_id,
+            file_name=file_name,
+            md5_=file_md5,
+            file_level_path=dedup_file_level_path,
         )
 
         ret = UploadFileResponse(file_path=file_path, file_name=file_name)

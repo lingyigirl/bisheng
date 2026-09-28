@@ -118,6 +118,23 @@ export function withoutOrgScopeMarker<T extends SelectedOrgKb>(items: T[]): T[] 
 }
 
 /**
+ * Keep the tier marker and nothing else — the counterpart of
+ * `withoutOrgScopeMarker`, for the legacy mutex that clears the picked KBs when
+ * files are added or a tool is switched on.
+ *
+ * That mutex means "this turn is about files, not about the KBs he picked" — it
+ * is not a statement about the tier, which is a standing setting rather than a
+ * pick. Clearing the whole array would drop the marker, the AC-02 fallback would
+ * answer again, and a user who chose 「不使用」 would silently get 「全部」: the
+ * exact re-opening AC-07/AC-16 forbid. An empty result is correct and intended
+ * when no tier was ever set — writing one here would turn a fallback into a
+ * decision the user never made.
+ */
+export function onlyOrgScopeMarker<T extends SelectedOrgKb>(items: T[]): T[] {
+  return (Array.isArray(items) ? items : []).filter(isOrgScopeMarker);
+}
+
+/**
  * True when the selection holds at least one real entry — the counterpart of
  * `isOrgScopeAll` ("this turn searches all org KBs").
  *

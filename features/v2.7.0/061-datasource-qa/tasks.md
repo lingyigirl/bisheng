@@ -1039,7 +1039,7 @@ W8 执行期发现：AC-47 当时**只在 UI 层兑现**——`validate_resource
 |---|---|
 | AC-54 兼容读取 | ✅ `test_workflow_compat.py`（内联流程行为不变，含 `postgres` 旧拼写、`open:false`、无 sql 块） |
 | AC-55 不新增节点类型 | ✅ 枚举扫描断言 |
-| AC-56 关闭内联新建 | ✅ `SqlConfigItem` 五个字段全部 `readOnly` + 只读提示（三语） |
+| AC-56 关闭内联新建 | ✅ `SqlConfigItem` 五个字段全部只读 + 只读提示（三语）；2026-09-24 起绑定态不再渲染内联块（偏差记录 7） |
 | AC-53 节点读 `datasource_id` | ✅ `SqlAgentParams.datasource_id` + 节点注入 `DatasourceQueryTool`（`test_workflow_datasource_binding.py`，9 条） |
 | AC-53 编辑器「选数据源」下拉 | ✅ 2026-09-20 完成（用户选方案 a：新增 `get_login_user` 把关的 `/datasource/available-datasources`） |
 
@@ -1179,7 +1179,7 @@ AC-61 / AC-64 建议用静态断言（扫描 `KnowledgeTypeEnum` 无数据源成
 | AC-21 | 查询不阻塞对话主链路 | T-21 |
 | AC-22 | 留存执行记录（操作人 / 租户 / 数据源 / 表 / 语句 / 状态 / 时间） | T-02, T-05, T-24 |
 | AC-23 | 执行记录不含结果集数据 | T-02, T-05, T-24 |
-| AC-24 | 数据源可配置为助手的可用来源（工作台半边已收窄，见 spec 缺口登记） | T-31, T-40 |
+| AC-24 | 数据源可配置为助手的可用来源（工作台半边已收窄，见 spec 缺口登记；管理端 UI 2026-09-24 补齐） | T-31, T-40, 偏差记录 6 |
 | AC-25 | 模型自主判断是否查询，无强制前置路由 | T-27, T-31 |
 | AC-26 | 以工具形态与知识库检索同层 | T-27, T-30 |
 | AC-27 | SQL 生成用独立模型槽位，未配置则回退不报错 | T-25 |
@@ -1269,3 +1269,111 @@ AC-61 / AC-64 建议用静态断言（扫描 `KnowledgeTypeEnum` 无数据源成
    `mx-auto flex w-full justify-center`，外层容器的 `justify-end` 对它无效（子元素是 `w-full`）。
    `cname` 基于 tailwind-merge，传入的 `justify-end` 会**替换**而非叠加 `justify-center`。
    `AutoPagination` 另有约 20 处调用方，故未改其默认值，仅本页传参。
+
+6. **【缺口补齐】助手编辑表单补数据源选择器（AC-24 的管理端 UI，2026-09-24）。**
+   本特性收尾时 AC-24 被判为「已达成」，依据是 T-31 落地的后端半边——`AssistantLink.datasource_id`
+   列与迁移、`AssistantUpdateReq`/`AssistantInfo` 读写 schema、`_visible_datasources` 授权过滤、
+   `AssistantAgent.init_tools` 工具注入、引用锚点桥接，含三个测试文件 30+ 条断言。
+   **但助手编辑表单从来没有过数据源选择器**（`Setting.tsx` 只有知识库 / 工具 / 技能三个），
+   于是「管理员 SHALL 能将数据源配置为助手的可用知识来源」在界面上不可达：
+   `editAssistant/index.tsx:83` 与 `apps.tsx:192` 只是保存时把只读对象映射回 id 的**直通管道**，
+   全平台无一处能设置 `datasource_list`，唯一可行方式是用 `PUT /api/v1/assistant` 直连接口。
+   **为什么没人发现**：该缺口未被任何任务覆盖——T-31 的改动清单只含写入侧 / 注入侧 / 锚点侧，
+   W8（T-35~T-39）只列 `DatasourcePage/*`（管数据源，非绑数据源），T-42 是工作流节点，
+   T-40/T-41 是客户端展示；AC-57 列举的平台 UI 必做项也未含此项。spec/design/tasks 三份文档
+   都没有一行要求「表单里要有个下拉框」，所以三份文档同时为真而产品不可用。
+   **与工作台缺口（AC-24 上半条）的区别**：那条是**主动收窄并留档**的，这条是**从未被拆解**的。
+   **补齐内容**：`Setting.tsx` 新增独立成节的数据源选择器，与知识库**并列不合并**（两者取数语义不同：
+   知识库召回切片塞上下文，数据源由模型生成 SQL 实时执行）；可选列表复用工作流 Agent 节点的
+   `GET /datasource/available-datasources`，即 AC-49 的同一口径，两个界面不会各定义一套「可选数据源」。
+   **零链路改动**：写入仍走既有 `datasource_list: list[int]`，保存路径的 `index.tsx:83` 直通逻辑未动。
+   **验证**：新增 `src/test/assistantDatasourceBinding.test.tsx`（4 条，全部经变异验证：
+   去掉渲染 / 谓词恒真 / 去掉 `|| []` 兜底 / 不请求列表，各杀死对应用例）；
+   `pnpm typecheck` 通过、`pnpm lint` 与基线同为 53 个既有错误（同样 3 个未改动文件）、
+   全量 `vitest run` 15 failed / 190 passed（基线 15 failed / 186 passed，失败集与文件计数不变，通过数 +4 即本用例）。
+   另有 1 条断言钉住「折叠面板确实不挂载」——否则展开那一步是摆设。
+
+7. **【显示缺陷 + UI 收口】Agent 节点 SQL 块的"数据库类型"恒为空白框；绑定态照旧渲染五个空内联框（2026-09-24）。**
+   用户报告：工作流选完数据源后，下方的数据库类型等字段「均为空」。复现（渲染真实组件）：
+   数据源选择器的 trigger 是 `<span>orders-db</span>`，而数据库类型的 trigger 是
+   `<span style="pointer-events:none;"></span>`——**既无值也无占位符**。两个独立成因：
+   - **(a) 真缺陷：大小写不匹配，存量节点 100% 命中。** `SqlAgentParams.database_engine` 默认
+     `"mysql"` 且 validator 强制 `v.lower()`，而前端 `SqlConfigItem` 的选项表是大写
+     `'MySQL'/'Db2'/...`；Radix Select 的 `value` 匹配不到任何 item，既不渲染值也不渲染占位符。
+     实测库中 18 个 `sql_agent` 参数：16 个存 `'mysql'`、2 个 `None`，**大写的一个都没有**。
+     `git log -S` 归属：大写选项是老代码（`74abfab44`），`disabled` 是 AC-56 加的（`55f5a3585`）——
+     即**既有缺陷被 AC-56 从「可编辑可自愈」变成「永久空白」**（能编辑时从下拉重选一次会写入大写形式）。
+     该缺陷破坏了 AC-54 的兼容查看：老流程打开节点，类型显示空白而真实值存在。
+     **修法**：引擎改为只读文本显示，查表键用小写，并补 `postgres`（F061 之前的旧拼写，老流程仍在用）。
+   - **(b) 界面误导：绑定态渲染五个必然为空的内联框。** 节点只存 `datasource_id`，连接在数据源行上；
+     `available-datasources` 刻意只返回 id/name/engine（INV-19 ① 凭据不回显），所以那五个框对绑定态
+     永远无内容。**修法**：绑定态不再渲染内联块，改回显**该数据源自己的引擎**（不是节点的死内联副本——
+     两者可能不一致，运行时数据源胜出，界面同理）。
+   **未做（记录）**：绑定态若仍留有旧内联值，现在**不再显示**（运行时 `datasource_id` 胜出，属死配置）；
+   若需保留查看，应另加"旧内联配置（已不再使用）"分区。另：挂载时把空 `database_engine` 写成 `"mysql"`
+   的既有 effect 未动——绑定态下它写的是无意义的死值，属既有行为、本次不扩范围。
+   **验证**：新增 `src/test/sqlConfigItemDisplay.test.tsx`（4 条，全部变异验证：去掉标签查表 /
+   绑定态改读死内联值 / 取消分支，各杀死对应用例）；`pnpm typecheck` 通过，`pnpm lint` 与基线同为
+   53 个既有错误（同样 3 个未改动文件），全量 15 failed / 194 passed（基线 15 / 190，失败集不变）。
+
+8. **【UI 补充】表勾选页未说明"勾选才被模型使用"（2026-09-24）。**
+   用户报告：数据源的表配置页看不出勾选的作用，需要明确写出来。原设计的表级控制是
+   `db_datasource_table.enabled`（列注释「是否暴露给模型」），采集时**新表默认 `enabled=1`**
+   （`schema_service.refresh_tables`：'A newly seen table starts exposed; the admin unticks what
+   they do not want'），而页面上只有一个悬浮 tooltip「是否暴露给模型」——不悬浮就看不到，
+   且左栏标题写的是**「可访问的表」**，反而暗示列出的表都已经能用。管理员若不理解这一点，
+   最可能的行为是**全部留勾**，即把整库结构都喂给模型，恰是本特性的表治理要防的。
+   **补充内容**：`datasource.tables.exposureHint`（三语），置于左栏标题正下方（紧邻勾选框）。
+   文案显式带上「保存勾选后生效」——勾选框是批量暂存、右侧开关才是即时保存，
+   只写"勾选即生效"对勾选框是**假话**。
+   **未做**：左栏标题「可访问的表」措辞本身也有误导性（列表含未采集与已不在库中的表），
+   改名会牵动该标题的三语文案与既有断言，本次不动，仅在偏差记录中登记。
+   **验证**：`datasourceTablesView.test.tsx` 增 1 条断言（与既有的 AC-12「重新采集不覆盖描述」
+   同一写法，同为"界面必须声明某事"类约束），变异验证：移除该段落即红；
+   `pnpm check-i18n` OK、`pnpm typecheck` 通过、`pnpm lint` 与基线同为 53 个既有错误、
+   全量 15 failed / 195 passed（上一轮 15 / 194）。
+
+9. **【新增能力】数据源"被引用清单"与删除拦截（2026-09-24，不在原 spec 内）。**
+   起因：数据源被删后**不会报错**——工作流 Agent 节点的 `_init_datasource_tool` 在数据源
+   不存在时返回空工具集而非抛错，流程只是**静默不再查库**；助手在下一个会话丢掉该工具。
+   两者都表现为"模型这次没选择查库"，而不是"配置被删坏了"。此前删数据源既不提示影响面，
+   也不做任何引用检查。
+   **需求方口径（本次确认）**：覆盖范围 = **助手 + 工作流**；发现仍被引用时**拦住并列出引用方**。
+   **两种存储形态**（这是本项的主要复杂度）：助手是真实列 `assistantlink.datasource_id`（有索引，
+   直接 JOIN 查出名字）；工作流的 id 埋在 `flow.data` 这个 JSON blob 里，**无列无外键**，只能扫描
+   `flow` 表再解析。故 `_flow_binds_datasource` 只在 `key == 'sql_agent'` 的参数上取 `datasource_id`
+   （别处的同名键不算），并按**字符串**比较以兼容历史上被写成数字或字符串两种形态。
+   **刻意不计入**：`db_query_log` / `db_query_failure` / 引用锚点。它们也带这个 id，但记录的是
+   **发生过什么**，而 AC-62 明确要求删除时保留它们（历史回答仍要能渲染）；把它们算作"在用"会让
+   任何一个查过的数据源都删不掉。
+   **双库（C2）**：扫描用 `LIKE` 预筛 + Python 解析，不用 MySQL 的 JSON 路径函数（DM8 无对应）。
+   代价是该 `LIKE` 用不上索引、全表扫描——`flow` 表很小，且只发生在管理员动作上（删除及其前置查询），
+   不在对话轮次里。
+   **接口与错误码**：`GET /datasource/{id}/references`（权限、存在性与删除一致，拒不区分"不存在"与
+   "无权限"——它会返回助手与流程的**名字**，答得不一样就成了探测其它租户的手段）；
+   新错误码 **11711**（F061 持有的模块 117 内，分配前已按契约要求扫三来源确认全空）。
+   **前端**：删除前先查引用清单，非空则弹清单并**不发出删除请求**（后端 11711 仍是权威，
+   兜住直连接口与查询/删除之间的竞态）。
+   **验证**：后端 `test/datasource/test_datasource_references.py`（17 条：解析器 7 条含
+   "别的参数带同名键不算"、列表 3 条、删除守卫 3 条、接口 2 条）；前端
+   `src/test/datasourceDeleteGuard.test.tsx`（3 条，含"无引用时删除仍可达"这一反向）。
+   **全部变异验证**——其中后端 M5（把 `is_delete == 0` 改成 `>= 0`）第一轮**存活**，
+   暴露出原断言只钉列名不钉谓词；已改为渲染字面量后钉住谓词，重跑该变异即红。
+   **2026-09-24 真实库 E2E（本次补做，抓到一个真缺陷）**：此前单元测试全绿，但整条链路
+   **从未在真实绑定的数据上跑过**（库里两个引用源都是 0 条）。补做后立刻暴露：
+   **工作流那半边恒不命中**——`alist_references` 里对 JSON 列写的 `Flow.data.like('%datasource_id%')`
+   **经 SQLAlchemy 绑定后参数被当作 JSON 类型**，MySQL 因此按 JSON 比 JSON 而非文本比对，
+   **恒不返回任何行**。实测同一谓词：裸连接命中 10 行，应用 session 命中 **0** 行。
+   后果是删除守卫会**放过绑在工作流上的数据源**——正是本项要防的那件事。
+   **单元测试测不到它**：假 session 返回的是预置行，断言只钉了渲染出的 SQL 里有 `flow.data LIKE`，
+   而那句 SQL 在语法上完全正确、在 MySQL 上却恒空。**修法**：改为
+   `cast(Flow.data, String).like(...)`（渲染为 `CAST(flow.data AS CHAR) LIKE`），并把断言改成
+   钉住 **`CAST(flow.data AS CHAR) LIKE`**——回退成 plain `.like()` 即红（已验证）。
+   **E2E 四项全过**：① 助手 + 流程都命中且干扰流未误报（干扰流刻意绑定另一个 id，用于证明
+   "LIKE 命中 ≠ 该 id 被绑定"）② 无关数据源返回空 ③ 删除被拒 `code=11711
+   msg='Datasource still referenced by 1 assistant(s) and 1 workflow(s)'` ④ 拒绝后数据源仍在。
+   临时数据（自建的临时数据源 + 助手 + 绑定行 + 2 条流程，共 5 行）已在 `finally` 中清干净，
+   复查残留为 0、`db_datasource` 回到原有 3 行。
+   **顺带记两个脚本坑**（非产品问题，避免下次重踩）：① 分多次 `asyncio.run()` 会因连接池绑定在
+   首个事件循环上而报 `'NoneType' object has no attribute 'send'`——E2E 必须单事件循环；
+   ② 断言"无关数据源返回空"时不要用 `ds_id + 99999`，那正是干扰流绑定的 id，返回它才是对的。

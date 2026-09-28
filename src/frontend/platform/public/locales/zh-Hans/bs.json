@@ -183,6 +183,8 @@
     "createApp": "创建应用",
     "createKnowledge": "新建知识库",
     "knowledge": "知识库",
+    "qaKnowledge": "QA知识库",
+    "termLibrary": "术语库",
     "evaluation": "评  测",
     "board": "看  板",
     "workbenchHome": "首页",
@@ -1091,6 +1093,8 @@
     "enterGuidingQuestions": "请输入引导问题",
     "knowledge": "知识",
     "knowledgeBase": "知识库",
+    "datasource": "数据源",
+    "selectDatasource": "选择一个已授权数据源",
     "autoCall": "自动调用",
     "callingMethod": "调用方式",
     "autoCallDescription": "每轮对话都会对添加的知识库进行检索召回。",
@@ -2405,7 +2409,12 @@
       "delete": "删除",
       "empty": "暂无数据源",
       "deleteTitle": "删除数据源",
-      "deleteConfirm": "确认删除数据源「{{name}}」？历史回答与执行记录将保留。"
+      "deleteConfirm": "确认删除数据源「{{name}}」？历史回答与执行记录将保留。",
+      "inUseTitle": "无法删除：数据源仍被引用",
+      "inUseDesc": "数据源「{{name}}」仍被以下对象引用，请先解除绑定后再删除：",
+      "inUseAssistants": "助手：{{names}}",
+      "inUseFlows": "流程：{{names}}",
+      "inUseOk": "知道了"
     },
     "form": {
       "createTitle": "新建数据源",
@@ -2455,6 +2464,7 @@
       "collectedEmpty": "尚未采集任何表",
       "noTableComment": "无表注释",
       "exposeTooltip": "是否暴露给模型",
+      "exposureHint": "只有勾选的表会被模型使用。勾选改动需点「保存勾选」后生效；未勾选的表不会被删除，结构与业务描述仍会保留。",
       "editDescription": "业务描述",
       "columnsEmpty": "未采集到字段信息",
       "colFieldName": "字段",
@@ -2471,7 +2481,14 @@
       "placeholder": "例如：订单主表，一行一笔订单，status=1 表示已支付",
       "dbComment": "库内注释",
       "cancel": "取消",
-      "save": "保存"
+      "save": "保存",
+      "fieldsLabel": "字段说明",
+      "fieldsHint": "为单个字段补充或修正说明。清空输入框即移除该字段的订正，回落为库内注释。",
+      "fieldOverridden": "已订正",
+      "fieldNotInDatabase": "已不在库中",
+      "fieldDbComment": "库内原值",
+      "fieldNoDbComment": "未采集到注释",
+      "fieldOverridePlaceholder": "为此字段填写说明"
     },
     "failures": {
       "total": "共 {{total}} 条",

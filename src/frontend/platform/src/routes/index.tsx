@@ -24,6 +24,8 @@ const DataSetPage = lazy(() => import("@/pages/DataSetPage"));
 const EvaluatingPage = lazy(() => import("@/pages/EvaluationPage"));
 const EvaluatingCreate = lazy(() => import("@/pages/EvaluationPage/EvaluationCreate"));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage"));
+const KnowledgeQaPage = lazy(() => import("@/pages/KnowledgePage/KnowledgeQaPage"));
+const TermLibraryPage = lazy(() => import("@/pages/KnowledgePage/TermLibraryPage"));
 const DatasourcePage = lazy(() => import("@/pages/DatasourcePage"));
 const AdjustFilesUpload = lazy(() => import("@/pages/KnowledgePage/AdjustFilesUpload"));
 const FilesPage = lazy(() => import("@/pages/KnowledgePage/detail"));
@@ -86,6 +88,12 @@ const privateRouter = [
       // 开发环境登录后曾跳转 /admin，但业务路由无该 path，会落入 * → 404；统一进管理端后再由 userContext 纠偏
       { path: "admin", element: <Navigate to="/label" replace /> },
       { path: "filelib", element: <KnowledgePage />, permission: 'knowledge', },
+      // QA 知识库 and 术语库 as pages of their own. They were tabs under
+      // /filelib; they keep the SAME `knowledge` permission, so the page gate
+      // and the API gate stay one set (F060 AC-18 argued the term library's
+      // placement from that, and it still holds here).
+      { path: "qalib", element: <KnowledgeQaPage />, permission: 'knowledge', },
+      { path: "termlib", element: <TermLibraryPage />, permission: 'knowledge', },
       { path: "filelib/:id", element: <FilesPage />, permission: 'knowledge', },
       { path: "filelib/upload/:id", element: <FilesUpload />, permission: 'knowledge', },
       { path: "filelib/adjust/:fileId", element: <AdjustFilesUpload />, permission: 'knowledge', },

@@ -46,6 +46,21 @@ def _rows(result) -> list:
     return [row[0] for row in result.all()]
 
 
+class _UnsetType:
+    """Sentinel for "the caller did not provide this field".
+
+    Needed by ``aupdate_human_fields``: ``None`` is a MEANINGFUL value there
+    ("cleared"), so it cannot double as the default. Typed as its own class
+    rather than ``object()`` so the signature stays legible.
+    """
+
+    def __repr__(self) -> str:
+        return '<unset>'
+
+
+_UNSET = _UnsetType()
+
+
 class DbDatasourceDao:
     @classmethod
     async def acreate(cls, data: dict[str, Any]) -> DbDatasource:
@@ -217,7 +232,45 @@ class DbDatasourceTableDao:
                 await session.commit()
 
     @classmethod
-    async def aupdate_business_desc(cls, table_id: int, business_desc: str | None) -> None:
+    async def aupdate_human_fields(
+        cls,
+        table_id: int,
+        *,
+        business_desc: str | None | _UnsetType = _UNSET,
+        column_overrides: dict[str, str] | None | _UnsetType = _UNSET,
+    ) -> None:
+        """Write the admin-authored columns, and ONLY the ones passed in.
+
+        One writer for everything a human authors on this table. It is one
+        method rather than one per column because ``docs/constitution.md`` C1
+        forbids adding DAO entry points for a new feature -- F064 grew the
+        second column, and F062's pitfall 14 / F063's design rewrite are what
+        that rule looks like when it is taken literally. Extending this entry
+        point is not adding one.
+
+        Its sibling `areplace_snapshot` owns the machine-collected columns
+        (`structure_snapshot`, `table_comment`) and never mentions either field
+        below. That is what makes F064 AC-04 (a re-collect must not clobber an
+        override) and AC-12 (nor the description) hold structurally rather than
+        by convention.
+
+        PRESENCE, not value, decides what is written. `None` is a real value
+        here -- it is how "cleared" is stored -- so defaulting to it would make
+        every save that omits a field silently wipe it. The API layer settles
+        the same question from `model_fields_set` (F064 decision 3); this is
+        that rule one layer down, so neither layer can undo the other's care.
+
+        Called with nothing set it is a no-op, not an error: an empty UPDATE is
+        not a state worth inventing an exception for.
+        """
+        values: dict[str, Any] = {}
+        if not isinstance(business_desc, _UnsetType):
+            values['business_desc'] = business_desc
+        if not isinstance(column_overrides, _UnsetType):
+            values['column_overrides'] = column_overrides
+        if not values:
+            return
+
         from sqlalchemy import update as sa_update
 
         with strict_tenant_filter():
@@ -225,7 +278,7 @@ class DbDatasourceTableDao:
                 await session.exec(
                     sa_update(DbDatasourceTable)
                     .where(DbDatasourceTable.id == table_id)
-                    .values(business_desc=business_desc)
+                    .values(**values)
                 )
                 await session.commit()
 

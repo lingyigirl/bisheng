@@ -253,6 +253,13 @@ async def build_datasource_tools(
                 'table_comment': row.table_comment,
                 'business_desc': row.business_desc,
                 'structure_snapshot': row.structure_snapshot or [],
+                # F064: this is the SECOND place a table dict is built -- the
+                # admin list is the other (`schema_service.list_tables_for_admin`).
+                # They are independent, and omitting this key here is a silent
+                # half-failure: the admin's override shows in the UI, `render_table`
+                # and `_haystack` read it as absent, and the model answers from the
+                # raw in-database comment with nothing reporting a problem.
+                'column_overrides': row.column_overrides or {},
             }
             for row in rows
         ]

@@ -182,6 +182,8 @@
     "createApp": "アプリの作成",
     "createKnowledge": "ナレッジベース新規作成",
     "knowledge": "ナレッジベース",
+    "qaKnowledge": "QAナレッジベース",
+    "termLibrary": "用語ライブラリ",
     "evaluation": "評  価",
     "annotation": "注  釈",
     "approval": "承  認",
@@ -1085,6 +1087,8 @@
     "enterGuidingQuestions": "ガイド質問を入力してください",
     "knowledge": "ナレッジ",
     "knowledgeBase": "ナレッジベース",
+    "datasource": "データソース",
+    "selectDatasource": "認可済みデータソースを選択",
     "autoCall": "自動呼び出し",
     "callingMethod": "呼び出し方法",
     "autoCallDescription": "各ターンで追加されたナレッジベースを検索します。",
@@ -2405,7 +2409,12 @@
       "delete": "削除",
       "empty": "データソースがありません",
       "deleteTitle": "データソースの削除",
-      "deleteConfirm": "データソース「{{name}}」を削除しますか？過去の回答と実行記録は保持されます。"
+      "deleteConfirm": "データソース「{{name}}」を削除しますか？過去の回答と実行記録は保持されます。",
+      "inUseTitle": "削除できません：データソースはまだ参照されています",
+      "inUseDesc": "データソース「{{name}}」は以下から参照されています。先に紐付けを解除してください：",
+      "inUseAssistants": "アシスタント：{{names}}",
+      "inUseFlows": "ワークフロー：{{names}}",
+      "inUseOk": "了解しました"
     },
     "form": {
       "createTitle": "データソース新規作成",
@@ -2455,6 +2464,7 @@
       "collectedEmpty": "まだ取得していません",
       "noTableComment": "テーブルコメントなし",
       "exposeTooltip": "モデルに公開する",
+      "exposureHint": "チェックしたテーブルのみがモデルに使用されます。チェックの変更は「選択を保存」を押すと反映されます。チェックを外したテーブルは削除されず、構造と業務説明は保持されます。",
       "editDescription": "業務説明",
       "columnsEmpty": "カラム情報を取得できませんでした",
       "colFieldName": "カラム",
@@ -2471,7 +2481,14 @@
       "placeholder": "例：受注テーブル。1行1注文、status=1 は支払済み",
       "dbComment": "DBコメント",
       "cancel": "キャンセル",
-      "save": "保存"
+      "save": "保存",
+      "fieldsLabel": "フィールドの説明",
+      "fieldsHint": "個々のフィールドの説明を補足・修正します。空欄にすると訂正が解除され、DB のコメントに戻ります。",
+      "fieldOverridden": "訂正済み",
+      "fieldNotInDatabase": "データベースに存在しません",
+      "fieldDbComment": "DB の値",
+      "fieldNoDbComment": "コメント未取得",
+      "fieldOverridePlaceholder": "このフィールドの説明"
     },
     "failures": {
       "total": "{{total}} 件",
