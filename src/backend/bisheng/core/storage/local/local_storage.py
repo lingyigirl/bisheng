@@ -5,6 +5,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO, Union
+from uuid import uuid4
 
 from bisheng.core.config.settings import LocalConf
 from bisheng.core.storage.base import BaseStorage
@@ -19,6 +20,14 @@ class _LocalDownloadResponse:
 
     def read(self, *args, **kwargs) -> bytes:
         return self._buffer.read(*args, **kwargs)
+
+    def stream(self, amt: int = 2 ** 16, decode_content=None):
+        # 与 urllib3.HTTPResponse.stream 对齐, 调用方按 stream(chunk_size) 逐块读取
+        while True:
+            chunk = self._buffer.read(amt)
+            if not chunk:
+                break
+            yield chunk
 
     def close(self) -> None:
         self._buffer.close()
@@ -46,10 +55,13 @@ class LocalStorage(BaseStorage):
         return self.root / (bucket_name or self.bucket)
 
     def _object_path(self, bucket_name: str, object_name: str) -> Path:
-        # 防止 object_name 携带 ../ 越出存储根目录
-        target = (self._bucket_dir(bucket_name) / (object_name or "").lstrip("/")).resolve()
-        if target != self.root and self.root not in target.parents:
-            raise ValueError(f"illegal object_name escapes storage root: {object_name}")
+        bucket_dir = (self.root / (bucket_name or self.bucket)).resolve()
+        if bucket_dir != self.root and self.root not in bucket_dir.parents:
+            raise ValueError(f"illegal bucket escapes storage root: {bucket_name}")
+        # 防止 object_name 携带 ../ 越出 bucket, 同时阻止跨 bucket 读写
+        target = (bucket_dir / (object_name or "").lstrip("/")).resolve()
+        if target != bucket_dir and bucket_dir not in target.parents:
+            raise ValueError(f"illegal object_name escapes bucket: {object_name}")
         return target
 
     # ------------------------------------------------------------------ bucket
@@ -112,16 +124,22 @@ class LocalStorage(BaseStorage):
     ) -> None:
         target = self._object_path(bucket_name, object_name)
         target.parent.mkdir(parents=True, exist_ok=True)
-        # 先写临时文件再原子替换，避免并发读到写了一半的文件
-        staging = target.with_name(f".{target.name}.{os.getpid()}.part")
-        if isinstance(file, bytes):
-            staging.write_bytes(file)
-        elif isinstance(file, (str, Path)):
-            shutil.copyfile(str(file), staging)
-        else:
-            with open(staging, "wb") as out:
-                shutil.copyfileobj(file, out)
-        os.replace(staging, target)
+        # 先写临时文件再原子替换, 避免并发读到写了一半的文件
+        # 临时名带随机后缀, 同进程多线程并发写同一个 object_name 时不会互相覆盖
+        staging = target.with_name(f".{target.name}.{uuid4().hex}.part")
+        try:
+            if isinstance(file, bytes):
+                staging.write_bytes(file)
+            elif isinstance(file, (str, Path)):
+                shutil.copyfile(str(file), staging)
+            else:
+                with open(staging, "wb") as out:
+                    shutil.copyfileobj(file, out)
+            os.replace(staging, target)
+        except BaseException:
+            # 失败时清掉半成品, 避免留下 .part 垃圾文件
+            staging.unlink(missing_ok=True)
+            raise
 
     async def put_object_tmp(
         self,
@@ -145,16 +163,16 @@ class LocalStorage(BaseStorage):
             bucket_name=self.tmp_bucket, object_name=object_name, file=file, content_type=content_type, **kwargs
         )
 
-    async def get_object(self, bucket_name: str | None = None, object_name: str = None) -> bytes | None:
+    async def get_object(self, bucket_name: str | None = None, object_name: str | None = None) -> bytes | None:
         return await asyncio.to_thread(self.get_object_sync, bucket_name, object_name)
 
-    def get_object_sync(self, bucket_name: str | None = None, object_name: str = None) -> bytes | None:
+    def get_object_sync(self, bucket_name: str | None = None, object_name: str | None = None) -> bytes | None:
         if object_name is None:
             raise ValueError("get_object_sync: object_name must be provided")
         target = self._object_path(bucket_name, object_name)
         if target.is_file():
             return target.read_bytes()
-        # F017: 子租户读不到时，剥掉租户前缀回退到 root 共享路径
+        # F017: 子租户读不到时, 剥掉租户前缀回退到 root 共享路径
         if should_fallback_to_root():
             root_name = translate_to_root_prefix(object_name)
             if root_name is not None:
@@ -166,19 +184,19 @@ class LocalStorage(BaseStorage):
                 raise StorageSharingFallbackError()
         raise FileNotFoundError(f"object not found: {bucket_name}/{object_name}")
 
-    def download_object_sync(self, bucket_name: str | None = None, object_name: str = None):
+    def download_object_sync(self, bucket_name: str | None = None, object_name: str | None = None):
         return _LocalDownloadResponse(self.get_object_sync(bucket_name, object_name))
 
-    async def object_exists(self, bucket_name: str | None = None, object_name: str = None) -> bool:
+    async def object_exists(self, bucket_name: str | None = None, object_name: str | None = None) -> bool:
         return self.object_exists_sync(bucket_name, object_name)
 
-    def object_exists_sync(self, bucket_name: str | None = None, object_name: str = None) -> bool:
+    def object_exists_sync(self, bucket_name: str | None = None, object_name: str | None = None) -> bool:
         if not object_name:
             return False
         try:
             if self._object_path(bucket_name, object_name).is_file():
                 return True
-            # F017: 子租户读不到时，看 root 共享路径是否存在
+            # F017: 子租户读不到时, 看 root 共享路径是否存在
             if should_fallback_to_root():
                 root_name = translate_to_root_prefix(object_name)
                 if root_name is not None:
@@ -187,7 +205,7 @@ class LocalStorage(BaseStorage):
         except ValueError:
             return False
 
-    def get_object_size_sync(self, bucket_name: str | None = None, object_name: str = None) -> int:
+    def get_object_size_sync(self, bucket_name: str | None = None, object_name: str | None = None) -> int:
         if object_name is None:
             raise ValueError("get_object_size_sync: object_name must be provided")
         target = self._object_path(bucket_name, object_name)
@@ -218,7 +236,7 @@ class LocalStorage(BaseStorage):
         return results
 
     async def copy_object(
-        self, source_bucket: str = None, source_object: str = None, dest_bucket: str = None, dest_object: str = None
+        self, source_bucket: str | None = None, source_object: str | None = None, dest_bucket: str | None = None, dest_object: str | None = None
     ) -> None:
         await asyncio.to_thread(
             self.copy_object_sync,
@@ -229,7 +247,7 @@ class LocalStorage(BaseStorage):
         )
 
     def copy_object_sync(
-        self, source_bucket: str = None, source_object: str = None, dest_bucket: str = None, dest_object: str = None
+        self, source_bucket: str | None = None, source_object: str | None = None, dest_bucket: str | None = None, dest_object: str | None = None
     ) -> None:
         if source_bucket is None:
             source_bucket = self.tmp_bucket
@@ -240,10 +258,10 @@ class LocalStorage(BaseStorage):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
 
-    async def remove_object(self, bucket_name: str | None = None, object_name: str = None) -> None:
+    async def remove_object(self, bucket_name: str | None = None, object_name: str | None = None) -> None:
         await asyncio.to_thread(self.remove_object_sync, bucket_name, object_name)
 
-    def remove_object_sync(self, bucket_name: str | None = None, object_name: str = None) -> None:
+    def remove_object_sync(self, bucket_name: str | None = None, object_name: str | None = None) -> None:
         if object_name is None:
             raise ValueError("remove_object_sync: object_name must be provided")
         target = self._object_path(bucket_name, object_name)

@@ -22,7 +22,6 @@ from bisheng.brand.domain.schemas.brand_schema import (
     BrandText,
 )
 from bisheng.common.errcode.server import UploadFileEmptyError, UploadFileExtError
-from bisheng.common.services.config_service import settings as bisheng_settings
 from bisheng.core.storage.minio.minio_manager import get_minio_storage
 
 BRAND_CONFIG_KEY = "brand_config"
@@ -125,7 +124,7 @@ class BrandService:
         options = [self._default_asset_option(category)]
 
         minio_client = await get_minio_storage()
-        bucket = bisheng_settings.object_storage.minio.public_bucket
+        bucket = minio_client.bucket
         prefix = f"{ASSET_CATEGORY_PREFIXES[category]}/"
 
         try:
@@ -180,7 +179,7 @@ class BrandService:
         object_name = self._build_object_name(filename, ext, category)
         content_type = file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         minio_client = await get_minio_storage()
-        bucket = bisheng_settings.object_storage.minio.public_bucket
+        bucket = minio_client.bucket
         await minio_client.put_object(
             bucket_name=bucket,
             object_name=object_name,
@@ -195,7 +194,7 @@ class BrandService:
         self._validate_asset_object_name(category, object_name)
 
         minio_client = await get_minio_storage()
-        bucket = bisheng_settings.object_storage.minio.public_bucket
+        bucket = minio_client.bucket
         await minio_client.remove_object(bucket_name=bucket, object_name=object_name)
         await self._reset_saved_asset_if_deleted(category, object_name)
 
@@ -262,7 +261,7 @@ class BrandService:
             return
         try:
             minio_client = await get_minio_storage()
-            bucket = bisheng_settings.object_storage.minio.public_bucket
+            bucket = minio_client.bucket
             asset.url = await minio_client.get_share_link(asset.relative_path, bucket=bucket)
         except Exception:
             logger.exception("Failed to build brand asset share link: %s", asset.relative_path)
