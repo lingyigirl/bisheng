@@ -142,11 +142,21 @@ class MinioConf(BaseModel):
     )
 
 
+class LocalConf(BaseModel):
+    """local filesystem Configure"""
+
+    root: str = Field(default="./data/storage", description="Local storage root directory")
+    public_bucket: str = Field(default="bisheng", description="Bucket for permanent files")
+    tmp_bucket: str = Field(default="tmp-dir", description="Bucket for temporary files")
+    share_host: str = Field(default="", description="Public host used to build share links")
+
+
 class ObjectStore(BaseModel):
     """Object Storage Configuration"""
 
     type: str = Field(default="minio", description="Object Storage Type")
     minio: MinioConf | None = Field(default_factory=MinioConf, description="minio Configure")
+    local: LocalConf | None = Field(default=None, description="local filesystem Configure")
 
 
 class WorkflowConf(BaseModel):

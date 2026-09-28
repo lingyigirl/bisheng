@@ -79,7 +79,7 @@ class ApplicationContextManager:
             self.register_context(RedisManager(redis_url=config.redis_url))
 
             from bisheng.core.storage.minio.minio_manager import MinioManager
-            self.register_context(MinioManager(minio_config=config.object_storage.minio))
+            self.register_context(MinioManager(object_storage_config=config.object_storage))
 
             from bisheng.core.search.elasticsearch.manager import EsConnManager, statistics_es_name
             self.register_context(EsConnManager(es_hosts=config.get_search_conf().elasticsearch_url,
