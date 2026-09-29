@@ -55,7 +55,13 @@ export function ChatFile({ fileName, filePath }) {
             </div>
             {canPreview && (
                 <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-                    <DialogContent className="flex max-h-[85vh] w-[min(90vw,900px)] flex-col gap-3 overflow-hidden">
+                    {/* `max-w-none` is load-bearing: DialogContent's own base styles
+                        carry `max-w-lg` (512px), which a width class alone cannot
+                        lift — without it the dialog stays 512px however wide `w-*`
+                        asks to be. 1152px fits an A4 page: 794px (A4 at 96dpi) plus
+                        the chrome (p-5 / borders / DocxPreview's p-4 + injected
+                        20px padding ≈ 116px) and a readable margin on both sides. */}
+                    <DialogContent className="flex max-h-[85vh] w-[min(94vw,1152px)] max-w-none flex-col gap-3 overflow-hidden">
                         <DialogHeader>
                             <DialogTitle className="truncate text-base">{fileName}</DialogTitle>
                         </DialogHeader>

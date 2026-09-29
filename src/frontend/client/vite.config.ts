@@ -194,13 +194,17 @@ export default defineConfig(({ command, mode }) => {
             return path.replace(/^\/workspace/, '');
           },
         },
-        '/workspace/tmp-dir': {
+        // Backend hands the front end HOST-LESS bucket paths (see
+        // MinioStorage.clear_minio_share_host): the report node's document comes
+        // as `/tmp-dir/<object>?X-Amz-...`. Production nginx accepts both forms —
+        // `location ~ ^/(workspace/bisheng|bisheng|tmp-dir)/` — so mirror that
+        // here (prefix optional, stripped before hitting MinIO), or the report
+        // preview 404s in dev.
+        '^(/workspace)?/tmp-dir': {
           target: minioTarget,
           changeOrigin: true,
           secure: false,
-          // rewrite: (path) => {
-          //   return path.replace(/^\/workspace/, '');
-          // },
+          rewrite: (path) => path.replace(/^\/workspace/, ''),
         },
         // 同源化回链（2026-09-07）：管理端入口反代回平台 preview（见
         // platformPreviewTarget 注释）；无 rewrite —— 平台 SPA 路由 /admin、

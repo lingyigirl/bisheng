@@ -85,6 +85,11 @@ export default defineConfig(({ command, mode }) => {
   // 导致 /api/department-limit/*（仅 Gateway 提供）打到 bisheng 出现 404。
   const env = loadEnv(mode, path.resolve(__dirname), "");
   const target = env.VITE_PROXY_TARGET || "http://172.19.70.189:7860/";
+  // No VITE_MINIO_PROXY_TARGET ⇒ object paths (/bisheng, /tmp-dir) are proxied to
+  // the BACKEND, which has no such routes and answers FastAPI's
+  // {"detail":"Not Found"} — i.e. every document/knowledge preview opened from
+  // the :3001 entry 404s while the same URL works on :4001. Set it in
+  // .env.development.local (see src/frontend/env.development.gateway.example).
   const fileServiceTarget = env.VITE_MINIO_PROXY_TARGET || "http://172.19.70.189:7860/";
   // MinIO presigned URLs sign the Host header; this proxy's host MUST equal the
   // backend config.yaml object_storage.minio.sharepoint or every object 403s.
