@@ -1,9 +1,9 @@
-# 本地开发配置 (gitignored) —— 指向 172.19.70.189 上的共享中间件栈
+# 本地开发配置 (gitignored) —— 指向 127.0.0.1 上的共享中间件栈
 # 密码必须是 Fernet 密文：Settings.set_database_url / set_redis_url 在加载时无条件
 # 调用 decrypt_token()，写明文会直接抛 InvalidToken 导致启动失败。
 # 加密工具：bisheng/core/config/settings.py::encrypt_token
 database_url:
-  "mysql+pymysql://root:gAAAAABlp4b4c59FeVGF_OQRVf6NOUIGdxq8246EBD-b0hdK_jVKRs1x4PoAn0A6C5S6IiFKmWn0Nm5eBUWu-7jxcqw6TiVjQA==@172.19.70.189:3306/bisheng?charset=utf8mb4"
+  "mysql+pymysql://root:gAAAAABlp4b4c59FeVGF_OQRVf6NOUIGdxq8246EBD-b0hdK_jVKRs1x4PoAn0A6C5S6IiFKmWn0Nm5eBUWu-7jxcqw6TiVjQA==@127.0.0.1:3306/bisheng?charset=utf8mb4"
 
 database_pool:
   pool_size: 50      # 每进程常驻连接数
@@ -15,14 +15,14 @@ database_pool:
     enabled: false
 
 # 缓存（该 Redis 实例未设密码，故 URL 中无凭据段；无 @ 时不会触发解密）
-redis_url: "redis://172.19.70.189:6379/1"
+redis_url: "redis://127.0.0.1:6379/1"
 
 # Celery broker（与缓存分库，避免 Celery 运维操作清掉业务缓存）
-celery_redis_url: "redis://172.19.70.189:6379/2"
+celery_redis_url: "redis://127.0.0.1:6379/2"
 
 openfga:
   enabled: true
-  api_url: "http://172.19.70.189:8080"
+  api_url: "http://127.0.0.1:18080"
 
 sso_sync:
   gateway_hmac_secret: "bisheng-local-hmac-20260422"
@@ -50,11 +50,11 @@ celery_task:
 # 免去导出 10 个环境变量；!env 引用不存在的变量会直接报错。
 vector_stores:
   milvus:
-    connection_args: '{"host":"172.19.70.189","port":"19530","user":"","password":"","secure":false}'
+    connection_args: '{"host":"127.0.0.1","port":"19530","user":"","password":"","secure":false}'
     is_partition: 'true'
     partition_suffix: '1'
   elasticsearch:
-    url: 'http://172.19.70.189:9200'
+    url: 'http://127.0.0.1:9200'
     ssl_verify: '{}'
 
 object_storage:
@@ -62,9 +62,9 @@ object_storage:
   minio:
     schema: 'false'
     cert_check: 'false'
-    endpoint: '172.19.70.189:9100'
+    endpoint: '127.0.0.1:9100'
     # sharepoint 必须与 endpoint 主机名完全一致，否则预签名 URL 的 SigV4 Host 校验失败 → 全部 403
-    sharepoint: '172.19.70.189:9100'
+    sharepoint: '127.0.0.1:9100'
     access_key: 'minioadmin'
     secret_key: 'minioadmin'
     public_bucket: 'bisheng'

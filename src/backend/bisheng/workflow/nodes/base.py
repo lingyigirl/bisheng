@@ -176,8 +176,7 @@ class BaseNode(ABC):
 
     @staticmethod
     def get_file_base64_data(file_path: str) -> str:
-        if file_path.startswith(("http", "https")):
-            file_path, _ = file_download(file_path)
+        file_path, _ = file_download(file_path)
 
         with open(file_path, "rb") as f:
             file_data = f.read()

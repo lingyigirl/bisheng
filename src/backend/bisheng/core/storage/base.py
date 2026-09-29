@@ -106,3 +106,13 @@ class BaseStorage(ABC):
         (e.g. MinIO bucket lifecycle) have nothing to do here.
         """
         return 0
+
+    def resolve_share_link(self, url: str) -> tuple[str, str] | None:
+        """Resolve one of this backend's own share links into (bucket, object).
+
+        Returns None when the url is not a share link of this backend (e.g. an
+        external http url), so callers can fall back to their own handling.
+        Keeping this inside the backend means callers no longer need to know
+        what a share link looks like.
+        """
+        return None

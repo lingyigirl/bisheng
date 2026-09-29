@@ -145,31 +145,16 @@ def download_network_file(file_url: str, *, root_dir: str = None, calc_sha256: b
             r.close()
 
 
-def download_file(file_url: str, *, root_dir: str = None, calc_sha256: bool = False) -> Tuple[str, str]:
-    if _is_valid_url(file_url):
-        minio_client = get_minio_storage_sync()
-        minio_share_host = minio_client.get_minio_share_host()
-        if file_url.startswith(minio_share_host):
-            url_obj = urlparse(file_url)
-            # path turned into /bisheng/original/82324.docx, remove the opening / and split the first one /
-            path_parts = url_obj.path.lstrip("/").split('/', 1)
-            bucket_name, object_name = path_parts
-            object_name = unquote(object_name)
-            return download_minio_file(bucket_name, object_name, root_dir=root_dir, calc_sha256=calc_sha256)
-
-        # download from network, we can use requests to download the file
-        return download_network_file(file_url, root_dir=root_dir, calc_sha256=calc_sha256)
-    # <g id="Bold">Medical Treatment:</g> MinIO Relative path (In / Starts with a signature parameter)
-    # For Input: /bisheng/original/82324.docx?X-Amz-Algorithm=...
-    # No in this case host, cannot be accessed _is_valid_url Branch
-    elif file_url.startswith('/') and 'X-Amz-Algorithm' in file_url:
-        url_obj = urlparse(file_url)
-        # path turned into /bisheng/original/82324.docx?xxx, remove the opening / and split the first one /
-        path_parts = url_obj.path.lstrip("/").split('/', 1)
-        if len(path_parts) != 2:
-            raise ValueError(f"Invalid file path: {file_url}")
-        bucket_name, object_name = path_parts
-        object_name = unquote(object_name)
+def download_file(file_url: str, *, root_dir: str | None = None, calc_sha256: bool = False) -> tuple[str, str]:
+    # share link 的形态由 storage 后端自己解释 (MinIO 预签名 URL / 本地相对路径)
+    minio_client = get_minio_storage_sync()
+    resolved = minio_client.resolve_share_link(file_url)
+    if resolved:
+        bucket_name, object_name = resolved
         return download_minio_file(bucket_name, object_name, root_dir=root_dir, calc_sha256=calc_sha256)
-    else:
-        raise ValueError(f'File path {file_url} is not a valid file or url')
+
+    if _is_valid_url(file_url):
+        # 外部 http url: 直接下载, 不经过 storage
+        return download_network_file(file_url, root_dir=root_dir, calc_sha256=calc_sha256)
+
+    raise ValueError(f"File path {file_url} is not a valid file or url")

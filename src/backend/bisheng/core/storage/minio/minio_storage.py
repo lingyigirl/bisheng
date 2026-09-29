@@ -9,6 +9,7 @@ from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO, Union
+from urllib.parse import unquote, urlparse
 
 import minio
 import miniopy_async
@@ -610,6 +611,28 @@ class MinioStorage(BaseStorage, ABC):
         share_host = self.get_minio_share_host()
 
         return file_url.replace(share_host, "")
+
+    def resolve_share_link(self, url: str) -> tuple[str, str] | None:
+        """Resolve a share link belonging to this MinIO deployment.
+
+        Recognises both forms the platform produces:
+        - absolute presigned url: http(s)://<sharepoint>/<bucket>/<object>?X-Amz-...
+        - relative presigned path: /<bucket>/<object>?X-Amz-Algorithm=...
+        Returns None for anything else (e.g. an external http url).
+        """
+        if not url:
+            return None
+        share_host = self.get_minio_share_host()
+        if share_host and url.startswith(share_host):
+            path = urlparse(url).path
+        elif url.startswith("/") and "X-Amz-Algorithm" in url:
+            path = urlparse(url).path
+        else:
+            return None
+        path_parts = path.lstrip("/").split("/", 1)
+        if len(path_parts) != 2 or not path_parts[1]:
+            return None
+        return path_parts[0], unquote(path_parts[1])
 
     async def close(self) -> None:
         """Close Minio Client link"""

@@ -867,8 +867,25 @@ class ConversationExportService:
                 raise ValueError('invalid base64 payload') from e
             return raw, ext
 
-        # Root-relative path (nginx-proxied on the frontend, e.g.
-        # "/bisheng/knowledge/images/..."): rebuild the absolute MinIO URL.
+        # 先交给 storage 解析本后端自己的相对 share link, 本地存储可直接读文件;
+        # MinIO 相对预签名路径也会在这里被识别, 避免依赖前端 nginx 代理。
+        if url.startswith('/') and not url.startswith('//'):
+            from bisheng.core.storage.minio.minio_manager import get_minio_storage
+
+            storage = await get_minio_storage()
+            resolved = storage.resolve_share_link(url)
+            if resolved:
+                bucket_name, object_name = resolved
+                raw = await storage.get_object(bucket_name, object_name)
+                if raw is None:
+                    raise ValueError(f'storage object not found: {url[:60]}')
+                suffix = Path(object_name).suffix.lower().lstrip('.')
+                ext = 'jpg' if suffix == 'jpeg' else suffix
+                if ext not in {'png', 'jpg', 'gif', 'webp', 'svg'}:
+                    ext = 'bin'
+                return raw, ext
+
+        # 根相对路径若仍未能由 storage 解析, 则回退到旧的 MinIO 代理方式。
         if url.startswith('/') and not url.startswith('//') and minio_host:
             url = minio_host.rstrip('/') + url
 

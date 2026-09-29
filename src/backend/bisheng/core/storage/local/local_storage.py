@@ -287,6 +287,22 @@ class LocalStorage(BaseStorage):
             return file_url[len(share_host):]
         return file_url
 
+    def resolve_share_link(self, url: str) -> tuple[str, str] | None:
+        """Resolve a local share link (/<bucket>/<object>) into (bucket, object).
+
+        get_share_link() returns the raw path without URL-encoding, so the
+        object name is returned verbatim. Returns None for anything that is
+        not a path under one of this backend's own buckets.
+        """
+        if not url or not url.startswith("/"):
+            return None
+        path_parts = url.split("?", 1)[0].lstrip("/").split("/", 1)
+        if len(path_parts) != 2 or not path_parts[1]:
+            return None
+        if path_parts[0] not in (self.bucket, self.tmp_bucket):
+            return None
+        return path_parts[0], path_parts[1]
+
     # ----------------------------------------------------------------- cleanup
 
     def cleanup_expired_tmp(self) -> int:

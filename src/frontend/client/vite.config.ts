@@ -16,7 +16,7 @@ const app_env = {
   BISHENG_HOST: '/admin'
 }
 
-const minioPathRE = /^\/(?:workspace\/)?bisheng(?:\/|$)/;
+const minioPathRE = /^\/(?:workspace\/)?(?:bisheng|tmp-dir)(?:\/|$)/;
 
 // Emit one loud, actionable warning the first time MinIO answers a proxied
 // object request with 403. For presigned (SigV4) URLs to the public bucket a
@@ -55,7 +55,7 @@ function minioFileProxyPlugin(minioTarget: string): Plugin {
           return;
         }
 
-        const rewrittenUrl = requestUrl.replace(/^\/workspace(?=\/bisheng(?:\/|$))/, '');
+        const rewrittenUrl = requestUrl.replace(/^\/workspace(?=\/(?:bisheng|tmp-dir)(?:\/|$))/, '');
         const targetUrl = new URL(rewrittenUrl, minioTarget);
         const proxyReq = http.request(
           {

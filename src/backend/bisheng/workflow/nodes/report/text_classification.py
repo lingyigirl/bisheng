@@ -189,6 +189,10 @@ class TextClassificationReport:
         file_url_md5 = md5_hash(file_url)
         if self.file_cache.get(file_url_md5):
             return self.file_cache.get(file_url_md5)
+        local_candidate = file_url.split("?", 1)[0]
+        if os.path.isfile(local_candidate):
+            self.file_cache[file_url_md5] = local_candidate
+            return local_candidate
         url_obj = urlparse(file_url)
         filename = unquote(url_obj.path.split('/')[-1])
         if file_url.startswith(("https", "http")):
@@ -319,10 +323,7 @@ class TextClassificationReport:
     def _parse_http_table_data(self, table_url: str) -> Dict:
         # Placeholder for actual implementation
         try:
-            if table_url.startswith(("http", "https")):
-                local_file_path = self._download_file(table_url)
-            else:
-                local_file_path = table_url
+            local_file_path = self._download_file(table_url)
             if local_file_path.endswith(".xlsx"):
                 table_data, table_alignment = self._parse_excel_data(local_file_path)
             elif local_file_path.endswith(".csv"):
