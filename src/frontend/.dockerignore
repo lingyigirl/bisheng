@@ -1,0 +1,15 @@
+# 构建上下文排除项。
+# node_modules 在镜像内用 pnpm --frozen-lockfile 重装，宿主目录必须排除；
+# */build 由多阶段构建内部产出，排除可避免把本地陈旧构建产物烤进镜像。
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+platform/build/
+client/build/
+packages/*/dist/
+
+# 本地覆盖配置，不得进入 production 构建
+# 注意：不带 `/` 的模式只匹配上下文根目录，故嵌套路径必须用 `**/` 前缀。
+**/*.local
+**/.env.development.local

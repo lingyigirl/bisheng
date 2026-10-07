@@ -1,0 +1,24 @@
+# 构建上下文排除项。
+# 缺失时 `COPY ./ ./` 会把宿主 venv 整个覆盖到镜像的 /app/.venv 上（宿主是 Windows
+# 时直接导致容器起不来），并让构建上下文膨胀到 2GB+。
+# 不带 `/` 的模式只匹配上下文根目录，嵌套路径必须用 `**/` 前缀。
+.venv/
+**/.venv/
+venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+
+# 本地开发产物与运行期数据（容器内由 compose 挂载 /app/data 提供）
+data/
+logs/
+*.log
+
+# 非运行期资源
+test/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Celery beat 本地调度状态
+celerybeat-schedule*
