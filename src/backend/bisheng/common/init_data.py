@@ -127,6 +127,9 @@ async def init_default_data():
                 # Initialize preset approval scenarios (channel / knowledge-space subscribe)
                 await _init_default_approval_scenarios(session)
 
+                # Initialize preset document-extraction templates (身份证 / 营业执照)
+                await _init_default_doc_extract_templates(session)
+
                 # Initialize preset application templates
                 templates = await session.exec(select(Template).limit(1))
                 templates = templates.all()
@@ -443,6 +446,119 @@ async def _init_default_approval_scenarios(session):
             )
             await session.commit()
             logger.info(f"Seeded approval scenario {seed['scenario_code']} (id={scenario.id}) for default tenant")
+
+
+#: Preset document-extraction templates (F058).
+#:
+#: The field keys and the `{{ ... }}` placeholders in `render_template` must
+#: agree: `renderer.extract_referenced_keys` rejects a render form naming a
+#: field the schema does not define (AC-03), so editing one without the other
+#: fails at save time rather than rendering blanks at run time.
+#:
+#: `description` is what the CLASSIFIER sees, so it names the visual features
+#: that separate these two from the general population of documents.
+_DEFAULT_DOC_EXTRACT_TEMPLATE_SEEDS = [
+    {
+        "name": "身份证",
+        "doc_type": "id_card",
+        "description": (
+            "中华人民共和国居民身份证（正面/反面均可）。"
+            "特征：有国徽与「中华人民共和国居民身份证」字样、18 位公民身份号码、签发机关。"
+        ),
+        "field_schema": [
+            {"key": "name", "label": "姓名", "type": "string", "required": True},
+            {"key": "gender", "label": "性别", "type": "string", "required": False},
+            {"key": "ethnicity", "label": "民族", "type": "string", "required": False},
+            {"key": "birth_date", "label": "出生日期", "type": "date", "required": False},
+            {"key": "address", "label": "住址", "type": "string", "required": False},
+            {"key": "id_number", "label": "公民身份号码", "type": "string", "required": True},
+            {"key": "issuing_authority", "label": "签发机关", "type": "string", "required": False},
+            {"key": "valid_period", "label": "有效期限", "type": "string", "required": False},
+        ],
+        "render_template": (
+            "姓名：{{ name }}\n"
+            "性别：{{ gender }}\n"
+            "民族：{{ ethnicity }}\n"
+            "出生日期：{{ birth_date }}\n"
+            "住址：{{ address }}\n"
+            "公民身份号码：{{ id_number }}\n"
+            "签发机关：{{ issuing_authority }}\n"
+            "有效期限：{{ valid_period }}"
+        ),
+    },
+    {
+        "name": "营业执照",
+        "doc_type": "business_license",
+        "description": (
+            "营业执照（正本/副本均可）。特征：有「营业执照」字样、统一社会信用代码、登记机关盖章。"
+        ),
+        "field_schema": [
+            {"key": "credit_code", "label": "统一社会信用代码", "type": "string", "required": True},
+            {"key": "name", "label": "名称", "type": "string", "required": True},
+            {"key": "type", "label": "类型", "type": "string", "required": False},
+            {"key": "address", "label": "住所", "type": "string", "required": False},
+            {"key": "legal_representative", "label": "法定代表人", "type": "string", "required": False},
+            {"key": "registered_capital", "label": "注册资本", "type": "string", "required": False},
+            {"key": "establishment_date", "label": "成立日期", "type": "date", "required": False},
+            {"key": "business_term", "label": "营业期限", "type": "string", "required": False},
+            {"key": "business_scope", "label": "经营范围", "type": "string", "required": False},
+            {"key": "registration_authority", "label": "登记机关", "type": "string", "required": False},
+        ],
+        "render_template": (
+            "统一社会信用代码：{{ credit_code }}\n"
+            "名称：{{ name }}\n"
+            "类型：{{ type }}\n"
+            "住所：{{ address }}\n"
+            "法定代表人：{{ legal_representative }}\n"
+            "注册资本：{{ registered_capital }}\n"
+            "成立日期：{{ establishment_date }}\n"
+            "营业期限：{{ business_term }}\n"
+            "经营范围：{{ business_scope }}\n"
+            "登记机关：{{ registration_authority }}"
+        ),
+    },
+]
+
+
+async def _init_default_doc_extract_templates(session):
+    """Idempotently seed the preset document-extraction templates (F058).
+
+    Same contract as `_init_default_approval_scenarios`: default tenant only,
+    and an existing row is left untouched, so a re-run never clobbers a later
+    manual edit.
+
+    Matched against EVERY row, soft-deleted ones included -- not just live ones.
+    The DAO enforces `doc_type` uniqueness against live rows only, so a deleted
+    preset can legitimately be re-created by hand; matching live-only would
+    instead resurrect it on the next restart, making it effectively undeletable.
+    An operator's delete is a decision and it sticks.
+
+    Only the default tenant is seeded. `DocExtractTemplateDao` reads under
+    `strict_tenant_filter()` -- templates are tenant config, not a shared
+    resource -- so a child tenant does NOT inherit these and gets its own copy
+    through the template UI. That is exactly why this is a startup seed rather
+    than a migration revision: a revision cannot invent rows for tenants that do
+    not exist yet.
+    """
+    from bisheng.core.context.tenant import DEFAULT_TENANT_ID, bypass_tenant_filter
+    from bisheng.doc_extract.domain.models.extract_template import DocExtractTemplate
+
+    with bypass_tenant_filter():
+        for seed in _DEFAULT_DOC_EXTRACT_TEMPLATE_SEEDS:
+            existing = (
+                await session.exec(
+                    select(DocExtractTemplate).where(
+                        DocExtractTemplate.tenant_id == DEFAULT_TENANT_ID,
+                        DocExtractTemplate.doc_type == seed["doc_type"],
+                    )
+                )
+            ).first()
+            if existing:
+                continue
+
+            session.add(DocExtractTemplate(tenant_id=DEFAULT_TENANT_ID, enabled=1, is_deleted=0, **seed))
+            logger.info(f"Seeded document-extraction template {seed['doc_type']} for default tenant")
+        await session.commit()
 
 
 async def _backfill_guest_department_membership(session):
