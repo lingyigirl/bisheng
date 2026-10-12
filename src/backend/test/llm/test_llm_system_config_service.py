@@ -186,3 +186,41 @@ async def test_update_workflow_llm_writes_with_tenant():
     call_kwargs = aupsert_mock.call_args.kwargs
     assert call_kwargs['tenant_id'] == 9
     assert call_kwargs['key'] == ConfigKeyEnum.WORKFLOW_LLM.value
+
+
+# --- F058: the document-extraction scene ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_doc_extract_scene_reads_and_writes_its_own_slot():
+    """The KEY is what this pins, not the shape.
+
+    Both methods were written by copying the workflow pair, so a copy that left
+    ``WORKFLOW_LLM`` behind would satisfy every shape-level assertion while the
+    settings page silently edited the workflow slot -- and F058 would stay
+    broken (11608) with the UI looking like it had saved something.
+    """
+    from bisheng.llm.domain.schemas import EvaluationLLMConfig
+    from bisheng.llm.domain.services.llm import LLMService
+
+    aupsert_mock = AsyncMock()
+    aresolve_mock = AsyncMock(return_value=('{"model_id": 13}', False, False))
+    with (
+        patch('bisheng.llm.domain.services.llm.TenantSystemModelConfigDao.aupsert', aupsert_mock),
+        patch('bisheng.llm.domain.services.llm.TenantSystemModelConfigDao.aresolve', aresolve_mock),
+        # The write path validates the model against the tenant's visible set
+        # before persisting (share_fallback), which needs a database. Stubbed
+        # here because this test is about WHICH slot gets written, not about
+        # visibility -- that has its own tests in test_llm_share_fallback.py.
+        patch('bisheng.llm.domain.services.llm.avalidate_system_model_refs', AsyncMock()),
+    ):
+        await LLMService.update_doc_extract_llm(EvaluationLLMConfig(model_id=13), tenant_id=9)
+        cfg, inherited, blocked = await LLMService.aget_doc_extract_llm_with_meta(tenant_id=9)
+
+    assert aupsert_mock.call_args.kwargs['key'] == ConfigKeyEnum.DOC_EXTRACT_LLM.value
+    assert aupsert_mock.call_args.kwargs['tenant_id'] == 9
+    assert aresolve_mock.call_args.kwargs['key'] == ConfigKeyEnum.DOC_EXTRACT_LLM.value
+    assert aresolve_mock.call_args.kwargs['tenant_id'] == 9
+    # And the value that comes back is the typed config, not the raw JSON text.
+    assert cfg.model_id == 13
+    assert inherited is False and blocked is False

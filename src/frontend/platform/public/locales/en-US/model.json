@@ -60,6 +60,7 @@
     "assistantModel": "Assistant",
     "evaluationModel": "Eval",
     "workflowModel": "Workflow",
+    "docExtractModel": "Doc Extract",
     "defaultEmbeddingModel": "Default Embedding for Knowledge Base",
     "sourceTracingModel": "Source Tracing for Knowledge Base",
     "sourceTracingModelTooltip": "Auto-extract keywords for source tracing. Uses jieba if not configured.",

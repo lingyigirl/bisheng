@@ -1376,6 +1376,48 @@ class LLMService:
         )
 
     @classmethod
+    async def update_doc_extract_llm(
+        cls,
+        data: EvaluationLLMConfig,
+        tenant_id: int | None = None,
+    ) -> EvaluationLLMConfig:
+        """Update the document-extraction default model (F058).
+
+        ``EvaluationLLMConfig`` is reused deliberately, exactly as the workflow
+        scene above reuses it: the payload is a single ``model_id``, and a
+        per-scene subclass would be three identical classes with different
+        docstrings.
+        """
+        target = _resolve_tenant_id(tenant_id)
+        await avalidate_system_model_refs([data.model_id], target)
+        await cls._base_update_llm_config(
+            data=data.model_dump(),
+            key=ConfigKeyEnum.DOC_EXTRACT_LLM,
+            tenant_id=tenant_id,
+        )
+        return data
+
+    @classmethod
+    async def aget_doc_extract_llm_with_meta(
+        cls,
+        tenant_id: int | None = None,
+    ) -> tuple[EvaluationLLMConfig, bool, bool]:
+        """Read the document-extraction model slot.
+
+        F058 resolves this slot through ``extraction_service`` rather than here,
+        reading it straight from ``tenant_system_model_config``. Both paths end
+        at the same row, and ``parse_model_slot_value`` owns the parsing either
+        way -- what this adds is the standard GET envelope (``inherited`` /
+        ``blocked``) that the model-management UI needs, which the extraction
+        path has no use for.
+        """
+        return await cls._aget_typed_with_meta(
+            ConfigKeyEnum.DOC_EXTRACT_LLM,
+            EvaluationLLMConfig,
+            tenant_id,
+        )
+
+    @classmethod
     async def get_assistant_llm_list(cls, request: Request, login_user: UserPayload) -> list[LLMServerInfo]:
         """Get a list of optional models for the assistant"""
         assistant_llm = await cls.get_assistant_llm()

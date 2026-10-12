@@ -259,6 +259,19 @@ export async function getLlmDefaultModelEnvelope(): Promise<SystemModelConfigEnv
     return await axios.get(`/api/v1/llm/workflow`)
 }
 
+/**
+ * llm 文档抽取默认模型（F058）
+ *
+ * 单独一对、不并入上面那对「通用命名但硬编码 /llm/workflow」的函数：那个名字
+ * 起得有误导性，再加一个场景进去会让它彻底看不懂。新场景就用显式命名的。
+ */
+export async function setDocExtractModel(data: { model_id: number }): Promise<any> {
+    return await axios.post(`/api/v1/llm/doc_extract`, data)
+}
+export async function getDocExtractModelEnvelope(): Promise<SystemModelConfigEnvelope> {
+    return await axios.get(`/api/v1/llm/doc_extract`)
+}
+
 // 获取助手模型可选列表
 export const getAssistantModelList = async (): Promise<any> => {
     return await axios.get(`/api/v1/llm/assistant/llm_list`)

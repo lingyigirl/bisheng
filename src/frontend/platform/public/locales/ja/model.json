@@ -58,6 +58,7 @@
     "assistantModel": "アシスタントモデル",
     "evaluationModel": "評価モデル",
     "workflowModel": "ワークフローモデル",
+    "docExtractModel": "文書抽出モデル",
     "defaultEmbeddingModel": "知識ベースデフォルト埋め込みモデル",
     "sourceTracingModel": "知識ベーストレースモデル",
     "workVectorModel": "ワークベクトルモデル",
