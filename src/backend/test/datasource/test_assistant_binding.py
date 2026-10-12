@@ -251,7 +251,7 @@ async def test_a_bound_and_authorized_datasource_yields_a_tool(monkeypatch):
     # database (it passed that way here only because MySQL answered and no rows
     # existed for id 7). Patch the name the builder actually looks up.
     monkeypatch.setattr(
-        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao',
+        'bisheng.datasource.domain.services.schema_service.DbDatasourceTableDao',
         SimpleNamespace(alist_by_datasource=AsyncMock(return_value=[])),
     )
 

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.datasource.domain.services import query_service
 from bisheng.datasource.domain.services.executor import QueryOutcome
 from bisheng.datasource.domain.services.query_service import (
@@ -22,7 +23,11 @@ from bisheng.datasource.domain.services.query_service import (
 
 
 def _datasource():
-    return MagicMock(id=7, tenant_id=1, engine='mysql', name='业务库')
+    # ``user_id=None`` matters: the model is built with the invoker's id, and
+    # when the caller did not supply one it falls back to the datasource owner
+    # (then to 0). A bare MagicMock attribute would be a truthy Mock, hiding
+    # which branch ran.
+    return MagicMock(id=7, tenant_id=1, engine='mysql', name='业务库', user_id=None)
 
 
 def _tables():
@@ -317,27 +322,145 @@ def test_extraction_of_a_reply_with_no_statement_is_empty():
 # --- AC-27: the slot falls back silently -------------------------------------
 
 
-async def test_no_configured_slot_falls_back_without_error(monkeypatch):
-    """An unconfigured slot is the NORMAL state, not an error (AC-27)."""
+# ``aget_default_conversation_model_id`` is patched to a known id in every case
+# below. Left unpatched it resolves to None on its own (no tenant config in a
+# unit test), which would make the assertions pass whatever the code does --
+# that is exactly how the previous pair here ended up pinning the bug: their
+# names said "falls back", their assertions said ``is None``.
+
+_SLOT_ID = 7
+_CONVERSATION_ID = 42
+
+
+async def test_an_unconfigured_slot_falls_back_to_the_conversation_model(monkeypatch):
+    """An unconfigured slot is the NORMAL state: fall back, do not degrade (AC-27)."""
     monkeypatch.setattr(
         'bisheng.llm.domain.services.model_slot.resolve_slot_model_id', lambda *a, **k: None
     )
-    model = await DatasourceQueryService._resolve_model(_datasource())
-    assert model is None
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.llm.LLMService.aget_default_conversation_model_id',
+        AsyncMock(return_value=_CONVERSATION_ID),
+    )
+    built = MagicMock(name='conversation-model')
+    get_model = MagicMock(return_value=built)
+    monkeypatch.setattr('bisheng.llm.domain.services.llm.LLMService.get_bisheng_llm_sync', get_model)
+
+    assert await DatasourceQueryService._resolve_model(_datasource()) is built
+    assert get_model.call_args.kwargs['model_id'] == _CONVERSATION_ID
 
 
-async def test_an_unbuildable_slot_model_is_treated_as_unconfigured(monkeypatch):
-    """A slot pointing at a model that cannot be built must degrade to the
-    fallback, not raise into the conversation."""
+async def test_an_unbuildable_slot_model_falls_back_too(monkeypatch):
+    """A slot pointing at a model that cannot be built falls back, not raises."""
     monkeypatch.setattr(
         'bisheng.llm.domain.services.model_slot.resolve_slot_model_id', lambda *a, **k: 99
     )
     monkeypatch.setattr(
-        'bisheng.llm.domain.services.llm.LLMService.get_bisheng_llm_sync',
-        MagicMock(side_effect=RuntimeError('model 99 is gone')),
+        'bisheng.llm.domain.services.llm.LLMService.aget_default_conversation_model_id',
+        AsyncMock(return_value=_CONVERSATION_ID),
+    )
+    built = MagicMock(name='conversation-model')
+
+    def _get(model_id, **kwargs):
+        if model_id == 99:
+            raise RuntimeError('model 99 is gone')
+        return built
+
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.llm.LLMService.get_bisheng_llm_sync', MagicMock(side_effect=_get)
+    )
+
+    assert await DatasourceQueryService._resolve_model(_datasource()) is built
+
+
+async def test_the_model_is_built_with_every_field_bisheng_llm_requires(monkeypatch):
+    """`model_id` alone is not enough.
+
+    `BishengLLM` also demands app_id / app_type / app_name / user_id, and
+    omitting them raises ValidationError at construction -- which is exactly
+    what this path did: datasource SQL generation could never produce a model,
+    and nothing caught it because every generation test above mocks
+    `_resolve_model` itself.
+    """
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.model_slot.resolve_slot_model_id', lambda *a, **k: _SLOT_ID
+    )
+    get_model = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr('bisheng.llm.domain.services.llm.LLMService.get_bisheng_llm_sync', get_model)
+
+    await DatasourceQueryService._resolve_model(_datasource(), user_id=11)
+
+    kwargs = get_model.call_args.kwargs
+    assert kwargs['model_id'] == _SLOT_ID
+    assert kwargs['app_id'] == ApplicationTypeEnum.DATASOURCE_SQL.value
+    assert kwargs['app_name'] == ApplicationTypeEnum.DATASOURCE_SQL.value
+    assert kwargs['app_type'] is ApplicationTypeEnum.DATASOURCE_SQL
+    assert kwargs['user_id'] == 11
+
+
+async def test_the_telemetry_user_falls_back_to_the_datasource_owner(monkeypatch):
+    """`user_id` must be an int, so a caller that did not say who it is gets
+    credited to the datasource's owner rather than a minted placeholder."""
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.model_slot.resolve_slot_model_id', lambda *a, **k: _SLOT_ID
+    )
+    get_model = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr('bisheng.llm.domain.services.llm.LLMService.get_bisheng_llm_sync', get_model)
+
+    await DatasourceQueryService._resolve_model(MagicMock(id=7, tenant_id=1, user_id=5))
+    assert get_model.call_args.kwargs['user_id'] == 5
+
+    # Ownerless datasource (the column is nullable) still yields a usable int.
+    await DatasourceQueryService._resolve_model(MagicMock(id=7, tenant_id=1, user_id=None))
+    assert get_model.call_args.kwargs['user_id'] == 0
+
+
+async def test_a_configured_slot_wins_over_the_conversation_model(monkeypatch):
+    """The fallback must not shadow the slot when the slot is healthy."""
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.model_slot.resolve_slot_model_id', lambda *a, **k: _SLOT_ID
+    )
+    lookup = AsyncMock(return_value=_CONVERSATION_ID)
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.llm.LLMService.aget_default_conversation_model_id', lookup
+    )
+    built = MagicMock(name='slot-model')
+    get_model = MagicMock(return_value=built)
+    monkeypatch.setattr('bisheng.llm.domain.services.llm.LLMService.get_bisheng_llm_sync', get_model)
+
+    assert await DatasourceQueryService._resolve_model(_datasource()) is built
+    assert get_model.call_args.kwargs['model_id'] == _SLOT_ID
+    lookup.assert_not_awaited()  # no point resolving a fallback we will not use
+
+
+async def test_no_model_anywhere_still_yields_none(monkeypatch):
+    """Configured in neither place -> None, which the caller treats as a failed
+    round and eventually reports as degraded."""
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.model_slot.resolve_slot_model_id', lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.llm.LLMService.aget_default_conversation_model_id',
+        AsyncMock(return_value=None),
     )
 
     assert await DatasourceQueryService._resolve_model(_datasource()) is None
+
+
+async def test_a_fallback_identical_to_the_broken_slot_is_not_retried(monkeypatch):
+    """When the fallback target IS the model that just failed to build, it is
+    not built a second time -- that would only add a second warning."""
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.model_slot.resolve_slot_model_id', lambda *a, **k: 99
+    )
+    monkeypatch.setattr(
+        'bisheng.llm.domain.services.llm.LLMService.aget_default_conversation_model_id',
+        AsyncMock(return_value=99),
+    )
+    get_model = MagicMock(side_effect=RuntimeError('model 99 is gone'))
+    monkeypatch.setattr('bisheng.llm.domain.services.llm.LLMService.get_bisheng_llm_sync', get_model)
+
+    assert await DatasourceQueryService._resolve_model(_datasource()) is None
+    assert get_model.call_count == 1
 
 
 # --- AC-42: the admin failure list -------------------------------------------

@@ -39,6 +39,7 @@ from typing import Any
 
 from loguru import logger
 
+from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.common.models.config import ConfigKeyEnum
 from bisheng.datasource.domain.models.dao import DbQueryFailureDao
 from bisheng.datasource.domain.models.datasource import DbDatasource
@@ -131,7 +132,9 @@ class DatasourceQueryService:
         last_category: str | None = None
 
         for attempt in range(MAX_RETRY_ROUNDS):
-            statement = await cls._generate(datasource, question, schema_block, tried, last_error)
+            statement = await cls._generate(
+                datasource, question, schema_block, tried, last_error, user_id=user_id
+            )
             if not statement:
                 last_category = 'other'
                 last_error = 'the model produced no usable statement'
@@ -186,13 +189,14 @@ class DatasourceQueryService:
         schema_block: str,
         tried: list[str],
         last_error: str,
+        user_id: int | None = None,
     ) -> str:
         """Ask the model for one statement, optionally with a correction hint.
 
         Returns '' when the model produced nothing usable -- the caller treats
         that as a failed round rather than executing a guess.
         """
-        model = await cls._resolve_model(datasource)
+        model = await cls._resolve_model(datasource, user_id=user_id)
         if model is None:
             return ''
 
@@ -206,25 +210,56 @@ class DatasourceQueryService:
         return _extract_statement(_text_of(reply))
 
     @staticmethod
-    async def _resolve_model(datasource: DbDatasource):
-        """The SQL-generation model: its own slot, falling back to the chat model.
+    async def _resolve_model(datasource: DbDatasource, *, user_id: int | None = None):
+        """SQL 生成用的模型：优先本槽位，取不到则回退到租户默认对话模型。
 
-        Spec AC-27 requires the fallback and requires it to be SILENT -- an
-        unconfigured slot is the normal state, not an error. Reuses F058's slot
-        resolution rather than re-deriving it; the parsing rules there are not
-        obvious (the column holds JSON text) and were learned the hard way.
+        Spec AC-27 要求「槽位未配置时回退使用**该轮对话**的模型，且不报错」—— 未配置是常态、
+        不是错误。没有「本轮」的无状态调用方（配置页自测入口）收敛到租户默认对话模型。
+
+        槽位能解析但模型构建不出来时**同样回退**，规则一致；两处都拿不到才返回 None
+        （调用方据此判为失败轮，最终以 degraded 收场）。
+
+        槽位解析复用 F058，不自己推导 —— 那一列存的是 JSON 文本，解析规则不显然、踩过坑。
+
+        ``BishengLLM`` 除 model_id 外还要 app_id / app_type / app_name / user_id 四个必填
+        字段（只给 model_id 会直接 ValidationError），所以构造必须走 ``_build`` 补齐；
+        先前这里只传 model_id，等于这条路从来没成功过。``user_id`` 是遥测归属，调用方
+        没带时记在数据源创建者名下，而不是编一个用户。
         """
         from bisheng.llm.domain.services.llm import LLMService
         from bisheng.llm.domain.services.model_slot import resolve_slot_model_id
 
+        invoker_id = user_id if user_id is not None else (datasource.user_id or 0)
+
+        def _build(target_id: int):
+            return LLMService.get_bisheng_llm_sync(
+                model_id=target_id,
+                app_id=ApplicationTypeEnum.DATASOURCE_SQL.value,
+                app_name=ApplicationTypeEnum.DATASOURCE_SQL.value,
+                app_type=ApplicationTypeEnum.DATASOURCE_SQL,
+                user_id=invoker_id,
+            )
+
         model_id = resolve_slot_model_id(datasource.tenant_id, ConfigKeyEnum.DATASOURCE_SQL_LLM.value)
-        if model_id is None:
+        if model_id is not None:
+            try:
+                return _build(model_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    'datasource SQL slot model {} could not be built; falling back to the conversation model',
+                    model_id,
+                )
+
+        fallback_id = await LLMService.aget_default_conversation_model_id(datasource.tenant_id)
+        # 回退目标与槽位同 id 说明刚才已经构建失败过，别再试一遍同一个烫手模型
+        if fallback_id is None or fallback_id == model_id:
             return None
         try:
-            return LLMService.get_bisheng_llm_sync(model_id=model_id)
+            return _build(fallback_id)
         except Exception:
             logger.opt(exception=True).warning(
-                'datasource SQL slot model {} could not be built; treating as unconfigured', model_id
+                'default conversation model {} could not be built; datasource SQL generation will degrade',
+                fallback_id,
             )
             return None
 

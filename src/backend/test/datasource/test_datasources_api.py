@@ -280,7 +280,7 @@ def test_no_route_can_be_shadowed_by_the_id_route():
     `test_the_failure_list_route_is_reachable_not_shadowed_by_the_id_route`;
     this one is the guard that covers a route added later.
     """
-    from bisheng.datasource.api.endpoints import datasources, failures, test_connection
+    from bisheng.datasource.api.endpoints import datasources, failures, test_connection, test_query
 
     # Matched on `path_format` (Starlette's conversion-free spelling) so this
     # keeps working whichever convertor the id route declares.
@@ -292,7 +292,7 @@ def test_no_route_can_be_shadowed_by_the_id_route():
     assert id_routes, 'the id route moved; this test is no longer checking anything'
 
     literals = set()
-    for module in (datasources, test_connection, failures):
+    for module in (datasources, test_connection, test_query, failures):
         for route in module.router.routes:
             # Only the single-segment case is ambiguous; anything with a second
             # segment cannot collide with `{datasource_id}`.
@@ -445,7 +445,7 @@ async def test_sending_only_the_description_leaves_the_overrides_alone():
     and they are NOT upgraded in step with the server -- so a save that never
     mentioned the overrides must not clear them.
     """
-    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+    with patch.object(ep, 'require_manage', AsyncMock()), patch(
         _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
     ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
         ep.schema_service, 'update_column_overrides', AsyncMock()
@@ -465,7 +465,7 @@ async def test_sending_only_the_overrides_leaves_the_description_alone():
     """The mirror image: the dialog can edit the field list without touching the
     textarea above it, and that edit must not blank the description.
     """
-    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+    with patch.object(ep, 'require_manage', AsyncMock()), patch(
         _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
     ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
         ep.schema_service, 'update_column_overrides', AsyncMock()
@@ -481,7 +481,7 @@ async def test_sending_only_the_overrides_leaves_the_description_alone():
 
 
 async def test_sending_both_writes_both():
-    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+    with patch.object(ep, 'require_manage', AsyncMock()), patch(
         _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
     ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
         ep.schema_service, 'update_column_overrides', AsyncMock()
@@ -500,7 +500,7 @@ async def test_an_explicit_null_clears_the_overrides():
     """`null` is a VALUE, not an omission -- it is how the admin removes the last
     override, and folding it into "not submitted" would make clearing impossible.
     """
-    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+    with patch.object(ep, 'require_manage', AsyncMock()), patch(
         _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
     ), patch.object(ep.schema_service, 'update_column_overrides', AsyncMock()) as overrides:
         await ep.update_table_description(
@@ -514,7 +514,7 @@ async def test_an_explicit_null_clears_the_overrides():
 
 async def test_a_payload_with_neither_field_writes_nothing():
     """An empty body is a no-op, not a clear-everything."""
-    with patch.object(ep, '_require_manage', AsyncMock()), patch(
+    with patch.object(ep, 'require_manage', AsyncMock()), patch(
         _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
     ), patch.object(ep.schema_service, 'update_description', AsyncMock()) as desc, patch.object(
         ep.schema_service, 'update_column_overrides', AsyncMock()
@@ -533,7 +533,7 @@ async def test_the_overrides_are_gated_by_the_datasource_permission_check():
     become a way for someone who cannot manage the datasource to write into it,
     and it must not be written BEFORE the check either.
     """
-    with patch.object(ep, '_require_manage', AsyncMock(side_effect=DatasourceNotFoundError())), patch(
+    with patch.object(ep, 'require_manage', AsyncMock(side_effect=DatasourceNotFoundError())), patch(
         _TABLE_DAO, AsyncMock(return_value=[SimpleNamespace(id=5, datasource_id=7)])
     ), patch.object(ep.schema_service, 'update_column_overrides', AsyncMock()) as overrides:
         with pytest.raises(DatasourceNotFoundError):

@@ -1131,6 +1131,28 @@ class LLMService:
         return cfg
 
     @classmethod
+    async def aget_default_conversation_model_id(cls, tenant_id: int | None = None) -> int | None:
+        """租户的默认对话模型 id；租户没有配任何对话模型时返回 None。
+
+        「默认」= ``assistant_llm.llm_list`` 里 ``default=True`` 的那项，空则取第一项 ——
+        与 ``get_assistant_llm_list`` 的口径一致，且 ``set_default_model`` 在列表为空时
+        会种入一个 default 项，所以该列表非空是有维护的不变量、不是猜测。
+
+        存在的理由：F061 的 AC-27 要求「数据源 SQL 槽位未配置时回退到**本轮对话**的模型」，
+        而没有「本轮」的无状态调用方（配置页的自测入口）需要一个确定的回退目标，
+        于是收敛到租户默认对话模型 —— 这也是不带 assistant 指定的普通对话会用的那个。
+        """
+        try:
+            assistant_llm = await cls.get_assistant_llm(tenant_id)
+        except Exception:
+            logger.opt(exception=True).warning('resolve default conversation model failed')
+            return None
+        if not assistant_llm or not assistant_llm.llm_list:
+            return None
+        default_item = next((one for one in assistant_llm.llm_list if one.default), None)
+        return (default_item or assistant_llm.llm_list[0]).model_id
+
+    @classmethod
     async def aget_assistant_llm_with_meta(
         cls,
         tenant_id: int | None = None,

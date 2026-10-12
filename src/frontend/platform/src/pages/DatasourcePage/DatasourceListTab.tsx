@@ -20,11 +20,12 @@ import {
 } from "@/controllers/API/datasource";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { useDebounce } from "@/util/hook";
-import { Plus, Shield, Table2 } from "lucide-react";
+import { PlayCircle, Plus, Shield, Table2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DatasourceFormDialog } from "./DatasourceFormDialog";
 import { DatasourceTablesView } from "./DatasourceTablesView";
+import { TestQueryDialog } from "./TestQueryDialog";
 import { engineLabelKey } from "./datasourceConstants";
 import type { DatasourceQueries } from "./useDatasourceQueries";
 
@@ -204,6 +205,14 @@ export function DatasourceListTab({ queries }: Props) {
                       <Table2 className="mr-1 size-4" />
                       {t("datasource.list.tables")}
                     </Button>
+                    {/* Sits beside 「表」 because both mean "use this datasource";
+                        icon-only like 授权, since a sixth text label would wrap
+                        the row. */}
+                    <TestQueryDialog datasource={row}>
+                      <Button variant="ghost" size="sm" title={t("datasource.list.test")}>
+                        <PlayCircle className="size-4" />
+                      </Button>
+                    </TestQueryDialog>
                     <Button
                       variant="ghost"
                       size="sm"

@@ -199,7 +199,7 @@ async def test_build_requires_an_authorization_context():
     `user_id=None` default, so the mistake is one keyword away.
     """
     with patch(
-        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        'bisheng.datasource.domain.services.schema_service.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=[]),
     ):
         with pytest.raises(ValueError, match='login_user'):
@@ -210,7 +210,7 @@ async def test_build_keeps_the_context_on_the_tool_it_returns():
     """The built tool must carry what the per-call check needs; dropping it here
     would put every tool back into the fail-closed branch."""
     with patch(
-        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        'bisheng.datasource.domain.services.schema_service.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=[]),
     ):
         tools = await build_datasource_tools([_datasource(7)], user_id=3, login_user=_User())
