@@ -2,8 +2,9 @@
 # 密码必须是 Fernet 密文：Settings.set_database_url / set_redis_url 在加载时无条件
 # 调用 decrypt_token()，写明文会直接抛 InvalidToken 导致启动失败。
 # 加密工具：bisheng/core/config/settings.py::encrypt_token
-database_url:
-  "mysql+pymysql://root:gAAAAABlp4b4c59FeVGF_OQRVf6NOUIGdxq8246EBD-b0hdK_jVKRs1x4PoAn0A6C5S6IiFKmWn0Nm5eBUWu-7jxcqw6TiVjQA==@127.0.0.1:3306/bisheng?charset=utf8mb4"
+#database_url:
+#  "mysql+pymysql://root:gAAAAABqzE_HJa5FJCm6Q338o9ZsbAjNEjNZR3N2JAF7eqjMPGgmc5ANMOjbT1surVrwmhXZXJcIcl7-XkKkDBMWI9lsG6bocA==@127.0.0.1:3306/bisheng_database?charset=utf8mb4"
+database_url: "mysql+pymysql://root:gAAAAABqzKZdM9XjMXjqSMkyArcR_LSfpbXsliC_t83zePyQvU7yDhEHLuh2pjQGj3HLlJbXaM9Jng6LQdBiXe8wc3OQsN3Org==@172.19.70.107:3306/bisheng?charset=utf8mb4"
 
 database_pool:
   pool_size: 50      # 每进程常驻连接数
@@ -15,14 +16,14 @@ database_pool:
     enabled: false
 
 # 缓存（该 Redis 实例未设密码，故 URL 中无凭据段；无 @ 时不会触发解密）
-redis_url: "redis://127.0.0.1:6379/1"
+redis_url: "redis://172.19.70.107:6379/1"
 
 # Celery broker（与缓存分库，避免 Celery 运维操作清掉业务缓存）
-celery_redis_url: "redis://127.0.0.1:6379/2"
+celery_redis_url: "redis://172.19.70.107:6379/2"
 
 openfga:
   enabled: true
-  api_url: "http://127.0.0.1:18080"
+  api_url: "http://172.19.70.107:8080"
 
 sso_sync:
   gateway_hmac_secret: "bisheng-local-hmac-20260422"
@@ -54,7 +55,7 @@ vector_stores:
     is_partition: 'true'
     partition_suffix: '1'
   elasticsearch:
-    url: 'http://127.0.0.1:9200'
+    url: 'http://172.19.70.107:9200'
     ssl_verify: '{}'
 
 object_storage:
@@ -62,11 +63,11 @@ object_storage:
   minio:
     schema: 'false'
     cert_check: 'false'
-    endpoint: '127.0.0.1:9100'
+    endpoint: '172.19.70.108:9000'
     # sharepoint 必须与 endpoint 主机名完全一致，否则预签名 URL 的 SigV4 Host 校验失败 → 全部 403
-    sharepoint: '127.0.0.1:9100'
+    sharepoint: '172.19.70.108:9000'
     access_key: 'minioadmin'
-    secret_key: 'minioadmin'
+    secret_key: '9b97b6ab85e4ee35ec51c5033f0b6a96'
     public_bucket: 'bisheng'
     tmp_bucket: 'tmp-dir'
   # 本地文件系统存储：type 改为 local 后生效（此时 minio 段可留可删）
