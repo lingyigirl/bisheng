@@ -266,7 +266,7 @@ async def test_one_tool_per_datasource_and_only_the_exposed_tables(monkeypatch):
                         column_overrides=None),
     ]
     with patch(
-        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        'bisheng.datasource.domain.services.schema_service.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=rows),
     ) as alist:
         tools = await build_datasource_tools(
@@ -295,7 +295,7 @@ async def test_the_tool_carries_the_field_overrides(monkeypatch):
                         column_overrides={'amount': '含税金额'}),
     ]
     with patch(
-        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        'bisheng.datasource.domain.services.schema_service.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=rows),
     ):
         tools = await build_datasource_tools([_datasource(7)], user_id=3, login_user=_AllowedUser())
@@ -311,7 +311,7 @@ async def test_a_row_with_no_overrides_reaches_the_tool_as_an_empty_mapping(monk
                         structure_snapshot=[], column_overrides=None),
     ]
     with patch(
-        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        'bisheng.datasource.domain.services.schema_service.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=rows),
     ):
         tools = await build_datasource_tools([_datasource(7)], user_id=3, login_user=_AllowedUser())
@@ -323,7 +323,7 @@ async def test_the_datasource_name_is_in_the_tool_description(monkeypatch):
     """With several tools, the description is what lets the model choose, and
     what the answer's source line shows."""
     with patch(
-        'bisheng.datasource.domain.langchain.tool.DbDatasourceTableDao.alist_by_datasource',
+        'bisheng.datasource.domain.services.schema_service.DbDatasourceTableDao.alist_by_datasource',
         AsyncMock(return_value=[]),
     ):
         tools = await build_datasource_tools(

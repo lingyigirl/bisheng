@@ -24,12 +24,14 @@ knowledges: # 知识库相关配置
       useChartRecognition: false
   financial_report_ocr:
     # 外部财务报表 OCR 服务地址，例如 http://xxx/ocr/v1/financial_report
-    url: ""
+    url: "http://10.12.1.29:28121/ocr/v1/table_multi"
     timeout: 60
     headers: {}
-    request_kwargs: {}
+    request_kwargs:
+        app_key:""
+        app_secret:""
     request_mode: "multipart" # multipart 或 base64_json
-    file_field: "file"
+    file_field: "image_binary"
   version_management:
     enabled: false
     simhash_similarity_threshold: 0.85

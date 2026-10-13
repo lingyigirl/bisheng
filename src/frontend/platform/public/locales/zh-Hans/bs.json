@@ -2402,6 +2402,7 @@
       "enabled": "启用",
       "disabled": "停用",
       "tables": "表",
+      "test": "试问",
       "edit": "编辑",
       "authorize": "授权",
       "enable": "启用",
@@ -2415,6 +2416,17 @@
       "inUseAssistants": "助手：{{names}}",
       "inUseFlows": "流程：{{names}}",
       "inUseOk": "知道了"
+    },
+    "testQuery": {
+      "title": "试问「{{name}}」",
+      "description": "用一句自然语言试一下这个数据源，看生成的 SQL 和查询结果。不保存记录。",
+      "placeholder": "例如：上个月的订单总额是多少",
+      "run": "查询",
+      "sqlLabel": "生成的 SQL",
+      "triedLabel": "尝试过的语句",
+      "resultCount": "共 {{count}} 行",
+      "empty": "查询成功，但没有返回数据",
+      "truncated": "结果已截断，仅显示前若干行"
     },
     "form": {
       "createTitle": "新建数据源",

@@ -270,3 +270,31 @@ export async function listQueryFailuresApi(params: {
 }): Promise<PagedResult<QueryFailureRow>> {
   return await axios.get(`/api/v1/datasource/query-failures`, { params });
 }
+
+/**
+ * The config page's self-test: one question through the NL->SQL path.
+ *
+ * A failed query is NOT an error here — the endpoint answers 200 with
+ * `degraded: true` and the statements it tried, because what the model
+ * attempted is the whole point of the box. Only 11708 (not found / not yours)
+ * rejects.
+ */
+export interface DatasourceTestQueryResult {
+  answer: string;
+  degraded: boolean;
+  failure_category: string | null;
+  statement: string | null;
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+  truncated: boolean;
+  /** Every statement the model tried, in order. On failure this is the payload. */
+  statements_tried: string[];
+}
+
+export async function testDatasourceQueryApi(
+  datasourceId: number,
+  question: string,
+): Promise<DatasourceTestQueryResult> {
+  return await axios.post(`/api/v1/datasource/${datasourceId}/test-query`, { question });
+}

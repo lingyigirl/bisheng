@@ -2457,6 +2457,7 @@
       "enabled": "Enabled",
       "disabled": "Disabled",
       "tables": "Tables",
+      "test": "Test",
       "edit": "Edit",
       "authorize": "Authorize",
       "enable": "Enable",
@@ -2470,6 +2471,17 @@
       "inUseAssistants": "Assistants: {{names}}",
       "inUseFlows": "Workflows: {{names}}",
       "inUseOk": "Got it"
+    },
+    "testQuery": {
+      "title": "Test datasource {{name}}",
+      "description": "Ask one question in plain language to see the generated SQL and its result. Nothing is saved.",
+      "placeholder": "e.g. What was last month's total order amount?",
+      "run": "Run",
+      "sqlLabel": "Generated SQL",
+      "triedLabel": "Statements tried",
+      "resultCount": "{{count}} rows",
+      "empty": "Query succeeded but returned no rows",
+      "truncated": "Results truncated to the first rows"
     },
     "form": {
       "createTitle": "New Datasource",

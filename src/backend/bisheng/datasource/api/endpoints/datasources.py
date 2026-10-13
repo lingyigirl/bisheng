@@ -420,7 +420,7 @@ class TableDescriptionPayload(BaseModel):
     )
 
 
-async def _require_manage(datasource_id: int, login_user) -> None:
+async def require_manage(datasource_id: int, login_user) -> None:
     """Refuse unless the caller may manage this datasource.
 
     Every table endpoint goes through here: the metadata describes a datasource,
@@ -462,7 +462,7 @@ async def list_available_tables(
     accessible table on a 100-table schema is work nobody asked for. The
     structure is collected for the tables that get picked.
     """
-    await _require_manage(datasource_id, login_user)
+    await require_manage(datasource_id, login_user)
 
     with strict_tenant_filter():
         datasource = await DbDatasourceDao.aget_by_id(datasource_id)
@@ -501,7 +501,7 @@ async def list_datasource_tables(
     the snapshot is what the model sees, so it is what the admin should be
     judging their description against.
     """
-    await _require_manage(datasource_id, login_user)
+    await require_manage(datasource_id, login_user)
     return resp_200({'data': await schema_service.list_tables_for_admin(datasource_id)})
 
 
@@ -516,7 +516,7 @@ async def select_datasource_tables(
     Unticking sets `enabled=0` rather than deleting: the admin's description
     survives, which is what makes an untick reversible.
     """
-    await _require_manage(datasource_id, login_user)
+    await require_manage(datasource_id, login_user)
     changed = await schema_service.set_exposed(datasource_id, payload.table_names)
     return resp_200({'changed': changed})
 
@@ -533,7 +533,7 @@ async def collect_datasource_tables(
     `refresh_tables` is the snapshot update. `truncated` is reported rather than
     swallowed -- a silently capped collect reads as "your schema is complete".
     """
-    await _require_manage(datasource_id, login_user)
+    await require_manage(datasource_id, login_user)
 
     with strict_tenant_filter():
         datasource = await DbDatasourceDao.aget_by_id(datasource_id)
@@ -573,7 +573,7 @@ async def update_table_description(
     if not rows:
         raise DatasourceNotFoundError()
 
-    await _require_manage(rows[0].datasource_id, login_user)
+    await require_manage(rows[0].datasource_id, login_user)
 
     # Presence, not value, decides what is written. After validation an absent
     # key and an explicit `null` are both `None`, so `model_fields_set` is the

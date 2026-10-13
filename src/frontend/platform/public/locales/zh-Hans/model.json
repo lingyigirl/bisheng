@@ -58,6 +58,7 @@
     "assistantModel": "助手模型",
     "evaluationModel": "评测模型",
     "workflowModel": "工作流模型",
+    "docExtractModel": "文档抽取模型",
     "defaultEmbeddingModel": "知识库默认embedding模型",
     "sourceTracingModel": "知识库溯源模型",
     "workVectorModel": "工作台向量模型",

@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { isGlobalSuperUser } from "./permissions";
 import { ScopeBanner } from "./SystemConfigBanners";
 import AssisModel from "./tabs/AssisModel";
+import DocExtractModel from "./tabs/DocExtractModel";
 import EvaluationModel from "./tabs/EvaluationModel";
 import KnowledgeModle from "./tabs/KnowledgeModel";
 import WorkflowModel from "./tabs/WorkflowModel";
@@ -137,12 +138,13 @@ export default function SystemModelConfig({
                     }}
                     className="flex flex-col"
                 >
-                    <TabsList className="w-[550px] m-auto">
+                    <TabsList className="w-[760px] m-auto">
                         <TabsTrigger value="workbench" className="w-[150px]">{t('model.workModel')}</TabsTrigger>
                         <TabsTrigger value="knowledge" className="w-[150px]">{t('model.knowledgeBaseModel')}</TabsTrigger>
                         <TabsTrigger value="assis" className="w-[150px]">{t('model.assistantModel')}</TabsTrigger>
                         <TabsTrigger value="evaluation" className="w-[150px]">{t('model.evaluationModel')}</TabsTrigger>
                         <TabsTrigger value="workflow" className="w-[150px]">{t('model.workflowModel')}</TabsTrigger>
+                        <TabsTrigger value="doc_extract" className="w-[150px]">{t('model.docExtractModel')}</TabsTrigger>
                     </TabsList>
                      <TabsContent value="workbench">
                         <WorkbenchModel llmOptions={llmOptions} embeddings={embeddings} asrModel={asrModel} ttsModel={ttsModel} onBack={onBack}></WorkbenchModel>
@@ -158,6 +160,9 @@ export default function SystemModelConfig({
                     </TabsContent>
                     <TabsContent value="workflow">
                         <WorkflowModel llmOptions={llmOptions} onBack={onBack}></WorkflowModel>
+                    </TabsContent>
+                    <TabsContent value="doc_extract">
+                        <DocExtractModel llmOptions={llmOptions} onBack={onBack}></DocExtractModel>
                     </TabsContent>
                 </Tabs>
             </div>

@@ -140,7 +140,7 @@ class ParseAdapter:
         )
 
     #: Loaders that mean "an external recognition service did the reading".
-    _OCR_LOADER_NAMES = ('MineruLoader', 'PaddleOcrLoader', 'Etl4lmLoader')
+    _OCR_LOADER_NAMES = ('MineruLoader', 'PaddleOcrLoader', 'Etl4lmLoader', 'FinancialReportOcrLoader')
 
     @staticmethod
     def _route_for(loader_name: str) -> str:

@@ -30,8 +30,8 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from bisheng.datasource.domain.models.dao import DbDatasourceTableDao
 from bisheng.datasource.domain.models.datasource import DbDatasource
+from bisheng.datasource.domain.services import schema_service
 from bisheng.datasource.domain.services.query_service import DatasourceQueryService
 
 #: The relation a user needs to USE a datasource in a conversation. Deliberately
@@ -246,23 +246,9 @@ async def build_datasource_tools(
 
     tools: list[DatasourceQueryTool] = []
     for datasource in datasources:
-        rows = await DbDatasourceTableDao.alist_by_datasource(datasource.id, enabled_only=True)
-        tables = [
-            {
-                'table_name': row.table_name,
-                'table_comment': row.table_comment,
-                'business_desc': row.business_desc,
-                'structure_snapshot': row.structure_snapshot or [],
-                # F064: this is the SECOND place a table dict is built -- the
-                # admin list is the other (`schema_service.list_tables_for_admin`).
-                # They are independent, and omitting this key here is a silent
-                # half-failure: the admin's override shows in the UI, `render_table`
-                # and `_haystack` read it as absent, and the model answers from the
-                # raw in-database comment with nothing reporting a problem.
-                'column_overrides': row.column_overrides or {},
-            }
-            for row in rows
-        ]
+        # Shared with the config page's self-test endpoint so both hand the model
+        # the same view of the datasource (see `schema_service.alist_model_tables`).
+        tables = await schema_service.alist_model_tables(datasource.id)
         # `description` is passed EXPLICITLY. It is a required `BaseTool` field,
         # and the datasource object also carries a `description` attribute --
         # without this, pydantic would read the datasource's own description

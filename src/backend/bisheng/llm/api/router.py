@@ -393,6 +393,40 @@ async def update_workflow_llm(
     return resp_200(data=ret)
 
 
+@router.get("/doc_extract")
+async def get_doc_extract_llm(request: Request, login_user: UserPayload = Depends(UserPayload.get_login_user)):
+    """Get document-extraction model configuration (F058).
+
+    Until this route existed the slot had no writer anywhere in the product:
+    F058 required it to be configured (unconfigured is a hard 11608 before any
+    parsing), yet neither an endpoint nor a UI could set it — so the feature was
+    unreachable on a fresh install and the only way in was a hand-written row.
+    """
+    cfg, inherited, blocked = await LLMService.aget_doc_extract_llm_with_meta()
+    return resp_200(data=_envelope(cfg, inherited, blocked))
+
+
+@router.post("/doc_extract")
+async def update_doc_extract_llm(
+    request: Request,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    data: EvaluationLLMConfig = Body(..., description="Document extraction default model configuration"),
+):
+    """Update document-extraction model configuration"""
+    target = _resolve_write_target(login_user)
+    await _assert_can_write_system_config(login_user, target)
+    before = await _read_before_snapshot(target, ConfigKeyEnum.DOC_EXTRACT_LLM.value)
+    ret = await LLMService.update_doc_extract_llm(data, tenant_id=target)
+    await _audit_system_config_update(
+        login_user,
+        ConfigKeyEnum.DOC_EXTRACT_LLM.value,
+        target,
+        before=before,
+        after=data.model_dump(),
+    )
+    return resp_200(data=ret)
+
+
 @router.get("/assistant/llm_list")
 async def get_assistant_llm_list(request: Request, login_user: UserPayload = Depends(UserPayload.get_login_user)):
     """Get a list of optional models for the assistant"""

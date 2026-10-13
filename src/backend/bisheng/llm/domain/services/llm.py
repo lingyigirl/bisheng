@@ -1131,6 +1131,28 @@ class LLMService:
         return cfg
 
     @classmethod
+    async def aget_default_conversation_model_id(cls, tenant_id: int | None = None) -> int | None:
+        """租户的默认对话模型 id；租户没有配任何对话模型时返回 None。
+
+        「默认」= ``assistant_llm.llm_list`` 里 ``default=True`` 的那项，空则取第一项 ——
+        与 ``get_assistant_llm_list`` 的口径一致，且 ``set_default_model`` 在列表为空时
+        会种入一个 default 项，所以该列表非空是有维护的不变量、不是猜测。
+
+        存在的理由：F061 的 AC-27 要求「数据源 SQL 槽位未配置时回退到**本轮对话**的模型」，
+        而没有「本轮」的无状态调用方（配置页的自测入口）需要一个确定的回退目标，
+        于是收敛到租户默认对话模型 —— 这也是不带 assistant 指定的普通对话会用的那个。
+        """
+        try:
+            assistant_llm = await cls.get_assistant_llm(tenant_id)
+        except Exception:
+            logger.opt(exception=True).warning('resolve default conversation model failed')
+            return None
+        if not assistant_llm or not assistant_llm.llm_list:
+            return None
+        default_item = next((one for one in assistant_llm.llm_list if one.default), None)
+        return (default_item or assistant_llm.llm_list[0]).model_id
+
+    @classmethod
     async def aget_assistant_llm_with_meta(
         cls,
         tenant_id: int | None = None,
@@ -1349,6 +1371,48 @@ class LLMService:
     ) -> tuple[EvaluationLLMConfig, bool, bool]:
         return await cls._aget_typed_with_meta(
             ConfigKeyEnum.WORKFLOW_LLM,
+            EvaluationLLMConfig,
+            tenant_id,
+        )
+
+    @classmethod
+    async def update_doc_extract_llm(
+        cls,
+        data: EvaluationLLMConfig,
+        tenant_id: int | None = None,
+    ) -> EvaluationLLMConfig:
+        """Update the document-extraction default model (F058).
+
+        ``EvaluationLLMConfig`` is reused deliberately, exactly as the workflow
+        scene above reuses it: the payload is a single ``model_id``, and a
+        per-scene subclass would be three identical classes with different
+        docstrings.
+        """
+        target = _resolve_tenant_id(tenant_id)
+        await avalidate_system_model_refs([data.model_id], target)
+        await cls._base_update_llm_config(
+            data=data.model_dump(),
+            key=ConfigKeyEnum.DOC_EXTRACT_LLM,
+            tenant_id=tenant_id,
+        )
+        return data
+
+    @classmethod
+    async def aget_doc_extract_llm_with_meta(
+        cls,
+        tenant_id: int | None = None,
+    ) -> tuple[EvaluationLLMConfig, bool, bool]:
+        """Read the document-extraction model slot.
+
+        F058 resolves this slot through ``extraction_service`` rather than here,
+        reading it straight from ``tenant_system_model_config``. Both paths end
+        at the same row, and ``parse_model_slot_value`` owns the parsing either
+        way -- what this adds is the standard GET envelope (``inherited`` /
+        ``blocked``) that the model-management UI needs, which the extraction
+        path has no use for.
+        """
+        return await cls._aget_typed_with_meta(
+            ConfigKeyEnum.DOC_EXTRACT_LLM,
             EvaluationLLMConfig,
             tenant_id,
         )

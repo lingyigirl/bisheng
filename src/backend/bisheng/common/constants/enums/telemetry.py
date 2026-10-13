@@ -35,6 +35,11 @@ class ApplicationTypeEnum(str, Enum):
     # Distinct from KNOWLEDGE_BASE so telemetry and cost attribution can tell
     # the two apart -- they use different model slots by design (decision 10).
     DOC_EXTRACT = "doc_extract"
+    # F061: natural-language queries against a configured datasource (NL->SQL).
+    # Distinct from DOC_EXTRACT for the same reason that one is distinct from
+    # KNOWLEDGE_BASE -- it has its own model slot (`datasource_sql_llm`), so
+    # telemetry and cost attribution have to be able to tell them apart.
+    DATASOURCE_SQL = "datasource_sql"
 
     UNKNOWN = "unknown"
 

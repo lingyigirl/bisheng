@@ -2402,6 +2402,7 @@
       "enabled": "有効",
       "disabled": "無効",
       "tables": "テーブル",
+      "test": "試し問い合わせ",
       "edit": "編集",
       "authorize": "権限設定",
       "enable": "有効化",
@@ -2415,6 +2416,17 @@
       "inUseAssistants": "アシスタント：{{names}}",
       "inUseFlows": "ワークフロー：{{names}}",
       "inUseOk": "了解しました"
+    },
+    "testQuery": {
+      "title": "「{{name}}」に試し問い合わせ",
+      "description": "自然言語でひとつ質問し、生成された SQL と結果を確認します。記録は保存されません。",
+      "placeholder": "例：先月の注文合計金額はいくらですか",
+      "run": "実行",
+      "sqlLabel": "生成された SQL",
+      "triedLabel": "試行したステートメント",
+      "resultCount": "{{count}} 行",
+      "empty": "クエリは成功しましたが、データが返りませんでした",
+      "truncated": "結果は切り詰められ、先頭の行のみ表示しています"
     },
     "form": {
       "createTitle": "データソース新規作成",
