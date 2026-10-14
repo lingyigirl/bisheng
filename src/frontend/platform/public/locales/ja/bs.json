@@ -785,6 +785,7 @@
     "status": "ステータス",
     "score": "評価スコア",
     "download": "ダウンロード",
+    "downloadReport": "評価レポートをダウンロード",
     "confirmDeleteEvaluation": "この評価タスクを削除しますか？",
     "createTitle": "新規タスク",
     "selectLabel": "評価対象アプリケーション：",

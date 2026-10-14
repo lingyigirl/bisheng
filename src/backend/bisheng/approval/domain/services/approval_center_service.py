@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+
+from loguru import logger
 
 from bisheng.approval.domain.models.approval_instance import (
     ApprovalActionLog,
@@ -28,6 +31,37 @@ from bisheng.database.models.audit_log import AuditLogDao
 from bisheng.database.models.department import DepartmentDao, UserDepartmentDao
 from bisheng.user.domain.models.user import UserDao
 from bisheng.user.domain.services.auth import LoginUser
+
+
+# F066: the approval scenario whose detail carries an evaluation report block.
+_AGENT_PUBLISH_SCENARIO = "agent_publish_request"
+
+
+def _build_evaluation_report_block(instance) -> dict:
+    """F066: evaluation report shown on an agent-publish approval detail.
+
+    Injected here (not in the scenario handler's ``build_detail``) because that
+    is frozen at submit time while the report may only be produced afterwards.
+    Never raises — a missing report must not break the approval page, and the
+    report is reference-only (spec AC-11/AC-12).
+    """
+    payload = instance.payload_snapshot or {}
+    app_id = payload.get("app_id")
+    if not app_id:
+        return {"available": False}
+    try:
+        from bisheng.evaluation.domain.repositories.evaluation_repository import EvaluationRepository
+        from bisheng.evaluation.domain.services.evaluation_report import build_report_summary
+
+        # Assistants carry no version — match the app id alone.
+        version = None if payload.get("app_type") == "assistant" else payload.get("version_id")
+        evaluation = EvaluationRepository.get_latest_success_by_app_version(str(app_id), version)
+        if not evaluation:
+            return {"available": False}
+        return build_report_summary(evaluation, app_name=instance.business_name)
+    except Exception as e:
+        logger.warning("approval evaluation report block failed instance={}: {}", instance.id, e)
+        return {"available": False}
 
 
 class _SystemLoginUser:
@@ -155,6 +189,12 @@ class ApprovalCenterService:
             revoked_ids = await UserMenuAccessRepository.get_revoked_instance_ids([instance.id])
             grant_revoked = instance.id in revoked_ids
 
+        # F066: agent-publish approvals carry the app's evaluation report (reference
+        # only). Built off the event loop — it reads a CSV from MinIO and generates xlsx.
+        evaluation_report = None
+        if instance.scenario_code == _AGENT_PUBLISH_SCENARIO:
+            evaluation_report = await asyncio.to_thread(_build_evaluation_report_block, instance)
+
         return {
             "task_id": task.id,
             "instance_id": task.instance_id,
@@ -164,6 +204,7 @@ class ApprovalCenterService:
             "status": task.status,
             "instance_status": instance.status,
             "grant_revoked": grant_revoked,
+            "evaluation_report": evaluation_report,
             "current_node_name": task.node_name,
             "comment": task.comment,
             "detail_snapshot": instance.detail_snapshot,

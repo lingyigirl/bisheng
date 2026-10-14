@@ -13,12 +13,13 @@ import {
   type ApprovalInstanceItem,
   type ApprovalTaskDetail,
   type ApprovalTaskItem,
+  type EvaluationReportBlock,
   withdrawApprovalInstanceApi,
 } from "~/api/approval";
 import { useToastContext } from "~/Providers";
 import { NotificationSeverity } from "~/common";
 import { useLocalize } from "~/hooks";
-import { cn } from "~/utils";
+import { cn, downloadFile } from "~/utils";
 import { Dialog, DialogContent } from "../ui/Dialog";
 import { ExpandableSearchField } from "../ui/ExpandableSearchField";
 
@@ -137,6 +138,10 @@ const DETAIL_INTERNAL_KEYS = new Set(["menu_key", "space_id", "channel_id", "app
 
 function localizeFieldKey(key: string, localize: ReturnType<typeof useLocalize>): string {
   const map: Record<string, string> = {
+    // F066: the agent-publish detail carries app_name/app_type — label them
+    // instead of falling through to the raw key.
+    app_name:      localize("com_approval_field_app_name"),
+    app_type:      localize("com_approval_field_app_type"),
     menu_key:      localize("com_approval_field_menu_key" as any),
     menu_name:     localize("com_approval_field_menu_name" as any),
     reason:        localize("com_approval_field_reason" as any),
@@ -679,6 +684,62 @@ function DetailHeader({ title, status, instanceStatus, scope, serialNo, scenario
   );
 }
 
+// F066: the evaluation report of the app/version being published, shown to the
+// approver as a reference — it never gates the decision (spec AC-12).
+function EvaluationReportSection({ report, localize }: { report: EvaluationReportBlock; localize: ReturnType<typeof useLocalize> }) {
+  const handleDownload = () => {
+    if (!report.download_url) return;
+    // Presigned links may carry the storage host — normalize to the workspace
+    // origin so the dev/preview proxies resolve them (same as chat attachments).
+    const url = report.download_url.replace(/https?:\/\/[^/]+/, __APP_ENV__.BASE_URL);
+    downloadFile(url, report.download_file_name || "evaluation_report.xlsx");
+  };
+
+  const cell = (value: unknown): string => (value === null || value === undefined || value === "" ? "N/A" : String(value));
+  const rows: [string, string][] = [
+    [localize("com_approval_eval_report_evaluated_at"), cell(report.evaluated_at)],
+    [localize("com_approval_eval_report_dataset"), cell(report.data_set)],
+    [localize("com_approval_eval_report_question_count"), cell(report.question_count)],
+    [localize("com_approval_eval_report_f1"), cell(report.f1)],
+    [localize("com_approval_eval_report_recall"), cell(report.recall)],
+    [localize("com_approval_eval_report_precision"), cell(report.precision)],
+    [localize("com_approval_eval_report_success_rate"), cell(report.success_rate)],
+    [
+      localize("com_approval_eval_report_avg_duration"),
+      report.avg_duration_ms === null || report.avg_duration_ms === undefined ? "N/A" : `${report.avg_duration_ms} ms`,
+    ],
+    [
+      localize("com_approval_eval_report_token_rate"),
+      report.token_rate === null || report.token_rate === undefined ? "N/A" : `${report.token_rate} token/s`,
+    ],
+  ];
+
+  return (
+    <div>
+      <div className="mb-2 text-[14px] font-medium text-text-primary">{localize("com_approval_eval_report_section")}</div>
+      {report.available ? (
+        <>
+          <InfoGrid rows={rows} />
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="rounded-lg border border-blue-200 bg-[#E8F7FF] px-3 py-1.5 text-[13px] text-[#004DA4] hover:bg-blue-100"
+            >
+              {localize("com_approval_eval_report_download")}
+            </button>
+            <span className="text-[12px] text-text-3">{localize("com_approval_eval_report_reference_only")}</span>
+          </div>
+        </>
+      ) : (
+        <div className="rounded-lg bg-[#fafbfc] p-4 text-[14px] text-text-3">
+          {localize("com_approval_eval_report_empty")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TaskDetailPanel({ detail, localize, onBack }: { detail: ApprovalTaskDetail; localize: ReturnType<typeof useLocalize>; onBack?: () => void }) {
   const instanceId = detail.instance_id;
   const serialNo = instanceId ? formatSerialNo(instanceId, detail.create_time) : "--";
@@ -721,6 +782,10 @@ function TaskDetailPanel({ detail, localize, onBack }: { detail: ApprovalTaskDet
             {detailEntries.length % 2 === 1 && <div className="-ml-px bg-white" />}
           </div>
         </div>
+      )}
+
+      {detail.evaluation_report && (
+        <EvaluationReportSection report={detail.evaluation_report} localize={localize} />
       )}
 
       {detail.reason && (

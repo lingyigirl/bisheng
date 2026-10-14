@@ -2,7 +2,7 @@ from sqlalchemy import and_, func
 from sqlmodel import select
 
 from bisheng.core.database import get_sync_db_session
-from bisheng.evaluation.domain.models.evaluation import Evaluation, ExecType
+from bisheng.evaluation.domain.models.evaluation import Evaluation, EvaluationTaskStatus, ExecType
 
 
 class EvaluationRepository:
@@ -47,6 +47,28 @@ class EvaluationRepository:
                      Evaluation.user_id == user_id)
             )
             return list(session.exec(statement).all())
+
+    @classmethod
+    def get_latest_success_by_app_version(cls, unique_id: str, version: int | None = None) -> Evaluation | None:
+        """F066: the most recent successful evaluation of an app (and version).
+
+        Read from the approval detail, whose viewer is **not** the evaluation
+        owner — so this is deliberately not owner-scoped. Tenant scoping still
+        applies: the global session event injects ``tenant_id`` (constitution C3).
+        Pass ``version=None`` for assistants (they carry no version).
+        """
+        with get_sync_db_session() as session:
+            conditions = [
+                Evaluation.unique_id == str(unique_id),
+                Evaluation.is_delete == 0,
+                Evaluation.status == EvaluationTaskStatus.success.value,
+            ]
+            if version:
+                conditions.append(Evaluation.version == int(version))
+            statement = (
+                select(Evaluation).where(and_(*conditions)).order_by(Evaluation.update_time.desc()).limit(1)
+            )
+            return session.exec(statement).first()
 
     @classmethod
     def update_evaluation(cls, evaluation: Evaluation) -> Evaluation:

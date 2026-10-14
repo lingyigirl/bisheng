@@ -305,3 +305,6 @@ docs-ui-refactor/
 
 # CodeGraph index (per-developer; rebuilt locally by `codegraph init`, auto-syncs on edit)
 .codegraph/
+
+# 本地后端启动器的运行时状态(scripts\backend.ps1):进程 PID 与合并日志
+.run/

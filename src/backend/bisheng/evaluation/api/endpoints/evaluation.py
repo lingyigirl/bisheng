@@ -131,6 +131,20 @@ async def get_download_url(*, file_url: str, login_user: UserPayload = Depends(U
     return resp_200(data={"url": download_url})
 
 
+@router.get("/{evaluation_id}/report/download")
+def download_evaluation_report(
+    *,
+    evaluation_id: int,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """F066: generate the xlsx evaluation report (effect + performance) on demand.
+
+    Owner-only — same permission scope as the other evaluation endpoints. The
+    approver side reads the report through the approval detail payload instead.
+    """
+    return EvaluationService.get_report_download_url(evaluation_id, user_payload=login_user)
+
+
 @router.post("/{evaluation_id}/process", status_code=200)
 def process_evaluation(
     *,

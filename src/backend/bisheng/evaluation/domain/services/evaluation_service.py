@@ -3,6 +3,7 @@ import io
 import json
 import math
 import os
+import time
 from collections import defaultdict
 from io import BytesIO
 
@@ -17,6 +18,8 @@ from bisheng.api.v1.schemas import UnifiedResponseModel, resp_200
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.core.cache import InMemoryCache
 from bisheng.core.cache.redis_manager import get_redis_client_sync
+from bisheng.core.cache.utils import convert_encoding_cchardet
+from bisheng.core.logger import trace_id_var
 from bisheng.core.storage.minio.minio_manager import get_minio_storage_sync
 from bisheng.database.models.assistant import AssistantDao
 from bisheng.database.models.flow import FlowDao
@@ -24,6 +27,8 @@ from bisheng.database.models.flow_version import FlowVersion, FlowVersionDao
 from bisheng.evaluation.domain.models.evaluation import Evaluation, EvaluationTaskStatus, ExecType
 from bisheng.evaluation.domain.repositories.evaluation_repository import EvaluationRepository
 from bisheng.evaluation.domain.services.answer_correctness import compute_answer_correctness
+from bisheng.evaluation.domain.services.evaluation_metrics import collect_token_usage
+from bisheng.evaluation.domain.services.evaluation_report import build_and_upload_report
 from bisheng.llm.domain.services import LLMService
 from bisheng.user.domain.models.user import UserDao
 from bisheng.utils import generate_uuid
@@ -99,6 +104,50 @@ def build_result_table(result: dict, columns: list) -> tuple[list[dict], dict]:
         total_row_data[title] = value
     row_list.append(total_row_data)
     return row_list, total_dict
+
+
+# ---------------------------------------------------------------------------
+# F066: per-question performance metrics (采集于评测执行期，见 add_evaluation_task)
+# ---------------------------------------------------------------------------
+
+# Appended to the result CSV. unit_type 1 (text-like) deliberately keeps them out
+# of build_result_table's total-row aggregation — the report recomputes the
+# aggregates (success rate / avg / max / P95 / token rate) itself.
+PERF_COLUMNS: list[tuple[str, str, int]] = [
+    ("duration_ms", "duration_ms", 1),
+    ("input_token", "input_token", 1),
+    ("output_token", "output_token", 1),
+    ("first_token_ms", "first_token_ms", 1),
+    ("exec_status", "exec_status", 1),
+]
+
+
+def _perf_cell(value):
+    """Render a performance value into its result-CSV cell (``N/A`` when absent)."""
+    return value if value is not None else "N/A"
+
+
+def _attach_perf_columns(row_list: list[dict], csv_data: list[dict]) -> None:
+    """Copy the per-question performance metrics into the result rows.
+
+    ``row_list`` is positionally aligned with ``csv_data`` (the rows that were
+    scored, in order); the trailing total row added by ``build_result_table`` is
+    excluded — same rule as ``_overlay_form_question``.
+    """
+    for row, one in zip(row_list[: len(csv_data)], csv_data, strict=True):
+        row["duration_ms"] = _perf_cell(one.get("duration_ms"))
+        row["input_token"] = _perf_cell(one.get("input_token"))
+        row["output_token"] = _perf_cell(one.get("output_token"))
+        row["first_token_ms"] = _perf_cell(one.get("first_token_ms"))
+        row["exec_status"] = one.get("exec_status") or "success"
+
+
+async def _attach_token_metrics(row: dict, trace_id: str | None) -> None:
+    """Best-effort token metrics for one question (``None`` -> N/A, never raises)."""
+    usage = await asyncio.to_thread(collect_token_usage, trace_id) if trace_id else None
+    row["input_token"] = usage.get("input_token") if usage else None
+    row["output_token"] = usage.get("output_token") if usage else None
+    row["first_token_ms"] = usage.get("first_token_ms") if usage else None
 
 
 class EvaluationService:
@@ -257,6 +306,18 @@ class EvaluationService:
         return resp_200()
 
     @classmethod
+    def get_report_download_url(cls, evaluation_id: int, user_payload: UserPayload) -> UnifiedResponseModel:
+        """F066: build the xlsx report of one of the caller's evaluations and return its link.
+
+        The report is generated on demand (design 决策 3) — nothing is persisted.
+        """
+        evaluation = EvaluationRepository.get_user_one_evaluation(user_payload.user_id, evaluation_id)
+        if not evaluation:
+            raise HTTPException(status_code=404, detail="Evaluation not found")
+        data = build_and_upload_report(evaluation, user_name=cls.get_user_name(evaluation.user_id))
+        return resp_200(data=data)
+
+    @classmethod
     def get_user_name(cls, user_id: int):
         if not user_id:
             return "system"
@@ -344,13 +405,34 @@ class EvaluationService:
         return formatted_data
 
     @classmethod
+    def read_dataset_csv(cls, file_path: str) -> list[dict]:
+        """Read an evaluation dataset from MinIO and parse it as utf-8.
+
+        The dataset is stored as the **raw uploaded bytes** — the create endpoint
+        only transcodes in memory for validation (``endpoints/evaluation.py``),
+        so a CSV exported from Excel/WPS on Windows (GB18030) reaches
+        ``pd.read_csv`` as non-utf-8 bytes and crashes with ``UnicodeDecodeError``.
+        Normalize the encoding here before parsing; utf-8 input passes through
+        unchanged (``convert_encoding_cchardet`` is a no-op at low confidence and
+        when the detected encoding already equals the target).
+        """
+        file_data = cls.read_csv_file(file_path)
+        return cls.parse_csv(convert_encoding_cchardet(file_data.read(), "utf-8"))
+
+    @classmethod
     def get_redis_key(cls, evaluation_id: int):
         return f"evaluation_task_progress_{evaluation_id}"
 
 
 def execute_workflow_get_answer(
     workflow_info: FlowVersion, evaluation: Evaluation, question: str, form_values=None
-) -> str:
+) -> tuple[str, str]:
+    """Run one question through its workflow and return ``(answer, run_trace_id)``.
+
+    F066: the run ``unique_id`` is also the telemetry trace id used by the worker
+    (``trace_id_var``), so the caller can read this question's token usage back
+    from the telemetry index.
+    """
     # Initialize workflow
     unique_id = generate_uuid()
     workflow_id = evaluation.unique_id
@@ -417,7 +499,7 @@ def execute_workflow_get_answer(
                     break
             if answer is None:
                 raise Exception("Only Q&A type workflows are currently supported")
-            return answer
+            return answer, unique_id
         else:
             workflow.set_workflow_stop()
             raise Exception(f"workflow status is unknown: {status_info}")
@@ -433,8 +515,7 @@ async def add_evaluation_task(evaluation_id: int):
     redis_key = EvaluationService.get_redis_key(evaluation_id)
     redis_client = get_redis_client_sync()
     try:
-        file_data = EvaluationService.read_csv_file(evaluation.file_path)
-        csv_data = EvaluationService.parse_csv(file_data)
+        csv_data = EvaluationService.read_dataset_csv(evaluation.file_path)
         progress_increment = 80 / len(csv_data)
         current_progress = 0
         # F054: questions that failed execution (injected into the result rows)
@@ -450,9 +531,20 @@ async def add_evaluation_task(evaluation_id: int):
             gpts_agent = AssistantAgent(assistant_info=assistant, chat_id="", invoke_user_id=evaluation.user_id)
             await gpts_agent.init_assistant()
             for index, one in enumerate(csv_data):
-                messages = await gpts_agent.run(one.get("question"))
-                if len(messages):
-                    one["answer"] = messages[-1].content
+                # F066: a per-question trace id so this question's model_invoke
+                # telemetry can be attributed back (see evaluation_metrics).
+                eval_trace_id = f"eval-{evaluation_id}-{index}"
+                started = time.perf_counter()
+                trace_token = trace_id_var.set(eval_trace_id)
+                try:
+                    messages = await gpts_agent.run(one.get("question"))
+                    if len(messages):
+                        one["answer"] = messages[-1].content
+                finally:
+                    trace_id_var.reset(trace_token)
+                one["duration_ms"] = round((time.perf_counter() - started) * 1000)
+                one["exec_status"] = "success"
+                await _attach_token_metrics(one, eval_trace_id)
                 current_progress += progress_increment
                 redis_client.set(redis_key, round(current_progress))
         elif evaluation.exec_type == ExecType.WORKFLOW.value:
@@ -461,11 +553,15 @@ async def add_evaluation_task(evaluation_id: int):
                 raise Exception("workflow version info not found")
             # F054: per-question failure isolation — one bad question must not
             # abort the whole evaluation (spec AC-07); all-failed aborts (AC-08)
-            failed_rows: list[dict] = []
             valid_rows: list[dict] = []
             for index, one in enumerate(csv_data):
+                # F066: end-to-end duration is measured here (spans the Celery
+                # round-trip); token usage is read back by the question's run id.
+                started = time.perf_counter()
+                trace_id: str | None = None
+                failed = False
                 try:
-                    one["answer"] = await asyncio.to_thread(
+                    one["answer"], trace_id = await asyncio.to_thread(
                         execute_workflow_get_answer,
                         workflow_info,
                         evaluation,
@@ -474,10 +570,14 @@ async def add_evaluation_task(evaluation_id: int):
                     )
                     valid_rows.append(one)
                 except Exception as e:
+                    failed = True
                     reason = str(e)[:200]
                     logger.warning("evaluation={} question#{} failed: {}", evaluation_id, index + 1, reason)
                     one["answer"] = f"[执行失败] {reason}"
                     failed_rows.append(one)
+                one["duration_ms"] = round((time.perf_counter() - started) * 1000)
+                one["exec_status"] = "failed" if failed else "success"
+                await _attach_token_metrics(one, trace_id)
             if not valid_rows:
                 raise Exception(f"所有题目执行失败, 共 {len(failed_rows)} 题, 无有效答案可评分")
             csv_data = valid_rows
@@ -513,9 +613,13 @@ async def add_evaluation_task(evaluation_id: int):
         # cell so the downloaded result CSV shows which case each row belongs to.
         # The judge still scores against the original (empty) question.
         _overlay_form_question(row_list, csv_data)
+        # F066: per-question performance metrics (kept out of the total-row
+        # aggregation; the report recomputes its own aggregates).
+        _attach_perf_columns(row_list, csv_data)
         if failed_rows:
             _inject_failed_rows(row_list, failed_rows)
 
+        columns = columns + PERF_COLUMNS
         df = pd.DataFrame(data=row_list, columns=[one[1] for one in columns])
         result_file_path = EvaluationService.upload_result_file(df)
 
@@ -741,6 +845,13 @@ def _inject_failed_rows(row_list: list[dict], failed_rows: list[dict]) -> None:
                 "recall": "N/A",
                 "precision": "N/A",
                 "F1": "N/A",
+                # F066: a failed question still carries its measured duration; its
+                # token/effect metrics are N/A and excluded from every aggregate.
+                "duration_ms": _perf_cell(one.get("duration_ms")),
+                "input_token": _perf_cell(one.get("input_token")),
+                "output_token": _perf_cell(one.get("output_token")),
+                "first_token_ms": _perf_cell(one.get("first_token_ms")),
+                "exec_status": one.get("exec_status") or "failed",
             }
         )
     row_list.append(total_row)

@@ -160,6 +160,44 @@ done
 >
 > 另外 `config=config.yaml` 是**必需的环境变量**（指相对 `bisheng` 包目录的文件名）。
 
+### 3.0 一键启动 / 重启（推荐）
+
+上面几条命令已整合进 `scripts\backend.cmd`，**一个终端一条命令**拉起全部后端进程：
+
+```powershell
+.\scripts\backend.cmd
+```
+
+- 5 个进程（API + knowledge / workflow / beat + linsight）全部后台运行，
+  stdout 与 stderr **合并**写入 `.run/logs/<name>.log`，PID 记在 `.run/pids/<name>.pid`。
+- **重复执行 = 全部重启**：每次先停上一轮（含不是本脚本启动、但命令行指向本仓库的实例），
+  再重新拉起。不需要手工找进程、杀端口。
+- 主逻辑在 `scripts\backend.ps1`，`.cmd` 只是绕开 PowerShell 执行策略的一层包装。
+
+| 命令 | 作用 |
+|---|---|
+| `.\scripts\backend.cmd` | 重启全部服务 |
+| `.\scripts\backend.cmd -Stop` | 停止全部 |
+| `.\scripts\backend.cmd -Status` | 查看各服务运行状态 |
+| `.\scripts\backend.cmd -Logs api -Follow` | 跟踪某个服务的日志（`-Logs` 取值：`api` / `knowledge` / `workflow` / `beat` / `linsight`） |
+| `.\scripts\backend.cmd -Only api,workflow` | 只启动子集 |
+| `.\scripts\backend.cmd -DryRun` | **只打印**将要执行的命令，不启动也不终止任何进程 |
+| `.\scripts\backend.cmd -SelfTest` | 自检启动链路（用假进程跑完整闭环，不碰真实后端） |
+
+几点说明：
+
+- 脚本用 venv 里的 python 直接跑模块（`python -m uvicorn ...`），不再套 `uv run` 中间层 ——
+  少一层进程，PID 就是 python 自己的，重启时 `taskkill /T` 杀得干净。
+- 启动前会做环境自检：**pandoc 缺失直接中止启动**（理由见 §1.3 的「退出码 0 静默死亡」），
+  并探测 §2 的共享中间件连通性（可用 `-SkipNetCheck` 跳过）。
+- 启动后若某个进程秒退，会直接把该服务日志末尾打出来，不必干等 `/health` 超时。
+- 脚本对当前工作目录不敏感；`config=config.yaml` 由脚本自己设置。
+- ⚠️ `backend.ps1` **必须保持 UTF-8 带 BOM**。PowerShell 5.1 在中文 Windows 上会把无 BOM 的
+  UTF-8 按 GBK 解码，中文注释里可能还原出 `0x60`（反引号）被当成续行符，**吃掉下一行代码**。
+  用编辑器改完请确认 BOM 还在（`Format-Hex scripts\backend.ps1 | Select-Object -First 1` 应以 `EF BB BF` 开头）。
+
+> 下面 §3.1–§3.3 是等价的**手工命令**，排查单个服务、或想自己控制终端窗口时用。
+
 ### 3.1 后端 API 服务（必需）
 
 **Git Bash：**
@@ -261,6 +299,9 @@ Vite 会把 `/api/`、`/health` 代理到后端 `localhost:7860`。
 
 ## 4. 在 Trae 里启动
 
+> 如果只是想快速把后端跑起来（不需要断点调试），用 §3.0 的 `.\scripts\backend.cmd` 更省事；
+> 下面这节是**带调试器**的跑法。
+
 ### 4.1 选择解释器
 
 `Ctrl+Shift+P` → `Python: Select Interpreter` → 选择：
@@ -327,6 +368,9 @@ src\backend\.venv\Scripts\python.exe
 | 导出 Word 失败 | pandoc 未装或 `PYPANDOC_PANDOC` 失效 | 重新执行 §1.3 验证步骤 |
 | 音视频上传报 `ffmpeg is not installed` | 未装 ffmpeg | §1.4 |
 | 改了 `config.yaml` 但不生效 | DB 层配置在 Redis 里有 **100 秒 TTL 缓存** | 等 100 秒再试，别急着排查 |
+| 重启后 7860 仍被占用 | 残留进程没杀干净（常见于手工启的实例） | `.\scripts\backend.cmd -Stop`；仍不行用 `-Status` 查到 PID 后手工 `taskkill /PID <pid> /T /F` |
+| 脚本启动后某进程秒退、控制台无报错 | 多为 §1.3 / §2 的问题（pandoc、中间件） | 脚本会自动打印该服务日志末尾；也可 `-Logs <name>` 单独查看 |
+| 改完 `backend.ps1` 后行为诡异（变量取到空值） | 文件丢了 UTF-8 BOM，中文注释被 GBK 误读成续行符 | 重新保存为「UTF-8 带 BOM」，见 §3.0 的编码警告 |
 
 ---
 
@@ -336,3 +380,4 @@ src\backend\.venv\Scripts\python.exe
 |---|---|
 | 2026-10-13 | 首次编写。基于 Windows 10 Pro 19045 + Python 3.12.9 实测通过（`/health` 与 `/api/v1/env` 均返回 200） |
 | 2026-10-14 | 修正 §3.3 Linsight Worker 的启动命令：原文照抄了 09 号文档的 `python bisheng/linsight/worker.py`，**该写法在本机必然报 `ModuleNotFoundError: No module named 'bisheng'`**（脚本方式的 `sys.path[0]` 是脚本目录而非 cwd，且 `bisheng` 未装进 venv）。改为 `python -m bisheng.linsight.worker`，并补上 `PYTHONPATH=.` 备选与原理说明；§5 排查表同步更新 |
+| 2026-10-14 | 新增 §3.0 一键启动：`scripts\backend.ps1` + `scripts\backend.cmd` 把 §3.1–§3.3 的 5 条命令整合成一条，支持重复执行即重启、`-Stop` / `-Status` / `-Logs` / `-Only` / `-DryRun` / `-SelfTest`；§4、§5 同步补充说明 |
