@@ -214,13 +214,34 @@ uv run --frozen --no-sync celery -A bisheng.worker.main beat -l info
 
 ### 3.3 Linsight Worker（可选）
 
-灵思 Agent 框架走独立 Redis 队列，不是 Celery 任务：
+灵思 Agent 框架走独立 Redis 队列，不是 Celery 任务。
+
+⚠️ **这一节和 §3.1 / §3.2 不同：不能照抄 `09` 号文档的原命令形式，必须用 `-m` 或设 `PYTHONPATH`**，原因见下。
 
 ```bash
 cd src/backend
 export config=config.yaml
+
+# 推荐：以「模块」方式启动（会把 cwd 放进 sys.path，不依赖环境变量）
+uv run --frozen --no-sync python -m bisheng.linsight.worker --worker_num 4 --max_concurrency 5
+
+# 或：保留原命令形式，但必须补 PYTHONPATH
+export PYTHONPATH=.
 uv run --frozen --no-sync python bisheng/linsight/worker.py --worker_num 4 --max_concurrency 5
 ```
+
+**为什么原命令在本机必挂**：
+
+`python 路径/脚本.py` 这种写法，Python 放进 `sys.path[0]` 的是**脚本所在目录**
+（`src/backend/bisheng/linsight/`），**不是当前工作目录**；而 `bisheng` 包并未安装进 venv
+（`pip list` 里没有），本地完全靠 `sys.path` 上有 `src/backend` 才能 `import bisheng`。于是报
+`ModuleNotFoundError: No module named 'bisheng'`。
+
+对照：`uvicorn`、`celery` 自己会把 cwd 插进 `sys.path`，所以 §3.1 / §3.2 的命令不受影响；
+`data/manage.sh`、`docker/bisheng/entrypoint.sh` 里的同一命令之所以能用，是因为它们都显式
+`export PYTHONPATH=.`（容器 entrypoint 第 3 行、`data/backend.env` 里各一份）。
+
+以上 `-m` 与 `PYTHONPATH=.` 两种写法均已在本机实测通过（导入成功、`config.yaml` 正常加载、退出码 0）。
 
 ### 3.4 前端开发服务器（可选，只看后端可跳过）
 
@@ -299,7 +320,7 @@ src\backend\.venv\Scripts\python.exe
 |---|---|---|
 | `ModuleNotFoundError: No module named 'imp'`（构建 `sync` 时） | Python 3.12 移除了 `imp`，`sync` 是僵尸依赖 | 安装命令加 `--no-install-package sync`（§1.2） |
 | `import bisheng.main` **退出码 0、无 traceback、无输出** | pandoc 缺失触发导入期 `exit()` | 装 pandoc 并设 `PYPANDOC_PANDOC`，然后**重启终端/Trae**（§1.3） |
-| `ModuleNotFoundError: No module named 'bisheng'` | 工作目录不是 `src/backend` | `cd src/backend` 后重试（§3） |
+| `ModuleNotFoundError: No module named 'bisheng'` | ① 工作目录不是 `src/backend`；② **目录对了**但用的是 `python 路径/脚本.py` 形式（Linsight Worker 就是这个情况） | ① `cd src/backend`；② 改用 `python -m bisheng.xxx` 或先 `export PYTHONPATH=.`（§3.3） |
 | 启动报 `InvalidToken` | `config.yaml` 里数据库/Redis 密码被改成了明文 | 改回 Fernet 密文（§2） |
 | 启动卡住 / 连不上数据库、Redis | 内网不通或共享中间件未启动 | 跑 §2 的连通性自检脚本 |
 | `BrowserType.launch: Executable doesn't exist` | 未装 Playwright Chromium | `uv run --frozen --no-sync playwright install chromium`（§1.4） |
@@ -314,3 +335,4 @@ src\backend\.venv\Scripts\python.exe
 | 日期 | 变更 |
 |---|---|
 | 2026-10-13 | 首次编写。基于 Windows 10 Pro 19045 + Python 3.12.9 实测通过（`/health` 与 `/api/v1/env` 均返回 200） |
+| 2026-10-14 | 修正 §3.3 Linsight Worker 的启动命令：原文照抄了 09 号文档的 `python bisheng/linsight/worker.py`，**该写法在本机必然报 `ModuleNotFoundError: No module named 'bisheng'`**（脚本方式的 `sys.path[0]` 是脚本目录而非 cwd，且 `bisheng` 未装进 venv）。改为 `python -m bisheng.linsight.worker`，并补上 `PYTHONPATH=.` 备选与原理说明；§5 排查表同步更新 |

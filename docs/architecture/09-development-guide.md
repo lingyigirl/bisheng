@@ -100,7 +100,14 @@ cd src/backend
 灵思 Agent 框架使用独立的 Python 进程，不走 Celery 队列：
 
 ```bash
+# 注意：必须让 src/backend 落在 sys.path 上。以脚本方式运行时 sys.path[0] 是「脚本所在目录」
+# 而非 cwd，且 bisheng 包未安装进 venv —— 缺 PYTHONPATH 会报 ModuleNotFoundError: No module named 'bisheng'。
+# 生产脚本（data/manage.sh、docker/bisheng/entrypoint.sh）都显式 export PYTHONPATH=. 才用下面的写法。
+export PYTHONPATH=.
 .venv/bin/python bisheng/linsight/worker.py --worker_num 4 --max_concurrency 5
+
+# 等价的模块方式（自带 cwd 进 sys.path，无需 PYTHONPATH）：
+.venv/bin/python -m bisheng.linsight.worker --worker_num 4 --max_concurrency 5
 ```
 
 ### 前端开发服务器
