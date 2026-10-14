@@ -15,7 +15,7 @@ graph TB
     end
 
     subgraph Redis
-        D --> E[LinsightQueue<br/>linsight:queue]
+        D --> E[LinsightQueue<br/>linsight:queue<br/>前缀可配]
         F[心跳键<br/>linsight:node:heartbeat:*]
         G[任务归属<br/>linsight:task:owner:*]
         H[状态数据<br/>linsight_tasks:*]
@@ -108,7 +108,7 @@ Worker 以独立进程运行，与 API 服务完全解耦。启动命令：
 
 ### 核心组件
 
-**LinsightQueue** — 基于 Redis List 的 FIFO 任务队列，键名为 `linsight:queue`。提供阻塞式消费（`get_wait`）和非阻塞消费（`get_nowait`），支持查询任务在队列中的位置（`index`）和删除指定任务（`remove`）。
+**LinsightQueue** — 基于 Redis List 的 FIFO 任务队列，键名为 `{linsight_conf.queue_namespace}:queue`，默认 `linsight:queue`（命名空间见 §配置项；生产端与消费端读同一个值，用 `build_linsight_queue()` 构造）。提供阻塞式消费（`get_wait`）和非阻塞消费（`get_nowait`），支持查询任务在队列中的位置（`index`）和删除指定任务（`remove`）。
 
 **NodeManager** — 节点健康管理，单例模式。每个 Worker 进程持有唯一的 `node_id`（格式：`hostname-随机8位hex`），通过 Redis 心跳键（`linsight:node:heartbeat:{node_id}`）维持存活状态，心跳间隔 5 秒，TTL 15 秒。同时管理任务归属（`linsight:task:owner:{session_version_id}`），确保一个任务只在一个节点上执行。
 
@@ -196,7 +196,7 @@ Agent 的推理和执行逻辑实现在 `src/backend/bisheng_langchain/linsight/
 linsight_tasks:{session_version_id}:session_version_info   # 会话版本信息（pickle 序列化）
 linsight_tasks:{session_version_id}:messages                # 消息队列（Redis List）
 linsight_tasks:{session_version_id}:execution_tasks:{task_id}  # 各任务执行状态
-linsight:queue                                               # 全局任务队列
+{linsight_conf.queue_namespace}:queue                        # 全局任务队列（默认前缀 linsight）
 linsight:node:heartbeat:{node_id}                            # 节点心跳
 linsight:task:owner:{session_version_id}                     # 任务归属
 ```
@@ -379,6 +379,7 @@ LangChain StructuredTool
 | `retry_temperature` | `1` | ReAct 模式 JSON 解析失败后重试时的模型温度 |
 | `file_content_length` | `5000` | 拆分子任务时读取文件内容的字符数上限 |
 | `max_file_content_num` | `3` | 拆分子任务时读取的中间过程文件数量 |
+| `queue_namespace` | `linsight` | Linsight 任务队列的 Redis 命名空间，键名为 `{queue_namespace}:queue`。仅从 `config.yaml` 读取（配置中心/DB 的 `linsight` 段不生效）。用于让连共享 Redis 的开发者使用私有队列；**API 与 worker 必须用同一份配置启动**，否则任务会进到没人消费的队列 |
 
 ### McpConf
 

@@ -151,9 +151,26 @@ def resolve_queue_namespace() -> str:
     return settings.linsight_conf.queue_namespace or "linsight"
 
 
+_queue_namespace_logged = False
+
+
 def build_linsight_queue(redis) -> "LinsightQueue":
-    """Build the task queue under the configured namespace."""
-    return LinsightQueue("queue", namespace=resolve_queue_namespace(), redis=redis)
+    """Build the task queue under the configured namespace.
+
+    Logs the resolved namespace once per process. If the API and the worker start
+    with different config files — the usual cause being a missing ``config=`` on one
+    of them — both stay healthy while talking past each other, and the only symptom
+    is tasks piling up in a queue nobody consumes.
+    """
+    global _queue_namespace_logged
+    namespace = resolve_queue_namespace()
+    if not _queue_namespace_logged:
+        _queue_namespace_logged = True
+        # This module uses stdlib logging (not loguru), and its InterceptHandler
+        # forwards records to loguru with %-formatting — so keep the message an
+        # f-string; `{}` placeholders would raise TypeError there.
+        logger.info(f"Linsight queue namespace resolved to {namespace!r} (key {namespace!r}:queue)")
+    return LinsightQueue("queue", namespace=namespace, redis=redis)
 
 
 # LinsightQueue queue

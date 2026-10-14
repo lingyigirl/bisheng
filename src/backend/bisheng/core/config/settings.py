@@ -487,7 +487,9 @@ class LinsightConf(BaseModel):
         "and the Linsight worker MUST resolve the same value, so leave it unset unless you have a reason: "
         "setting it lets a developer pointed at a shared Redis take a private queue instead of competing "
         "with colleagues' workers for the same tasks. It does NOT isolate session data (MySQL) or the "
-        "cache/login state (redis_url).",
+        "cache/login state (redis_url). Read from config.yaml only — ConfigService.get_linsight_conf() / "
+        "aget_linsight_conf() build a SEPARATE instance from the DB's initdb_config `linsight` section and "
+        "never write it back here, so a value set through the config center is silently ignored.",
     )
 
 
