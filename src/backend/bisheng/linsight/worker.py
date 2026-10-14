@@ -139,6 +139,23 @@ class NodeManager:
         return exists > 0
 
 
+def resolve_queue_namespace() -> str:
+    """Redis namespace of the Linsight task queue.
+
+    Read from ``linsight_conf.queue_namespace`` in config.yaml, defaulting to the
+    historical ``"linsight"``. The API and the Linsight worker must resolve the
+    same value — they read the same config file, so tune it there rather than in
+    the environment. It redirects task routing only: session data (MySQL) and the
+    cache/login state (``redis_url``) stay shared.
+    """
+    return settings.linsight_conf.queue_namespace or "linsight"
+
+
+def build_linsight_queue(redis) -> "LinsightQueue":
+    """Build the task queue under the configured namespace."""
+    return LinsightQueue("queue", namespace=resolve_queue_namespace(), redis=redis)
+
+
 # LinsightQueue queue
 class LinsightQueue:
     def __init__(self, name, namespace, redis):
@@ -404,7 +421,7 @@ class ScheduleCenterProcess(Process):
         logger.info(f"Semaphore initialized with max concurrency: {self.semaphore._value}")
 
         redis_client = get_redis_client_sync()
-        self.queue = LinsightQueue("queue", namespace="linsight", redis=redis_client)
+        self.queue = build_linsight_queue(redis_client)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

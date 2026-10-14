@@ -481,6 +481,14 @@ class LinsightConf(BaseModel):
         "kernel built-in skills; data/skills/{tenant_id}/<name>/ for tenant custom skill bundles. "
         "Multi-node deployments must mount this path on a shared volume (design §7.1).",
     )
+    queue_namespace: str = Field(
+        default="linsight",
+        description="Redis namespace of the Linsight task queue (the key is '<namespace>:queue'). The API "
+        "and the Linsight worker MUST resolve the same value, so leave it unset unless you have a reason: "
+        "setting it lets a developer pointed at a shared Redis take a private queue instead of competing "
+        "with colleagues' workers for the same tasks. It does NOT isolate session data (MySQL) or the "
+        "cache/login state (redis_url).",
+    )
 
 
 class DailyChatConf(BaseModel):

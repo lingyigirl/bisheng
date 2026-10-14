@@ -54,10 +54,13 @@ def patched_endpoint(monkeypatch):
     monkeypatch.setattr(endpoint.MessageSessionDao, "touch_session", AsyncMock())
     monkeypatch.setattr(endpoint, "get_redis_client", AsyncMock(return_value=SimpleNamespace()))
 
-    # LinsightQueue is imported function-locally from bisheng.linsight.worker;
-    # inject a stub module so the heavy worker import chain is never loaded.
+    # The endpoints import build_linsight_queue function-locally from
+    # bisheng.linsight.worker; inject a stub module so the heavy worker import
+    # chain is never loaded. Keep the stub in sync with the endpoint's imports —
+    # a missing symbol here fails at import time, outside any try/except.
     fake_worker = ModuleType("bisheng.linsight.worker")
     fake_worker.LinsightQueue = lambda *a, **k: SimpleNamespace(put=AsyncMock())
+    fake_worker.build_linsight_queue = lambda *a, **k: SimpleNamespace(put=AsyncMock())
     monkeypatch.setitem(sys.modules, "bisheng.linsight.worker", fake_worker)
 
     async def _fake_persist(session_model):
