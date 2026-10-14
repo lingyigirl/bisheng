@@ -2,6 +2,17 @@
 
 本文档面向 BiSheng 项目的开发者，涵盖环境搭建、服务启动、新模块开发约定、工作流节点扩展、API 端点添加、测试和代码风格规范。后端使用 Python 3.11（pyproject `requires-python >=3.11`）+ uv 管理依赖（2.4.0 版本已从 Poetry 迁移到 uv），前端使用 React + TypeScript + Vite。
 
+> **Windows 开发者请注意**：本文的命令（`.venv/bin/...`、`apt install`、`$(which python)`）只适用于 Linux / macOS。
+> Windows 上的等价命令分后端、前端两份：
+>
+> - 后端：[`../本地后端启动-Windows.md`](../本地后端启动-Windows.md)——
+>   该文档还记录了 Windows 独有的两个坑（`sync` 依赖构建失败、pandoc 缺失导致进程静默退出）。
+> - 前端：[`../本地前端启动-Windows.md`](../本地前端启动-Windows.md)——
+>   除启动命令外，重点写了环境变量分工，以及 **MinIO 代理目标必须与后端 `object_storage.minio.sharepoint` 完全一致**
+>   （否则预签名 URL 全部 403）。
+>
+> **这几份文档的分工是「平台差异」而非「内容重复」**：启动参数（端口、worker 队列、并发数、代理规则）以本文为准，改参数时各份都要同步。
+
 ## 环境搭建
 
 ### 后端环境

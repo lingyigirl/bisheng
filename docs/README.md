@@ -33,3 +33,5 @@
 | [`observability/`](observability/) | BS_METRIC 指标日志契约(监控团队解析依据) |
 | [`私有化部署/`](私有化部署/) | 部署文档 |
 | [`blog/`](blog/) | 设计科普(如"企业权限体系的前世今生") |
+| [`本地后端启动-Windows.md`](本地后端启动-Windows.md) | Windows 本地**后端**环境的搭建与启动命令。是 [`architecture/09-development-guide.md`](architecture/09-development-guide.md) 的**平台版本**(那份只适用 Linux/macOS) |
+| [`本地前端启动-Windows.md`](本地前端启动-Windows.md) | Windows 本地**前端**(平台端 :3001 / 工作台 :4001)的启动命令、环境变量分工，以及 MinIO 对象代理目标必须与后端 `sharepoint` 一致的排查法 |
