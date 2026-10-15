@@ -1,3 +1,4 @@
+import copy
 import time
 import uuid
 from uuid import UUID
@@ -16,6 +17,7 @@ from bisheng.api.v1.schemas import resp_200
 from bisheng.common.chat.types import WorkType
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum
 from bisheng.common.errcode.http_error import NotFoundError, ServerError
+from bisheng.common.errcode.open_api import OpenApiToolScopeNotApplicableError
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationAliveEventData
 from bisheng.common.services import telemetry_service
 from bisheng.core.logger import trace_id_var
@@ -35,6 +37,10 @@ async def invoke_workflow(
     request: Request,
     workflow_id: UUID = Body(..., description="Workflow UniqueID"),
     override: dict | None = Body(default=None, description="override node params"),
+    tools: list[dict] | None = Body(
+        default=None,
+        description="F076: 本轮启用哪些工具(白名单,限于该应用 agent 节点已绑定的工具);不传=应用默认",
+    ),
     stream: bool | None = Body(default=True, description="Whether to stream calls"),
     user_input: dict | None = Body(default=None, description="User input", alias="input"),
     message_id: int | None = Body(default=None, description="MessageID,Once,Unique identifier of user input message"),
@@ -57,6 +63,15 @@ async def invoke_workflow(
     else:
         chat_id = session_id.split("_", 1)[0]
         unique_id = session_id
+    # F076 T-18:`tools[]` 校验(白名单=全部 agent 节点 tool_list 的并集);
+    # 不传返回 None,行为与升级前一致。
+    from bisheng.open_api.domain.schemas.tools import parse_tool_selection
+    from bisheng.open_api.domain.services import tool_scope_service
+
+    tool_override = tool_scope_service.resolve_workflow_tool_override(
+        workflow_info.data, parse_tool_selection(tools)
+    )
+
     start_time = time.time()
     logger.debug(f"invoke_workflow: {workflow_id}, {session_id}")
     workflow = RedisCallback(unique_id, workflow_id, chat_id, login_user.user_id, source="api")
@@ -66,10 +81,25 @@ async def invoke_workflow(
     status_info = workflow.get_workflow_status()
     if not status_info:
         # Initialize workflow
-        workflow.set_workflow_data(workflow_info.data, override=override)
+        # F076 T-18:tools[] 编译成 {agent 节点 -> tool_list} 的 override 片段,
+        # 与调用方自己的 override 合并(节点内以 tools 的覆写为准——它更具体)。
+        data_for_run = workflow_info.data
+        if tool_override is not None:
+            merged = dict(override or {})
+            for node_id, patch in tool_override.items():
+                merged[node_id] = {**(merged.get(node_id) or {}), **patch}
+            override = merged
+            # override_nodes_params 是原地改写(worker/workflow/redis_callback.py):
+            # 传副本,避免把 FlowDao 取出的 ORM JSON 字段写脏。
+            data_for_run = copy.deepcopy(workflow_info.data)
+        workflow.set_workflow_data(data_for_run, override=override)
         workflow.set_workflow_status(WorkflowStatus.WAITING.value)
         # Start asynchronous task
         execute_workflow.apply_async([unique_id, workflow_id, chat_id, login_user.user_id, "api"], queue=execute_worker)
+    elif status_info and tool_override is not None:
+        # F076 T-18 / INV-24:续跑与运行中的会话不再写执行数据,override 无处施加。
+        # 静默忽略"本轮工具"比报错更危险——调用方会以为限定了却没限定。
+        raise OpenApiToolScopeNotApplicableError()
     elif status_info["status"] == WorkflowStatus.INPUT.value:
         if not user_input:
             raise ServerError(msg="workflow waiting for user input, but user input not provided")

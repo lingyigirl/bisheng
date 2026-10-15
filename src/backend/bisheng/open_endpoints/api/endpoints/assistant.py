@@ -61,6 +61,17 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
     except Exception as e:
         return JSONResponse(status_code=500, content=str(e), media_type="application/json")
 
+    # F076 T-18: `tools[]` 白名单校验 —— 放在上面的 try/except 之外,
+    # 否则 11815 会被"取助手信息失败"的 500 兜底吞掉(那片 except 是给
+    # get_assistant_info 用的,不该吃业务校验错误)。
+    # 不传 tools 时返回 None,行为与升级前完全一致(design 决策 6)。
+    from bisheng.open_api.domain.schemas.tools import parse_tool_selection
+    from bisheng.open_api.domain.services import tool_scope_service
+
+    enabled_tool_ids = tool_scope_service.resolve_assistant_tool_ids(
+        assistant_info, parse_tool_selection(req_data.tools)
+    )
+
     start_time = time.time()
     try:
         # Overlay Temperature Settings
@@ -107,7 +118,12 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
                 )
 
         # Initialization Assistantagent
-        agent = AssistantAgent(assistant_info, "", invoke_user_id=login_user.user_id)
+        agent = AssistantAgent(
+            assistant_info,
+            "",
+            invoke_user_id=login_user.user_id,
+            enabled_tool_ids=enabled_tool_ids,
+        )
         await agent.init_assistant()
 
         # Determine if the model supports streaming calls

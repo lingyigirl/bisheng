@@ -167,6 +167,19 @@ class OpenApiOwnerPrivilegedError(OpenApiErrorBase):
     HttpStatus: int = 403
 
 
+class OpenApiToolScopeNotApplicableError(OpenApiErrorBase):
+    """`tools[]` 在本次调用形态下无法生效(如工作流处于"等待输入"的续跑分支--
+    该分支不再写执行数据,override 无处施加)。
+
+    INV-24 要求"不可识别/不可生效"必须显式报错而不是静默忽略:调用方以为
+    限定了本轮工具、实际没限定,是比 403 更危险的静默语义漂移。
+    """
+
+    Code: int = 11818
+    Msg: str = "tools is not applicable to this call"
+    HttpStatus: int = 400
+
+
 class OpenApiIdentityInputRejectedError(OpenApiErrorBase):
     """请求中携带调用方指定的裸 `user_id`——身份不可由调用方指定(spec AC-25,INV-23 条款 3)。"""
 

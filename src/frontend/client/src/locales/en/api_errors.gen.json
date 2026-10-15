@@ -236,6 +236,7 @@
   "11815": "The specified tool is unavailable or not bound to this application",
   "11816": "The service account's resource owner now holds administrator privileges; the call was rejected",
   "11817": "Specifying a user identity in the request is not allowed",
+  "11818": "tools is not applicable to this call",
   "12040": "web_search tool not found",
   "12041": "Session not found",
   "12042": "Agent already added",
