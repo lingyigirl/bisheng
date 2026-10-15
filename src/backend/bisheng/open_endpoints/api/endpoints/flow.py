@@ -25,5 +25,19 @@ async def get_flow(request: Request, flow_id: UUID):
     if get_open_api_principal() is None and not settings.get_from_db("default_operator").get("enable_guest_access"):
         raise HTTPException(status_code=403, detail="No permission to access")
     default_user = get_default_operator()
+    res = await FlowService.get_one_flow(default_user, flow_id)
 
-    return await FlowService.get_one_flow(default_user, flow_id)
+    # F076 T-19:补"可用工具清单"(全部 agent 节点 tool_list 的并集),供对接方
+    # 构造 `tools[]`。原始节点数据本就在 data.nodes 里,这里是给一个稳定、
+    # 免解析的字段名;多一次主键读,可忽略。
+    from bisheng.database.models.flow import FlowDao
+    from bisheng.open_api.domain.services import tool_scope_service
+
+    flow_row = await FlowDao.aget_flow_by_id(flow_id)
+    if flow_row is not None:
+        payload = res.model_dump()
+        data = payload.get("data")
+        if isinstance(data, dict):
+            data["tools"] = tool_scope_service.workflow_tool_manifest(flow_row.data)
+        return payload
+    return res
