@@ -25,12 +25,14 @@ from bisheng.common.services.config_service import settings
 from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.core.logger import trace_id_var
 from bisheng.llm.domain.utils import extract_reasoning_content
+from bisheng.open_api.domain.scopes import open_api_scope
 from bisheng.open_endpoints.domain.utils import get_default_operator
 from bisheng.utils import generate_uuid, get_request_ip
 
 router = APIRouter(prefix="/assistant", tags=["OpenAPI", "Assistant"])
 
 
+@open_api_scope("assistant:invoke")
 @router.post("/chat/completions")
 async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompletionReq):
     """
@@ -92,7 +94,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
         # Generated per request rather than invented from the payload: calling
         # it a conversation id would be a lie, and the OpenAI-compatible API has
         # no such concept to borrow.
-        http_chat_id = f'openapi-{generate_uuid()}'
+        http_chat_id = f"openapi-{generate_uuid()}"
 
         if input_guard is not None:
             blocked_reply = await input_guard(http_chat_id, question)
@@ -203,7 +205,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
 
                 # F056: 冲刷 mask 模式缓冲尾部, 作为最后一个内容分片外发
                 if output_guard is not None and not output_blocked:
-                    flushed = await output_guard(http_chat_id, '')
+                    flushed = await output_guard(http_chat_id, "")
                     if flushed.safe_text:
                         tail_chunk = {
                             "id": openai_resp_id,
@@ -306,6 +308,7 @@ def _check_model_supports_streaming(agent: AssistantAgent) -> bool:
         return True
 
 
+@open_api_scope("assistant:read")
 @router.get("/info/{assistant_id}")
 async def get_assistant_info(request: Request, assistant_id: UUID):
     """
@@ -321,6 +324,7 @@ async def get_assistant_info(request: Request, assistant_id: UUID):
     return resp_200(data=res)
 
 
+@open_api_scope("assistant:read")
 @router.get("/list", status_code=200)
 def get_assistant_list(
     request: Request,
@@ -343,6 +347,7 @@ def get_assistant_list(
     return resp_200(PageData(data=data, total=total))
 
 
+@open_api_scope("assistant:invoke")
 @router.websocket("/chat/{assistant_id}")
 async def chat(*, websocket: WebSocket, assistant_id: str, chat_id: str | None = None):
     """

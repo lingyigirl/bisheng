@@ -5,18 +5,20 @@ from loguru import logger
 
 from bisheng.api.services.flow import FlowService
 from bisheng.common.services.config_service import settings
+from bisheng.open_api.domain.scopes import open_api_scope
 from bisheng.open_endpoints.api.endpoints.assistant import get_default_operator
 
-router = APIRouter(prefix='/flows', tags=['OpenAPI', 'FlowV2'])
+router = APIRouter(prefix="/flows", tags=["OpenAPI", "FlowV2"])
 
 
-@router.get('/{flow_id}', status_code=200)
+@open_api_scope("workflow:read")
+@router.get("/{flow_id}", status_code=200)
 async def get_flow(request: Request, flow_id: UUID):
     """
     Exposed interfaces for obtaining skill information
     """
     flow_id = flow_id.hex
-    logger.info(f'public_get_flow  ip: {request.client.host} flow_id:{flow_id}')
+    logger.info(f"public_get_flow  ip: {request.client.host} flow_id:{flow_id}")
     # Determine if the configuration under is turned on
     if not settings.get_from_db("default_operator").get("enable_guest_access"):
         raise HTTPException(status_code=403, detail="No permission to access")
