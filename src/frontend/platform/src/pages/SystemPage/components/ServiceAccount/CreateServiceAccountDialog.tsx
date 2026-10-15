@@ -5,14 +5,16 @@ import { Label } from "@/components/bs-ui/label"
 import { useToast } from "@/components/bs-ui/toast/use-toast"
 import { createServiceAccountApi } from "@/controllers/API/serviceAccount"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
-import { useState } from "react"
+import { ServiceAccount } from "@/types/api/serviceAccount"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 interface CreateServiceAccountDialogProps {
     open: boolean
     onClose: (open: boolean) => void
-    /** Called after a successful create so the list can refresh. */
-    onCreated: (name: string) => void
+    /** Called after a successful create: the list refreshes and the caller can
+     *  offer the "issue the first key" next step with the returned account. */
+    onCreated: (account: ServiceAccount) => void
 }
 
 /**
@@ -31,6 +33,15 @@ export function CreateServiceAccountDialog({ open, onClose, onCreated }: CreateS
         setDescription("")
     }
 
+    // Cancel closes the dialog through the parent (setOpen(false)), and a parent
+    // flip never fires Radix's onOpenChange -- so clearing on open is what keeps a
+    // discarded draft from reappearing next time.
+    useEffect(() => {
+        if (!open) return
+        setName("")
+        setDescription("")
+    }, [open])
+
     const handleConfirm = () => {
         const errors: string[] = []
         if (!name.trim()) errors.push(t("form.nameRequired"))
@@ -42,11 +53,12 @@ export function CreateServiceAccountDialog({ open, onClose, onCreated }: CreateS
 
         setSubmitting(true)
         captureAndAlertRequestErrorHoc(
-            createServiceAccountApi({ name: name.trim(), description: description.trim() || null }).then(() => {
+            createServiceAccountApi({ name: name.trim(), description: description.trim() || null }).then((account) => {
+                if (!account) return
                 message({ title: t("prompt"), description: t("createSuccess"), variant: "success" })
                 reset()
                 onClose(false)
-                onCreated(name.trim())
+                onCreated(account)
             }),
         ).finally(() => setSubmitting(false))
     }

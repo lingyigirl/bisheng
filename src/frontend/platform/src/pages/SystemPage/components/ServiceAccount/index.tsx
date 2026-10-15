@@ -26,6 +26,7 @@ import { formatIsoDateTime } from "@/util/utils"
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { CreateServiceAccountDialog } from "./CreateServiceAccountDialog"
+import { DetailView } from "./DetailView"
 
 const PAGE_SIZE = 20
 
@@ -41,7 +42,10 @@ export function ServiceAccountPanel() {
     const [keyword, setKeyword] = useState("")
     const [loading, setLoading] = useState(false)
     const [createOpen, setCreateOpen] = useState(false)
-    const [createdName, setCreatedName] = useState<string | null>(null)
+    // Set right after a successful create to offer the "issue a key" next step.
+    const [created, setCreated] = useState<ServiceAccount | null>(null)
+    // Non-null = the detail view replaces the list (T-24).
+    const [detail, setDetail] = useState<{ id: number; tab: string } | null>(null)
     // Guards against out-of-order responses when the admin types fast.
     const requestSeq = useRef(0)
 
@@ -101,14 +105,33 @@ export function ServiceAccountPanel() {
             desc: t("confirm.deleteDesc", { name: row.name }),
             okTxt: t("delete"),
             onOk(next) {
-                captureAndAlertRequestErrorHoc(deleteServiceAccountApi(row.id).then(() => load())).then((res) => {
-                    if (res !== undefined) {
+                captureAndAlertRequestErrorHoc(deleteServiceAccountApi(row.id)).then((res) => {
+                    if (res) {
                         message({ title: t("prompt"), description: t("deleteSuccess"), variant: "success" })
+                        // Removing the last row of a page would otherwise leave the
+                        // admin staring at an empty page while the previous one is
+                        // still full.
+                        const targetPage = rows.length === 1 && page > 1 ? page - 1 : page
+                        load(targetPage, keyword)
                     }
                     next()
                 })
             },
         })
+    }
+
+    if (detail) {
+        return (
+            <DetailView
+                accountId={detail.id}
+                initialTab={detail.tab}
+                onBack={() => {
+                    setDetail(null)
+                    // Name / status / key count may all have changed in there.
+                    load(1, keyword)
+                }}
+            />
+        )
     }
 
     return (
@@ -178,6 +201,13 @@ export function ServiceAccountPanel() {
                                         {row.last_used_at ? formatIsoDateTime(row.last_used_at) : t("never")}
                                     </TableCell>
                                     <TableCell className="text-right">
+                                        <Button
+                                            variant="link"
+                                            size="sm"
+                                            onClick={() => setDetail({ id: row.id, tab: "overview" })}
+                                        >
+                                            {t("detailAction")}
+                                        </Button>
                                         <Button variant="link" size="sm" onClick={() => handleToggleEnabled(row)}>
                                             {row.enabled ? t("disable") : t("enable")}
                                         </Button>
@@ -210,23 +240,33 @@ export function ServiceAccountPanel() {
             <CreateServiceAccountDialog
                 open={createOpen}
                 onClose={setCreateOpen}
-                onCreated={(name) => {
-                    setCreatedName(name)
+                onCreated={(account) => {
+                    setCreated(account)
                     load(1, keyword)
                 }}
             />
 
-            {/* Post-create next step: issuing the first key lives on the detail
-                page (follow-up task); until then the note is informational. */}
-            <Dialog open={!!createdName} onOpenChange={(next) => !next && setCreatedName(null)}>
+            {/* Post-create next step: jump straight into the detail view's keys
+                tab, which is where the first key gets issued. */}
+            <Dialog open={!!created} onOpenChange={(next) => !next && setCreated(null)}>
                 <DialogContent className="sm:max-w-[480px]">
                     <DialogHeader>
                         <DialogTitle>{t("createdDialog.title")}</DialogTitle>
                     </DialogHeader>
-                    <p className="text-sm text-muted-foreground">{t("createdDialog.nextStep", { name: createdName ?? "" })}</p>
+                    <p className="text-sm text-muted-foreground">{t("createdDialog.nextStep", { name: created?.name ?? "" })}</p>
                     <DialogFooter className="mt-4">
-                        <Button className="h-10 w-[120px] px-16" onClick={() => setCreatedName(null)}>
+                        <Button variant="outline" className="h-10 w-[120px] px-16" onClick={() => setCreated(null)}>
                             {t("confirm.gotIt")}
+                        </Button>
+                        <Button
+                            className="h-10 w-[160px] px-6"
+                            onClick={() => {
+                                if (!created) return
+                                setDetail({ id: created.id, tab: "keys" })
+                                setCreated(null)
+                            }}
+                        >
+                            {t("createdDialog.goToKeys")}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
