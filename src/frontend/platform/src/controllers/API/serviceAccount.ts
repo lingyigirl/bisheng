@@ -4,6 +4,10 @@
 import axios from "@/controllers/request"
 import {
     OpenApiScopePage,
+    ResourceGrantItemInput,
+    ResourceGrantMutateResult,
+    ResourceGrantPage,
+    ResourceGrantRevokeInput,
     ServiceAccount,
     ServiceAccountCreate,
     ServiceAccountKey,
@@ -73,6 +77,29 @@ export async function revokeAllServiceAccountKeysApi(
 /** Catalog of scopes a key may be issued with; order is the backend registry order. */
 export async function listOpenApiScopesApi(): Promise<OpenApiScopePage> {
     return await axios.get(`/api/v1/open-api/scopes`)
+}
+
+/**
+ * What this account can currently see, and how each entry was obtained.
+ * Not paginated; the subject is always the account's dedicated identity.
+ */
+export async function listResourceGrantsApi(accountId: number): Promise<ResourceGrantPage> {
+    return await axios.get(`/api/v1/service-accounts/${accountId}/resource-grants`)
+}
+
+/**
+ * Grant and/or revoke in one call. Revoking only works on `direct` entries --
+ * revoking an inherited visibility answers 404 (nothing to revoke).
+ */
+export async function mutateResourceGrantsApi(
+    accountId: number,
+    data: { grants?: ResourceGrantItemInput[]; revokes?: ResourceGrantRevokeInput[] },
+): Promise<ResourceGrantMutateResult> {
+    return await axios.post(`/api/v1/service-accounts/${accountId}/resource-grants:mutate`, {
+        grants: [],
+        revokes: [],
+        ...data,
+    })
 }
 
 export async function updateServiceAccountApi(

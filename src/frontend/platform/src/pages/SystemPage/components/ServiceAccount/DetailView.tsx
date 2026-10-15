@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { ApiKeysTab } from "./ApiKeysTab"
 import { OverviewTab } from "./OverviewTab"
+import { ResourceGrantsTab } from "./ResourceGrantsTab"
 
 interface DetailViewProps {
     accountId: number
@@ -17,10 +18,7 @@ interface DetailViewProps {
     onBack: () => void
 }
 
-/**
- * One service account: overview + keys. The resource-grants tab belongs to the
- * follow-up task and is deliberately absent here.
- */
+/** One service account: overview + keys + the resources its identity may reach. */
 export function DetailView({ accountId, initialTab = "overview", onBack }: DetailViewProps) {
     const { t } = useTranslation("serviceAccount")
     const [account, setAccount] = useState<ServiceAccount | null>(null)
@@ -65,6 +63,7 @@ export function DetailView({ accountId, initialTab = "overview", onBack }: Detai
                     <TabsList className="shrink-0 self-start">
                         <TabsTrigger value="overview">{t("detail.tab.overview")}</TabsTrigger>
                         <TabsTrigger value="keys">{t("detail.tab.keys")}</TabsTrigger>
+                        <TabsTrigger value="grants">{t("detail.tab.grants")}</TabsTrigger>
                     </TabsList>
                     {/* Inactive Radix tabs unmount, so the keys tab refetches on
                         every entry -- which is what we want after a write. */}
@@ -73,6 +72,9 @@ export function DetailView({ accountId, initialTab = "overview", onBack }: Detai
                     </TabsContent>
                     <TabsContent value="keys" className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
                         <ApiKeysTab account={account} onKeysChanged={() => void refresh()} />
+                    </TabsContent>
+                    <TabsContent value="grants" className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
+                        <ResourceGrantsTab account={account} onGrantsChanged={() => void refresh()} />
                     </TabsContent>
                 </Tabs>
             )}

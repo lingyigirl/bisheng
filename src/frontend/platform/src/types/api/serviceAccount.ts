@@ -34,6 +34,49 @@ export interface OpenApiScope {
     endpoint_count: number
 }
 
+/** Resource kinds the console may delegate; the backend whitelist is the same four. */
+export type ResourceGrantType = "knowledge_library" | "knowledge_space" | "assistant" | "workflow"
+
+export type ResourceGrantLevel = "viewer" | "editor" | "manager"
+
+/**
+ * `direct` = granted through this console (revocable here);
+ * `inherited` = visibility coming from a department / tenant path, which the
+ * console neither granted nor can revoke.
+ */
+export type ResourceGrantSource = "direct" | "inherited"
+
+export interface ResourceGrant {
+    resource_type: ResourceGrantType
+    resource_id: string
+    /** null = no delegable level (e.g. the identity owns the resource). */
+    level: ResourceGrantLevel | null
+    source: ResourceGrantSource
+}
+
+export interface ResourceGrantPage {
+    data: ResourceGrant[]
+    total: number
+}
+
+export interface ResourceGrantItemInput {
+    resource_type: ResourceGrantType
+    resource_id: string
+    level: ResourceGrantLevel
+}
+
+export interface ResourceGrantRevokeInput {
+    resource_type: ResourceGrantType
+    resource_id: string
+}
+
+export interface ResourceGrantMutateResult {
+    account_id: number
+    /** Request entry counts, not the number of tuples written. */
+    granted: number
+    revoked: number
+}
+
 export interface OpenApiScopePage {
     data: OpenApiScope[]
     total: number

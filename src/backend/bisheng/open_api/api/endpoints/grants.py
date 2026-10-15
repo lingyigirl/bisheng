@@ -58,7 +58,7 @@ async def list_resource_grants(
     """该账号当前可见的资源(底层即专用身份的 ReBAC 授权)。"""
     tenant_id = _acting_tenant(login_user)
     account = await _require_account(account_id, tenant_id)
-    rows = await list_grants(account.resource_owner_user_id, login_user=login_user)
+    rows = await list_grants(account.resource_owner_user_id)
     return resp_200(data={"data": rows, "total": len(rows)})
 
 

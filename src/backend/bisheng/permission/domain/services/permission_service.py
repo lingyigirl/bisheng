@@ -964,6 +964,30 @@ class PermissionService:
             logger.error("Error getting permission level: %s", e)
             return None
 
+    @classmethod
+    async def list_direct_relations(
+        cls,
+        user_id: int,
+        object_type: str,
+        object_id: str,
+    ) -> set[str]:
+        """该用户在目标对象上的**直接**元组关系集合(不含部门/租户等继承路径)。
+
+        供"授权代管"(F076)判定某条可见性是本入口直接授予的、还是从继承路径得来的:
+        后者不归代管管理,撤销它也无处可撤。FGA 不可达时抛 FGAConnectionError,
+        由调用方决定失败语义——不允许把它静默当成"没有授权"。
+        """
+        fga = await cls._aget_fga()
+        if fga is None:
+            # 客户端未就绪 = 不能回答"有没有直接授权";静默返回空集会让调用方
+            # 把"读不到"当成"没有授权"(代管列表会误标继承、撤销会误报 404)。
+            raise FGAConnectionError("FGAClient not available for direct-relation read")
+        tuples = await fga.read_tuples(
+            user=f"user:{user_id}",
+            object=f"{object_type}:{object_id}",
+        )
+        return {t.get("relation") for t in tuples if t.get("relation")}
+
     # ── Internal helpers ────────────────────────────────────────
 
     @classmethod

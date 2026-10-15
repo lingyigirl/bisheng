@@ -14,9 +14,11 @@ from sqlalchemy.pool import StaticPool
 
 from bisheng.common.errcode.open_api import (
     OpenApiNotFoundError,
+    OpenApiResourceGrantsUnavailableError,
     OpenApiResourceNotGrantedError,
     OpenApiResourceTypeUnsupportedError,
 )
+from bisheng.core.openfga.exceptions import FGAConnectionError
 from bisheng.database.models.tenant import UserTenant
 from bisheng.open_api.api.endpoints import grants as grants_api
 from bisheng.open_api.api.endpoints import settings as settings_api
@@ -120,21 +122,33 @@ async def account(patched_db, monkeypatch):
 
 
 def _stub_permission(
-    monkeypatch, *, admin_can_manage: bool, grants_by_type: dict | None = None, levels: dict | None = None
+    monkeypatch,
+    *,
+    admin_can_manage: bool,
+    grants_by_type: dict | None = None,
+    levels: dict | None = None,
+    direct: dict | None = None,
 ):
-    calls = {"authorize": [], "check": []}
+    calls = {"authorize": [], "check": [], "identity": []}
     grants_by_type = grants_by_type if grants_by_type is not None else {}
     levels = levels if levels is not None else {}
+    #: (resource_type, resource_id) -> 该身份直接持有的档位元组关系集合。
+    direct = direct if direct is not None else {}
 
     async def _check(user_id, relation, object_type, object_id, login_user=None, consistency=None):
         calls["check"].append((user_id, relation, object_type, object_id))
         return admin_can_manage
 
     async def _list_accessible_ids(user_id, relation, object_type, login_user=None):
+        # 传进来的必须是专用身份自己:管理员会拿到 None(引擎短路),列表就恒空。
+        calls["identity"].append(login_user)
         return grants_by_type.get(object_type, [])
 
     async def _level(user_id, object_type, object_id, login_user=None):
         return levels.get((object_type, str(object_id)))
+
+    async def _direct(user_id, object_type, object_id):
+        return set(direct.get((object_type, str(object_id)), set()))
 
     async def _authorize(object_type, object_id, grants=None, revokes=None, enforce_fga_success=False):
         calls["authorize"].append({"object": f"{object_type}:{object_id}", "grants": grants, "revokes": revokes})
@@ -142,6 +156,7 @@ def _stub_permission(
     monkeypatch.setattr(PermissionService, "check", _check)
     monkeypatch.setattr(PermissionService, "list_accessible_ids", _list_accessible_ids)
     monkeypatch.setattr(PermissionService, "get_permission_level", _level)
+    monkeypatch.setattr(PermissionService, "list_direct_relations", _direct)
     monkeypatch.setattr(PermissionService, "authorize", _authorize)
     return calls
 
@@ -192,11 +207,12 @@ async def test_settings_effective_requires_deployment_switch(patched_db, fake_re
 
 
 async def test_list_grants_returns_rows(patched_db, fake_redis, account, monkeypatch):
-    _stub_permission(
+    calls = _stub_permission(
         monkeypatch,
         admin_can_manage=True,
         grants_by_type={"assistant": [11], "knowledge_library": [22]},
         levels={("assistant", "11"): "viewer", ("knowledge_library", "22"): "manager"},
+        direct={("assistant", "11"): {"viewer"}},
     )
     response = await grants_api.list_resource_grants(account.id, login_user=_Admin())
     assert response.data["total"] == 2
@@ -204,6 +220,31 @@ async def test_list_grants_returns_rows(patched_db, fake_redis, account, monkeyp
         ("assistant", "11", "viewer"),
         ("knowledge_library", "22", "manager"),
     }
+    # 来源:直接授予 vs 继承可见性(后者不归代管管理,不可撤销)。
+    sources = {(r["resource_type"], r["source"]) for r in response.data["data"]}
+    assert sources == {("assistant", "direct"), ("knowledge_library", "inherited")}
+    # 回归钉子:查询必须用专用身份,绝不能把管理员传进引擎(会短路成空列表/最高档)。
+    assert calls["identity"], "list_accessible_ids 未被调用"
+    # 一律不带用户上下文(带管理员会短路成空列表/最高档,见 list_grants docstring)。
+    assert set(calls["identity"]) == {None}  # 每个资源类型一次查询,均不带上下文
+
+
+async def test_list_grants_normalises_engine_vocabulary(patched_db, fake_redis, account, monkeypatch):
+    """引擎档位(can_read/can_edit/can_manage)对外一律归一成 viewer/editor/manager。"""
+    _stub_permission(
+        monkeypatch,
+        admin_can_manage=True,
+        grants_by_type={"assistant": [11, 12]},
+        levels={("assistant", "11"): "can_edit", ("assistant", "12"): "owner"},
+        direct={("assistant", "11"): {"editor"}},
+    )
+    response = await grants_api.list_resource_grants(account.id, login_user=_Admin())
+    by_id = {r["resource_id"]: r for r in response.data["data"]}
+    assert by_id["11"]["level"] == "editor"  # can_edit -> editor
+    assert by_id["11"]["source"] == "direct"
+    # owner 档不是代管关系:档位不映射,来源也不是 direct(撤不了)。
+    assert by_id["12"]["level"] is None
+    assert by_id["12"]["source"] == "inherited"
 
 
 async def test_mutate_grant_uses_owner_as_subject(patched_db, fake_redis, account, monkeypatch):
@@ -270,7 +311,14 @@ async def test_revoke_unknown_grant_is_404(patched_db, fake_redis, account, monk
 
 
 async def test_revoke_existing_grant_writes_revoke(patched_db, fake_redis, account, monkeypatch):
-    calls = _stub_permission(monkeypatch, admin_can_manage=True, levels={("assistant", "11"): "viewer"})
+    calls = _stub_permission(
+        monkeypatch,
+        admin_can_manage=True,
+        levels={("assistant", "11"): "viewer"},
+        # 撤销的对象是**直接元组**:引擎档位(can_read)不能让撤销找错关系,
+        # 真正写进去的关系取自直接元组本身。
+        direct={("assistant", "11"): {"viewer"}},
+    )
     await grants_api.mutate_resource_grants(
         account.id,
         grants_api.GrantMutateReq(revokes=[grants_api.RevokeItem(resource_type="assistant", resource_id="11")]),
@@ -278,6 +326,68 @@ async def test_revoke_existing_grant_writes_revoke(patched_db, fake_redis, accou
     )
     revoke_item = calls["authorize"][0]["revokes"][0]
     assert revoke_item.subject_id == account.resource_owner_user_id and revoke_item.relation == "viewer"
+
+
+async def test_revoke_clears_every_granted_relation(patched_db, fake_redis, account, monkeypatch):
+    """先授 viewer 再升 editor 会并存两条元组:撤销要一次收干净,否则残留 viewer。"""
+    calls = _stub_permission(
+        monkeypatch,
+        admin_can_manage=True,
+        direct={("assistant", "11"): {"viewer", "editor"}},
+    )
+    response = await grants_api.mutate_resource_grants(
+        account.id,
+        grants_api.GrantMutateReq(revokes=[grants_api.RevokeItem(resource_type="assistant", resource_id="11")]),
+        login_user=_Admin(),
+    )
+    assert response.data["revoked"] == 1  # 契约:计数 = 请求条目数
+    relations = sorted(r.relation for call in calls["authorize"] for r in (call["revokes"] or []))
+    assert relations == ["editor", "viewer"]  # 两条元组各撤一次
+
+
+async def test_grant_downgrade_revokes_the_higher_relation(patched_db, fake_redis, account, monkeypatch):
+    """把 editor 调成 viewer:必须顺带撤掉 editor,否则账号实际权限高于界面所示。"""
+    calls = _stub_permission(monkeypatch, admin_can_manage=True, direct={("assistant", "11"): {"editor"}})
+    await grants_api.mutate_resource_grants(
+        account.id,
+        grants_api.GrantMutateReq(
+            grants=[grants_api.GrantItem(resource_type="assistant", resource_id="11", level="viewer")]
+        ),
+        login_user=_Admin(),
+    )
+    assert calls["authorize"][0]["grants"][0].relation == "viewer"
+    revoked = [r.relation for call in calls["authorize"] for r in (call["revokes"] or [])]
+    assert revoked == ["editor"]
+
+
+async def test_fga_outage_surfaces_as_11814(patched_db, fake_redis, account, monkeypatch):
+    """FGA 不可达 -> 11814/503;不允许把"读不到"静默当成"没有授权"。"""
+    # 要有可见资源才会走到"读直接元组"那一步(空列表直接跳过)。
+    _stub_permission(monkeypatch, admin_can_manage=True, grants_by_type={"assistant": [11]})
+
+    async def _boom(user_id, object_type, object_id):
+        raise FGAConnectionError("openfga down")
+
+    monkeypatch.setattr(PermissionService, "list_direct_relations", _boom)
+    with pytest.raises(OpenApiResourceGrantsUnavailableError):
+        await grants_api.list_resource_grants(account.id, login_user=_Admin())
+
+
+async def test_revoke_inherited_visibility_is_404(patched_db, fake_redis, account, monkeypatch):
+    """继承来的可见性(部门/租户)不归代管管理:没有可撤的直接元组 -> 11809,且不写任何东西。"""
+    calls = _stub_permission(
+        monkeypatch,
+        admin_can_manage=True,
+        levels={("assistant", "11"): "can_read"},
+        direct={},
+    )
+    with pytest.raises(OpenApiNotFoundError):
+        await grants_api.mutate_resource_grants(
+            account.id,
+            grants_api.GrantMutateReq(revokes=[grants_api.RevokeItem(resource_type="assistant", resource_id="11")]),
+            login_user=_Admin(),
+        )
+    assert calls["authorize"] == []
 
 
 async def test_cross_tenant_account_is_404(patched_db, fake_redis, account, monkeypatch):
