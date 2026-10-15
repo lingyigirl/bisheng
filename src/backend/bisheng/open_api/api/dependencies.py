@@ -114,7 +114,8 @@ async def _resolve_principal(conn: HTTPConnection) -> OpenApiPrincipal | None:
         logger.error("open_api: /api/v2 endpoint without scope marker: {}", endpoint)
         raise OpenApiEndpointUnregisteredError()
     if not is_scope_granted(marker.scope, set(credential.scopes or [])):
-        raise OpenApiScopeMissingError()
+        # design §4.2:11807 回带缺失的权限位(data.required),对接方据此自助补齐。
+        raise OpenApiScopeMissingError(**{"required": marker.scope})
 
     # ⑥ 身份输入收口(11817;WS 没有 query 以外的输入面,仍做统一检查)
     await _assert_no_identity_input(conn)
