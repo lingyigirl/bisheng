@@ -21,7 +21,7 @@ from bisheng.open_endpoints.domain.schemas.message import SyncMessage
 router = APIRouter(prefix="/chat", tags=["OpenAPI", "Chat"])
 
 
-@open_api_scope("chat:invoke")
+@open_api_scope("chat:invoke", guest=True)
 @router.post("/gen_title")
 async def gen_title_v2(conversationId: str = Body(..., embed=True)):
     """Get conversation title without authentication (v2 open endpoint)."""
@@ -30,7 +30,7 @@ async def gen_title_v2(conversationId: str = Body(..., embed=True)):
     return resp_200(data={"title": messages.name if messages else "New Chat"})
 
 
-@open_api_scope("chat:invoke")
+@open_api_scope("chat:invoke", guest=True)
 @router.get("/history")
 async def get_chat_history_v2(*, chat_id: str, flow_id: str, id: str | None = None, page_size: int | None = 20):
     """Get chat history without authentication (v2 open endpoint)."""

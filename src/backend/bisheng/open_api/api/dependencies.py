@@ -70,16 +70,33 @@ async def _assert_no_identity_input(conn: HTTPConnection) -> None:
                     raise OpenApiIdentityInputRejectedError()
 
 
+async def _guest_access_enabled() -> bool:
+    """平台免登录总开关(DB 配置 `default_operator.enable_guest_access`)。
+
+    与 3 个既有端点的读取口径一致(同样的键、同样每次读);`get_from_db` 自带
+    100s 的 Redis 配置缓存,不需要再包一层。
+    """
+    conf = await settings.aget_from_db("default_operator")
+    return bool(conf.get("enable_guest_access"))
+
+
 async def _resolve_principal(conn: HTTPConnection) -> OpenApiPrincipal | None:
     """完成 ①-⑦ 的全部校验;返回 None 表示"走旧行为",否则返回可装载的主体。"""
     # ① 部署总闸(关 → 旧行为,AC-21)
     if not settings.open_api.enforce_keys:
         return None
 
+    endpoint = conn.scope.get("endpoint")
+    marker = get_open_api_scope_marker(endpoint)
     authorization = conn.headers.get("authorization")
 
-    # ② 无名请求:按默认租户的租户开关判定(决策 10)
+    # ② 无名请求
     if authorization is None:
+        # ②a 平台免登录面(guest 标记的 8 个端点,discovery 决策 D5):
+        #     免登录开关开着 → 放行旧行为;关着 → 与其余端点一视同仁。
+        if marker is not None and marker.guest and await _guest_access_enabled():
+            return None
+        # ②b 其余无名请求按默认租户的租户开关判定(决策 10)
         if await tenant_setting_service.is_enforced(DEFAULT_TENANT_ID):
             raise OpenApiKeyMissingError()
         return None
@@ -93,8 +110,6 @@ async def _resolve_principal(conn: HTTPConnection) -> OpenApiPrincipal | None:
         raise OpenApiAccountDisabledError()
 
     # ⑤ 端点标记与权限位(11811 漏标 / 11807 缺位)
-    endpoint = conn.scope.get("endpoint")
-    marker = get_open_api_scope_marker(endpoint)
     if marker is None:
         logger.error("open_api: /api/v2 endpoint without scope marker: {}", endpoint)
         raise OpenApiEndpointUnregisteredError()

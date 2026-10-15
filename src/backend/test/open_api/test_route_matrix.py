@@ -76,6 +76,13 @@ async def test_enforcement_on_rejects_keyless_calls_on_every_route(monkeypatch):
 
     monkeypatch.setattr(tenant_setting_service, "is_enforced", _enforced)
 
+    # 免登录开关置"关":本守卫断言的是"除显式 guest 豁免外,任意端点无凭据必拦";
+    # guest 端点自身的放行语义由 test_dependencies 的三条用例覆盖。
+    async def _guest_off() -> bool:
+        return False
+
+    monkeypatch.setattr(deps, "_guest_access_enabled", _guest_off)
+
     leaks = []
     for method, path, endpoint in _routes():
         conn = _keyless_conn(method, path, endpoint)
@@ -112,3 +119,22 @@ def _keyless_conn(method: str, path: str, endpoint):
         return None
 
     return WebSocket(scope, receive=_receive, send=_send)
+
+
+#: 平台免登录页依赖的 8 个端点(discovery 决策 D5)——冻结,新增端点默认不进豁免。
+EXPECTED_GUEST_ENDPOINTS = {
+    ("POST", "/api/v2/assistant/chat/completions"),
+    ("GET", "/api/v2/assistant/info/{}"),
+    ("GET", "/api/v2/assistant/list"),
+    ("WS", "/api/v2/assistant/chat/{}"),
+    ("WS", "/api/v2/workflow/chat/{}"),
+    ("POST", "/api/v2/chat/gen_title"),
+    ("GET", "/api/v2/chat/history"),
+    ("GET", "/api/v2/flows/{}"),
+}
+
+
+def test_guest_endpoint_list_is_frozen():
+    """T-14:guest 豁免面 = 恰好这 8 个;多一个少一个都要在这条断言前显式改测试。"""
+    actual = {(m, p) for m, p, e in _routes() if get_open_api_scope_marker(e).guest}
+    assert actual == EXPECTED_GUEST_ENDPOINTS

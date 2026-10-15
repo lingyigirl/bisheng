@@ -164,7 +164,7 @@ async def stop_workflow(
     return resp_200()
 
 
-@open_api_scope("workflow:invoke")
+@open_api_scope("workflow:invoke", guest=True)
 @router.websocket("/chat/{workflow_id}")
 async def workflow_ws(
     *, workflow_id: UUID = Path(..., description="Workflow UniqueID"), websocket: WebSocket, chat_id: str | None = None

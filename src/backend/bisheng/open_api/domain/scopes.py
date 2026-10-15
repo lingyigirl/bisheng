@@ -160,20 +160,27 @@ OPEN_API_SCOPE_ATTR = "__open_api_scope__"
 
 @dataclass(frozen=True, slots=True)
 class OpenApiScopeMarker:
-    """挂在端点函数上的标记;`scope=None` 表示"需凭据但不需要权限位"。"""
+    """挂在端点函数上的标记;`scope=None` 表示"需凭据但不需要权限位"。
+
+    `guest=True` 标记"平台免登录页依赖"的端点(discovery 决策 D5):强制开启后,
+    这些端点在 `enable_guest_access` 开着时仍允许匿名访问(旧行为);开关关掉则与
+    其余端点一视同仁。清单被守卫测试冻结,新增端点默认**不**进豁免。
+    """
 
     scope: str | None
+    guest: bool = False
 
 
-def open_api_scope(scope: str | None) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def open_api_scope(scope: str | None, *, guest: bool = False) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """端点标记装饰器。
 
     **运行期校验**(不是静态检查):scope 必须已在注册表里登记;写错名字会在
     应用导入期立刻炸,而不是等到某个请求把 500/11811 打给客户。
+    `guest=True` 只用于平台免登录页依赖的 8 个端点(见 `OpenApiScopeMarker`)。
     """
     if scope is not None and scope not in OPEN_API_SCOPE_CODES:
         raise ValueError(f"open_api: unknown scope {scope!r}")
-    marker = OpenApiScopeMarker(scope=scope)
+    marker = OpenApiScopeMarker(scope=scope, guest=guest)
 
     def _decorate(func: Callable[..., Any]) -> Callable[..., Any]:
         setattr(func, OPEN_API_SCOPE_ATTR, marker)

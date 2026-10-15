@@ -25,6 +25,7 @@ from bisheng.common.services.config_service import settings
 from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.core.logger import trace_id_var
 from bisheng.llm.domain.utils import extract_reasoning_content
+from bisheng.open_api.domain.context import get_open_api_principal
 from bisheng.open_api.domain.scopes import open_api_scope
 from bisheng.open_endpoints.domain.utils import get_default_operator
 from bisheng.utils import generate_uuid, get_request_ip
@@ -32,7 +33,7 @@ from bisheng.utils import generate_uuid, get_request_ip
 router = APIRouter(prefix="/assistant", tags=["OpenAPI", "Assistant"])
 
 
-@open_api_scope("assistant:invoke")
+@open_api_scope("assistant:invoke", guest=True)
 @router.post("/chat/completions")
 async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompletionReq):
     """
@@ -308,7 +309,7 @@ def _check_model_supports_streaming(agent: AssistantAgent) -> bool:
         return True
 
 
-@open_api_scope("assistant:read")
+@open_api_scope("assistant:read", guest=True)
 @router.get("/info/{assistant_id}")
 async def get_assistant_info(request: Request, assistant_id: UUID):
     """
@@ -317,14 +318,15 @@ async def get_assistant_info(request: Request, assistant_id: UUID):
     assistant_id = assistant_id.hex
     logger.info(f"act=get_default_operator assistant_id={assistant_id}, ip={get_request_ip(request)}")
     # Determine if the configuration under is turned on
-    if not settings.get_from_db("default_operator").get("enable_guest_access"):
+    # F076(T-14):免登录开关只拦匿名访问;带密钥的服务账号调用不受它影响。
+    if get_open_api_principal() is None and not settings.get_from_db("default_operator").get("enable_guest_access"):
         raise HTTPException(status_code=403, detail="No permission to access")
     login_user = get_default_operator()
     res = await AssistantService.get_assistant_info(assistant_id, login_user)
     return resp_200(data=res)
 
 
-@open_api_scope("assistant:read")
+@open_api_scope("assistant:read", guest=True)
 @router.get("/list", status_code=200)
 def get_assistant_list(
     request: Request,
@@ -340,14 +342,15 @@ def get_assistant_list(
     """
     logger.info(f"public_get_list ip: {request.client.host} user_id:{user_id}")
 
-    if not settings.get_from_db("default_operator").get("enable_guest_access"):
+    # F076(T-14):免登录开关只拦匿名访问;带密钥的服务账号调用不受它影响。
+    if get_open_api_principal() is None and not settings.get_from_db("default_operator").get("enable_guest_access"):
         raise HTTPException(status_code=403, detail="No permission to access")
     login_user = get_default_operator()
     data, total = AssistantService.get_assistant(login_user, name, status, tag_id, page, limit)
     return resp_200(PageData(data=data, total=total))
 
 
-@open_api_scope("assistant:invoke")
+@open_api_scope("assistant:invoke", guest=True)
 @router.websocket("/chat/{assistant_id}")
 async def chat(*, websocket: WebSocket, assistant_id: str, chat_id: str | None = None):
     """

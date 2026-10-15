@@ -379,3 +379,49 @@ async def test_expired_key_rejected(patched_db, fake_redis, monkeypatch):
     )
     with pytest.raises(OpenApiKeyExpiredError):
         await _enter(_http(f"Bearer {plaintext}"))
+
+
+# ---------------------------------------------------------------------------
+# ②a 平台免登录面(T-14,discovery 决策 D5)
+# ---------------------------------------------------------------------------
+
+@open_api_scope("assistant:read", guest=True)
+def _guest_endpoint():
+    return None
+
+
+def _stub_guest_switch(monkeypatch, on: bool):
+    async def _enabled() -> bool:
+        return on
+
+    monkeypatch.setattr(deps, "_guest_access_enabled", _enabled)
+
+
+async def test_guest_endpoint_allowed_when_switch_on(patched_db, fake_redis, monkeypatch):
+    """免登录开关开:guest 端点匿名放行(旧行为),即便默认租户已强制。"""
+    _enable_deployment(monkeypatch, True)
+    _tenant_enforced(monkeypatch, {DEFAULT_TENANT_ID: True})
+    _stub_guest_switch(monkeypatch, True)
+
+    gen = await deps.verify_open_api_access(_http(endpoint=_guest_endpoint)).__anext__()  # noqa: F841
+    assert get_open_api_principal() is None
+
+
+async def test_guest_endpoint_rejected_when_switch_off(patched_db, fake_redis, monkeypatch):
+    """免登录开关关:guest 端点与其余端点一视同仁(默认租户强制 → 11801)。"""
+    _enable_deployment(monkeypatch, True)
+    _tenant_enforced(monkeypatch, {DEFAULT_TENANT_ID: True})
+    _stub_guest_switch(monkeypatch, False)
+
+    with pytest.raises(OpenApiKeyMissingError):
+        await _enter(_http(endpoint=_guest_endpoint))
+
+
+async def test_non_guest_endpoint_ignores_guest_switch(patched_db, fake_redis, monkeypatch):
+    """未标 guest 的端点不受免登录开关影响。"""
+    _enable_deployment(monkeypatch, True)
+    _tenant_enforced(monkeypatch, {DEFAULT_TENANT_ID: True})
+    _stub_guest_switch(monkeypatch, True)
+
+    with pytest.raises(OpenApiKeyMissingError):
+        await _enter(_http())  # _marked_endpoint 无 guest 标记
