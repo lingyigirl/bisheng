@@ -25,6 +25,7 @@ from sqlalchemy import select, update
 from bisheng.core.context.tenant import bypass_tenant_filter, strict_tenant_filter
 from bisheng.core.database import get_async_db_session
 from bisheng.open_api.domain.models.api_credential import ApiCredential
+from bisheng.open_api.domain.models.open_api_tenant_setting import OpenApiTenantSetting
 from bisheng.open_api.domain.models.service_account import ServiceAccount
 
 
@@ -157,6 +158,47 @@ class ApiCredentialDao:
                 await session.commit()
         except Exception as exc:
             logger.debug("open_api: touch last_used_at failed for cred={}: {}", credential_id, exc)
+
+
+class OpenApiTenantSettingDao:
+    """DAO for `open_api_tenant_setting`(每租户一行,主键即 tenant_id)。
+
+    读取姿态说明:本表的 tenant_id **就是查询键本身**,且调用点(鉴权依赖的
+    开关判定)发生在租户上下文建立**之前**——此时 `current_tenant_id` 还不可信
+    (中间件会把带密钥请求钉在 ROOT,design §5 坑 1)。因此这里用
+    `bypass_tenant_filter()` + **显式的 `tenant_id == ?` 条件**:值来自已校验的
+    凭据或显式入参,跨租户风险为零,而依赖隐式上下文反而会读错租户。
+    """
+
+    @classmethod
+    async def aget(cls, tenant_id: int) -> OpenApiTenantSetting | None:
+        with bypass_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.execute(
+                    select(OpenApiTenantSetting).where(OpenApiTenantSetting.tenant_id == tenant_id)
+                )
+                rows = _rows(result)
+        return rows[0] if rows else None
+
+    @classmethod
+    async def aupsert(cls, tenant_id: int, *, enforce_keys: bool) -> OpenApiTenantSetting:
+        """按主键插入或更新;返回最新行(管理面 PUT 走这里)。"""
+        moment = datetime.now()
+        async with get_async_db_session() as session:
+            result = await session.execute(
+                select(OpenApiTenantSetting).where(OpenApiTenantSetting.tenant_id == tenant_id)
+            )
+            rows = _rows(result)
+            if rows:
+                row = rows[0]
+                row.enforce_keys = enforce_keys
+                row.update_time = moment
+            else:
+                row = OpenApiTenantSetting(tenant_id=tenant_id, enforce_keys=enforce_keys, update_time=moment)
+                session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return row
 
 
 class ServiceAccountDao:
