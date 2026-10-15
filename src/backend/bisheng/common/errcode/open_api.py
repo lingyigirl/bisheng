@@ -80,6 +80,18 @@ class OpenApiTenantDisabledError(OpenApiErrorBase):
     HttpStatus: int = 403
 
 
+class OpenApiUnknownScopeError(OpenApiErrorBase):
+    """签发/编辑密钥时指定了未登记的权限位(issuable 目录之外的 code)。
+
+    与 11807 的分工:11807 是"调用时密钥缺少端点所需权限位"(403);11819 是
+    "管理面给的权限位本身不合法"(400)——发生在签发那一刻,越早拒绝越好。
+    """
+
+    Code: int = 11819
+    Msg: str = "Unknown scope code"
+    HttpStatus: int = 400
+
+
 class OpenApiScopeMissingError(OpenApiErrorBase):
     """密钥缺少该端点所需权限位(spec AC-22);响应 `data.required` 回带缺失的权限位。"""
 

@@ -9,11 +9,15 @@ from fastapi import APIRouter
 
 from bisheng.open_api.api.endpoints.auth import router as auth_router
 from bisheng.open_api.api.endpoints.service_account import router as service_account_router
+from bisheng.open_api.api.endpoints.service_account_keys import router as service_account_keys_router
+from bisheng.open_api.api.endpoints.service_account_keys import scopes_router
 
 rpc_router = APIRouter()
 rpc_router.include_router(auth_router)
 
 management_router = APIRouter()
 management_router.include_router(service_account_router)
+management_router.include_router(service_account_keys_router)
+management_router.include_router(scopes_router)
 
 __all__ = ["management_router", "rpc_router"]
