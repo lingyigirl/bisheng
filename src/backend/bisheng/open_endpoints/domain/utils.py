@@ -1,4 +1,3 @@
-
 from fastapi.exceptions import HTTPException
 from sqlmodel import select
 
@@ -8,6 +7,7 @@ from bisheng.common.services.config_service import settings
 from bisheng.core.context.tenant import DEFAULT_TENANT_ID, bypass_tenant_filter, set_current_tenant_id
 from bisheng.core.database import get_sync_db_session
 from bisheng.database.models.tenant import UserTenant, UserTenantDao
+from bisheng.open_api.domain.context import get_open_api_principal
 from bisheng.user.domain.models.user import UserDao
 
 
@@ -32,14 +32,21 @@ def get_default_operator() -> UserPayload:
     tenant-aware table then raises ``NoTenantContextError`` under
     ``multi_tenant.enabled=true``. Seed the ContextVar here so every
     ``/api/v2/*`` endpoint that depends on this helper is multi-tenant safe.
+
+    F076: when an open-API principal is installed (key authentication, T-06),
+    the acting identity is the service account's resource owner and the tenant
+    ContextVar has already been rebuilt by the dependency -- return it as-is.
     """
-    user_id = settings.get_from_db('default_operator').get('user')
+    principal = get_open_api_principal()
+    if principal is not None:
+        return principal.owner_payload
+    user_id = settings.get_from_db("default_operator").get("user")
     if not user_id:
-        raise HTTPException(status_code=500, detail='Not configureddefault_operatorIIuserConfigure')
+        raise HTTPException(status_code=500, detail="Not configureddefault_operatorIIuserConfigure")
     # Find default user information
     login_user = UserDao.get_user(user_id)
     if not login_user:
-        raise HTTPException(status_code=500, detail='not founddefault_operatorIIuserUser Information')
+        raise HTTPException(status_code=500, detail="not founddefault_operatorIIuserUser Information")
     tenant_id = _get_active_tenant_id_sync(login_user.user_id)
     login_user = UserPayload.init_login_user_sync(
         user_id=login_user.user_id,
@@ -55,14 +62,19 @@ async def get_default_operator_async() -> UserPayload:
 
     Seeding the tenant ContextVar here is what makes default-operator-backed
     OpenAPI endpoints work under ``multi_tenant.enabled=true``.
+
+    F076: an installed open-API principal wins -- see the sync twin.
     """
-    user_id = (await settings.aget_from_db('default_operator')).get('user')
+    principal = get_open_api_principal()
+    if principal is not None:
+        return principal.owner_payload
+    user_id = (await settings.aget_from_db("default_operator")).get("user")
     if not user_id:
-        raise HTTPException(status_code=500, detail='Not configureddefault_operatorIIuserConfigure')
+        raise HTTPException(status_code=500, detail="Not configureddefault_operatorIIuserConfigure")
     # Find default user information
     login_user = await UserDao.aget_user(user_id)
     if not login_user:
-        raise HTTPException(status_code=500, detail='not founddefault_operatorIIuserUser Information')
+        raise HTTPException(status_code=500, detail="not founddefault_operatorIIuserUser Information")
     active = await UserTenantDao.aget_active_user_tenant(login_user.user_id)
     tenant_id = active.tenant_id if active else DEFAULT_TENANT_ID
     login_user = await UserPayload.init_login_user(
@@ -86,7 +98,14 @@ async def resolve_operator(user_id: int | None = None) -> UserPayload:
 
     Seeds ``current_tenant_id`` with the resolved user's active tenant so
     tenant-aware queries stay multi-tenant safe (mirrors get_default_operator_async).
+
+    F076: an installed open-API principal wins outright -- even when a caller
+    passes ``user_id``, the identity cannot be caller-specified (INV-23 ③; the
+    dependency already rejected bare ``user_id`` with 11817 before we get here).
     """
+    principal = get_open_api_principal()
+    if principal is not None:
+        return principal.owner_payload
     if user_id is None:
         return await get_default_operator_async()
 
