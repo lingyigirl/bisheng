@@ -63,8 +63,10 @@ def test_registry_matches_real_routes_bidirectionally():
     assert real - registered == scopeless, (
         f"有端点既未登记进注册表、也不在无权限位例外中: {real - registered - scopeless}"
     )
-    # 例外清单是显式枚举的:当前未落地的 whoami 允许提前登记,但落地后必须真的存在。
-    assert EXEMPT_ENDPOINTS & real == EXEMPT_ENDPOINTS - {("GET", "/api/v2/auth/whoami")}
+    # 例外清单是显式枚举的:登记进 EXEMPT_ENDPOINTS 的端点必须真实存在,
+    # 且必须确实是无权限位(scope=None)的端点(whoami,T-15 已落地)。
+    assert EXEMPT_ENDPOINTS <= real, f"EXEMPT_ENDPOINTS 存在未落地的端点: {EXEMPT_ENDPOINTS - real}"
+    assert EXEMPT_ENDPOINTS <= scopeless, f"EXEMPT_ENDPOINTS 的端点必须无权限位: {EXEMPT_ENDPOINTS - scopeless}"
 
 
 async def test_enforcement_on_rejects_keyless_calls_on_every_route(monkeypatch):

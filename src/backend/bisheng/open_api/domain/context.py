@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 仅类型标注用:避免领域层在导入期拉起用户模块
@@ -31,6 +32,8 @@ class OpenApiPrincipal:
     scopes: tuple[str, ...]
     #: 已装载的 owner 身份;端点经 utils 的身份助手取到它(不参与比较/展示)。
     owner_payload: UserPayload = field(repr=False, compare=False)
+    #: 凭据有效期(None = 不过期);whoami 回显用(带默认值,故排在无默认字段之后)。
+    expires_at: datetime | None = None
 
 
 _current_principal: ContextVar[OpenApiPrincipal | None] = ContextVar("open_api_principal", default=None)

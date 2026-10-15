@@ -141,6 +141,7 @@ async def _resolve_principal(conn: HTTPConnection) -> OpenApiPrincipal | None:
         owner_user_id=account.resource_owner_user_id,
         key_mask=credential.key_mask,
         scopes=tuple(credential.scopes or ()),
+        expires_at=credential.expires_at,
         owner_payload=owner,
     )
 
