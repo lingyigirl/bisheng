@@ -163,6 +163,18 @@ class OpenApiResourceGrantsUnavailableError(OpenApiErrorBase):
     HttpStatus: int = 503
 
 
+class OpenApiResourceTypeUnsupportedError(OpenApiErrorBase):
+    """授权代管请求里的资源类型或权限档位不在支持清单内(400)。
+
+    服务账号代管授权只开放四类资源(知识库/知识空间/助手/工作流)与三档权限
+    (viewer/editor/manager)——`owner` 是资源创建者关系,不经代管授予。
+    """
+
+    Code: int = 11820
+    Msg: str = "Unsupported resource type or permission level"
+    HttpStatus: int = 400
+
+
 class OpenApiToolNotAllowedError(OpenApiErrorBase):
     """`tools[]` 指定了未绑定 / 未启用 / 不可识别的工具(spec AC-30,INV-24);`data.tool_key` 回带工具标识。"""
 

@@ -462,5 +462,6 @@
   "11816": "The service account's resource owner now holds administrator privileges; the call was rejected",
   "11817": "Specifying a user identity in the request is not allowed",
   "11818": "tools is not applicable to this call",
-  "11819": "Unknown scope code"
+  "11819": "Unknown scope code",
+  "11820": "Unsupported resource type or permission level"
 }
