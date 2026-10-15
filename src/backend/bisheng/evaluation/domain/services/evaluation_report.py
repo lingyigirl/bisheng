@@ -37,7 +37,7 @@ _DETAIL_COLUMN_LABELS: list[tuple[str, str]] = [
     ("statements_num_answer_only", "多答数"),
     ("statements_num_gt_only", "漏答数"),
     ("recall", "召回"),
-    ("precision", "精确"),
+    ("precision", "准确率"),  # 展示名统一为「准确率」，与汇总页一致
     ("F1", "F1"),
     ("duration_ms", "耗时(ms)"),
     ("input_token", "输入Token"),
@@ -164,7 +164,7 @@ def _summary_sheet_rows(
         ["效果指标", ""],
         ["F1", pct(scores.get("answer_f1"))],
         ["召回", pct(scores.get("answer_recall"))],
-        ["精确", pct(scores.get("answer_precision"))],
+        ["准确率", pct(scores.get("answer_precision"))],
         ["", ""],
         ["性能指标", ""],
         ["请求成功率", pct(perf.get("success_rate"))],
