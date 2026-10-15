@@ -10,6 +10,7 @@ import {
 import Config from "./components/Config"
 import OrganizationAndMembers from "./components/OrganizationAndMembers"
 import OrgSync from "./components/OrgSync"
+import { ServiceAccountPanel } from "./components/ServiceAccount"
 import RolesAndPermissions from "./components/RolesAndPermissions"
 import Theme from "./theme"
 import UserGroups from "./components/UserGroup"
@@ -42,6 +43,9 @@ export default function index() {
     || !!user?.is_child_admin
   /** Legacy flat user table is for accounts without org-tab access. */
   const showLegacyUserTab = !showOrgTab
+  /** F076: open-API service accounts are per-tenant; super admin and the
+   *  current tenant's admin manage them (backend enforces the same rule). */
+  const showServiceAccountTab = isSuperAdmin || isChildAdmin
 
   const defaultTab = showOrgTab
     ? "organization"
@@ -71,6 +75,9 @@ export default function index() {
           )}
           {showOrgSyncTab && (
             <TabsTrigger value="orgSync">{t("orgSync:title", "组织同步")}</TabsTrigger>
+          )}
+          {showServiceAccountTab && (
+            <TabsTrigger value="serviceAccount">{t("serviceAccount:title")}</TabsTrigger>
           )}
           {canAccessSystemConfig && (
             <TabsTrigger value="system">{t("system.systemConfiguration")}</TabsTrigger>
@@ -102,6 +109,11 @@ export default function index() {
         {showOrgSyncTab && (
           <TabsContent value="orgSync" className="min-h-0 flex-1 overflow-hidden">
             <OrgSync />
+          </TabsContent>
+        )}
+        {showServiceAccountTab && (
+          <TabsContent value="serviceAccount" className="min-h-0 flex-1 overflow-hidden">
+            <ServiceAccountPanel />
           </TabsContent>
         )}
         {canAccessSystemConfig && (
