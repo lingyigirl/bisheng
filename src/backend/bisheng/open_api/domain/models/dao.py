@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 
 from bisheng.core.context.tenant import bypass_tenant_filter, strict_tenant_filter
 from bisheng.core.database import get_async_db_session
@@ -140,6 +140,31 @@ class ApiCredentialDao:
             return result.rowcount or 0
 
     @classmethod
+    async def astats_by_accounts(cls, account_ids: list[int], *, tenant_id: int) -> dict[int, dict]:
+        """按账号聚合密钥统计(管理面列表用):未吊销密钥数 + 最近使用时间。
+
+        用 CASE 求和而不是聚合 FILTER —— 后者在达梦上不可用。
+        """
+        if not account_ids:
+            return {}
+        active_flag = case((ApiCredential.revoked_at.is_(None), 1), else_=0)
+        async with get_async_db_session() as session:
+            result = await session.execute(
+                select(
+                    ApiCredential.service_account_id,
+                    func.sum(active_flag),
+                    func.max(ApiCredential.last_used_at),
+                )
+                .where(
+                    ApiCredential.tenant_id == tenant_id,
+                    ApiCredential.service_account_id.in_(account_ids),
+                )
+                .group_by(ApiCredential.service_account_id)
+            )
+            rows = result.all()
+        return {int(r[0]): {'key_count': int(r[1] or 0), 'last_used_at': r[2]} for r in rows}
+
+    @classmethod
     async def atouch_last_used(cls, credential_id: int, *, now: datetime | None = None) -> None:
         """Best-effort `last_used_at` write — failure is logged, never raised (spec AC-14).
 
@@ -221,13 +246,17 @@ class ServiceAccountDao:
 
     @classmethod
     async def aget_scoped(cls, account_id: int, *, tenant_id: int) -> ServiceAccount | None:
-        """管理面读取:按租户收窄(跨租户一律查不到,spec AC-07)。"""
+        """管理面读取:按租户收窄(跨租户一律查不到,spec AC-07);软删行不可见。
+
+        注意:删除流程在**软删之前**读它,所以加 deleted_at 过滤不影响删除自身。
+        """
         with strict_tenant_filter():
             async with get_async_db_session() as session:
                 result = await session.execute(
                     select(ServiceAccount).where(
                         ServiceAccount.id == account_id,
                         ServiceAccount.tenant_id == tenant_id,
+                        ServiceAccount.deleted_at.is_(None),
                     )
                 )
                 rows = _rows(result)
@@ -262,6 +291,26 @@ class ServiceAccountDao:
                     .limit(page_size)
                 )
                 return _rows(result), int(total)
+
+    @classmethod
+    async def aname_exists(cls, name: str, *, tenant_id: int, exclude_id: int | None = None) -> bool:
+        """同租户内是否已有同名账号——**含已软删的行**。
+
+        软删的名字不复用(design 表1):DB 的 (tenant_id, name) 唯一约束并不排除
+        软删行,预检若把它滤掉,软删重名就会漏过预检、撞库变成裸 500。
+        """
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                conditions = [
+                    ServiceAccount.tenant_id == tenant_id,
+                    ServiceAccount.name == name,
+                ]
+                if exclude_id is not None:
+                    conditions.append(ServiceAccount.id != exclude_id)
+                result = await session.execute(
+                    select(func.count()).select_from(ServiceAccount).where(*conditions)
+                )
+                return bool(result.scalar_one())
 
     @classmethod
     async def aupdate_fields(cls, account_id: int, fields: dict[str, Any], *, tenant_id: int) -> int:

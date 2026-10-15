@@ -153,17 +153,39 @@ async def test_owner_name_collision_gets_suffix(patched_db, monkeypatch):
     assert owner2.user_name == "svc-信贷A"
 
 
+async def test_duplicate_name_is_rejected_cleanly(patched_db, monkeypatch):
+    """重名是明确的 11813(含软删重名——名字不复用,design 表1)。"""
+    from bisheng.common.errcode.open_api import OpenApiAccountNameDuplicateError
+
+    _stub_payload(monkeypatch, _StubPayload())
+    account = await svc.create_service_account(tenant_id=TENANT_ID, name="demo")
+
+    with pytest.raises(OpenApiAccountNameDuplicateError):
+        await svc.create_service_account(tenant_id=TENANT_ID, name="demo")
+
+    # 软删后名字仍不可复用
+    assert await svc.delete_service_account(account.id, tenant_id=TENANT_ID) is True
+    with pytest.raises(OpenApiAccountNameDuplicateError):
+        await svc.create_service_account(tenant_id=TENANT_ID, name="demo")
+
+
 async def test_create_failure_leaves_no_residue(patched_db, monkeypatch):
-    """真实失败路径:同租户重名触发唯一约束 → 身份/成员/账号三行一起回滚。"""
+    """竞态路径:预检通过但库内已有同名(并发写入)→ 唯一约束在 commit 时炸,
+    身份/成员/账号三行必须一起回滚,不留孤儿。"""
     _stub_payload(monkeypatch, _StubPayload())
     await svc.create_service_account(tenant_id=TENANT_ID, name="demo")
 
     before_users = await _count(patched_db, User)
+
+    # 模拟"预检时还没有、提交时已经有了"的并发窗口
+    async def _no_dup(name: str, *, tenant_id: int) -> bool:
+        return False
+
+    monkeypatch.setattr('bisheng.open_api.domain.services.service_account_service.ServiceAccountDao.aname_exists', _no_dup)
+
     from sqlalchemy.exc import IntegrityError
 
     with pytest.raises(IntegrityError):
-        # 同名再建:账号行的 (tenant_id, name) 唯一约束在 commit 时炸,
-        # 此时专用身份与租户成员已 flush 但未提交,必须一起回滚。
         await svc.create_service_account(tenant_id=TENANT_ID, name="demo")
 
     assert await _count(patched_db, User) == before_users

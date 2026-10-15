@@ -44,6 +44,7 @@ from bisheng.linsight.api.router import router as linsight_router
 from bisheng.llm.api.router import router as llm_router
 from bisheng.message.api.router import router as message_router
 from bisheng.open_api.api.dependencies import verify_open_api_access
+from bisheng.open_api.api.router import management_router as open_api_management_router
 from bisheng.open_api.api.router import rpc_router as open_api_rpc_router
 from bisheng.open_endpoints.api.endpoints.llm import router as llm_router_rpc
 from bisheng.open_endpoints.api.router import (
@@ -137,3 +138,5 @@ router_rpc.include_router(llm_router_rpc)
 router_rpc.include_router(flow_router_rpc)
 router_rpc.include_router(citation_router_rpc)
 router_rpc.include_router(open_api_rpc_router)
+# F076: 开放 API 管理面(服务账号/密钥/设置)挂在 /api/v1
+router.include_router(open_api_management_router)

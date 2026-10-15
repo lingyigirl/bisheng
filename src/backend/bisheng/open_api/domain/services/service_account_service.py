@@ -25,6 +25,7 @@ from datetime import datetime
 from loguru import logger
 from sqlmodel import select
 
+from bisheng.common.errcode.open_api import OpenApiAccountNameDuplicateError
 from bisheng.core.context.tenant import bypass_tenant_filter
 from bisheng.core.database import get_async_db_session
 from bisheng.database.models.tenant import UserTenant
@@ -105,17 +106,20 @@ async def create_service_account(
     默认自动创建专用身份;显式传 `resource_owner_user_id` 时(运维接管/测试)
     先经 `assert_owner_assignable` 校验(11810),不再新建用户。
     """
+    # 名称检查放在事务外:唯一约束仍是最终裁决(下面的 IntegrityError 兜底竞态),
+    # 但先查一次能把"重名"变成明确的 11813,而不是一个裸 500。
+    if await ServiceAccountDao.aname_exists(name, tenant_id=tenant_id):
+        raise OpenApiAccountNameDuplicateError()
+
+    if resource_owner_user_id is not None:
+        await assert_owner_assignable(resource_owner_user_id, tenant_id)
+
     async with get_async_db_session() as session:
         if resource_owner_user_id is None:
             owner = await _create_dedicated_owner(session, name, tenant_id)
             owner_id = owner.user_id
         else:
             owner_id = resource_owner_user_id
-
-        if resource_owner_user_id is not None:
-            # 显式指定 owner 的路径要过防提权校验;自动创建的是刚生成的普通用户,
-            # 无需回查(它连角色都没有)。
-            await assert_owner_assignable(owner_id, tenant_id)
 
         account = ServiceAccount(
             tenant_id=tenant_id,
@@ -129,6 +133,18 @@ async def create_service_account(
         await session.commit()
         await session.refresh(account)
         return account
+
+
+async def get_service_account(account_id: int, *, tenant_id: int) -> ServiceAccount | None:
+    """管理面读单个账号(跨租户/已软删一律 None,由端点转 404)。"""
+    return await ServiceAccountDao.aget_scoped(account_id, tenant_id=tenant_id)
+
+
+async def list_service_accounts(
+    *, tenant_id: int, keyword: str | None = None, page: int = 1, page_size: int = 20
+) -> tuple[list[ServiceAccount], int]:
+    """管理面分页列表(软删不可见)。"""
+    return await ServiceAccountDao.alist(tenant_id=tenant_id, keyword=keyword, page=page, page_size=page_size)
 
 
 async def set_enabled(account_id: int, *, enabled: bool, tenant_id: int) -> bool:
@@ -159,6 +175,12 @@ async def update_service_account(account_id: int, fields: dict, *, tenant_id: in
     new_owner = fields.get("resource_owner_user_id")
     if new_owner is not None:
         await assert_owner_assignable(new_owner, tenant_id)
+
+    new_name = fields.get("name")
+    if new_name is not None and await ServiceAccountDao.aname_exists(
+        new_name, tenant_id=tenant_id, exclude_id=account_id
+    ):
+        raise OpenApiAccountNameDuplicateError()
 
     return bool(await ServiceAccountDao.aupdate_fields(account_id, dict(fields), tenant_id=tenant_id))
 
