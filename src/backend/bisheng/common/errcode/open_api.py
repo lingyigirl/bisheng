@@ -18,13 +18,17 @@
 from bisheng.common.errcode.base import BaseErrorCode
 
 
-class _OpenApiError(BaseErrorCode):
-    """F076 错误基类:携带真实 HTTP 状态码(见模块 docstring 第 1 条)。"""
+class OpenApiErrorBase(BaseErrorCode):
+    """F076 错误基类:携带真实 HTTP 状态码(见模块 docstring 第 1 条)。
+
+    公开命名:_EXCEPTION_HANDLERS 在 main.py 里按本类注册专用处理器
+    (T-13),Starlette 沿 MRO 匹配,因此全部 17 个子类自动走真状态 + 信封。
+    """
 
     HttpStatus: int = 400
 
 
-class OpenApiKeyMissingError(_OpenApiError):
+class OpenApiKeyMissingError(OpenApiErrorBase):
     """请求未携带密钥,或密钥格式与 `bs-sak-<43 字符>` 不符(spec AC-17)。
 
     格式非法与缺失共用一码:两者都在"凭据未通过解析"这一层,区分只会告诉
@@ -36,7 +40,7 @@ class OpenApiKeyMissingError(_OpenApiError):
     HttpStatus: int = 401
 
 
-class OpenApiKeyInvalidError(_OpenApiError):
+class OpenApiKeyInvalidError(OpenApiErrorBase):
     """摘要查不到对应密钥(含已物理清理的历史密钥,spec AC-18)。"""
 
     Code: int = 11802
@@ -44,7 +48,7 @@ class OpenApiKeyInvalidError(_OpenApiError):
     HttpStatus: int = 401
 
 
-class OpenApiKeyExpiredError(_OpenApiError):
+class OpenApiKeyExpiredError(OpenApiErrorBase):
     """密钥已超过有效期(过期判定排他:`expires_at > now` 才有效,spec AC-12)。"""
 
     Code: int = 11803
@@ -52,7 +56,7 @@ class OpenApiKeyExpiredError(_OpenApiError):
     HttpStatus: int = 401
 
 
-class OpenApiKeyRevokedError(_OpenApiError):
+class OpenApiKeyRevokedError(OpenApiErrorBase):
     """密钥已被吊销(吊销 ≠ 删除,记录保留供审计,spec AC-11)。"""
 
     Code: int = 11804
@@ -60,7 +64,7 @@ class OpenApiKeyRevokedError(_OpenApiError):
     HttpStatus: int = 401
 
 
-class OpenApiAccountDisabledError(_OpenApiError):
+class OpenApiAccountDisabledError(OpenApiErrorBase):
     """密钥所属服务账号已停用或已删除(spec AC-05 / AC-06)。"""
 
     Code: int = 11805
@@ -68,7 +72,7 @@ class OpenApiAccountDisabledError(_OpenApiError):
     HttpStatus: int = 401
 
 
-class OpenApiTenantDisabledError(_OpenApiError):
+class OpenApiTenantDisabledError(OpenApiErrorBase):
     """密钥所属租户已停用——必须由鉴权依赖自查(中间件的租户停用检查此时看的是 ROOT 租户,见 design §5 坑 1)。"""
 
     Code: int = 11806
@@ -76,7 +80,7 @@ class OpenApiTenantDisabledError(_OpenApiError):
     HttpStatus: int = 403
 
 
-class OpenApiScopeMissingError(_OpenApiError):
+class OpenApiScopeMissingError(OpenApiErrorBase):
     """密钥缺少该端点所需权限位(spec AC-22);响应 `data.required` 回带缺失的权限位。"""
 
     Code: int = 11807
@@ -84,7 +88,7 @@ class OpenApiScopeMissingError(_OpenApiError):
     HttpStatus: int = 403
 
 
-class OpenApiResourceNotGrantedError(_OpenApiError):
+class OpenApiResourceNotGrantedError(OpenApiErrorBase):
     """调用方对目标资源**已知可见但授权档位不足**(例如写操作需要 editor 而密钥只授了 viewer)。
 
     与 11809 的分工:资源存在性本身敏感、需要防枚举时用 11809;此处用于
@@ -96,7 +100,7 @@ class OpenApiResourceNotGrantedError(_OpenApiError):
     HttpStatus: int = 403
 
 
-class OpenApiNotFoundError(_OpenApiError):
+class OpenApiNotFoundError(OpenApiErrorBase):
     """资源不存在**或**不在该服务账号的授权范围内——两者不可区分(防枚举,spec AC-23)。"""
 
     Code: int = 11809
@@ -104,7 +108,7 @@ class OpenApiNotFoundError(_OpenApiError):
     HttpStatus: int = 404
 
 
-class OpenApiOwnerNotAllowedError(_OpenApiError):
+class OpenApiOwnerNotAllowedError(OpenApiErrorBase):
     """创建 / 变更服务账号时,其资源所有者是管理员(spec AC-03,防提权第一重)。"""
 
     Code: int = 11810
@@ -112,7 +116,7 @@ class OpenApiOwnerNotAllowedError(_OpenApiError):
     HttpStatus: int = 400
 
 
-class OpenApiEndpointUnregisteredError(_OpenApiError):
+class OpenApiEndpointUnregisteredError(OpenApiErrorBase):
     """端点没有登记所需权限位——服务端配置错误(fail-closed,spec AC-27)。
 
     对调用方而言这是 500 而非 403:不是"你无权",而是"平台漏标了"。
@@ -123,7 +127,7 @@ class OpenApiEndpointUnregisteredError(_OpenApiError):
     HttpStatus: int = 500
 
 
-class OpenApiAuthBackendUnavailableError(_OpenApiError):
+class OpenApiAuthBackendUnavailableError(OpenApiErrorBase):
     """鉴权依赖(Redis / 数据库)不可用——fail-closed,绝不放行(spec AC-24)。"""
 
     Code: int = 11812
@@ -131,7 +135,7 @@ class OpenApiAuthBackendUnavailableError(_OpenApiError):
     HttpStatus: int = 503
 
 
-class OpenApiAccountNameDuplicateError(_OpenApiError):
+class OpenApiAccountNameDuplicateError(OpenApiErrorBase):
     """同一租户内服务账号重名(唯一约束 `uk_service_account_tenant_name`,spec AC-01)。"""
 
     Code: int = 11813
@@ -139,7 +143,7 @@ class OpenApiAccountNameDuplicateError(_OpenApiError):
     HttpStatus: int = 400
 
 
-class OpenApiResourceGrantsUnavailableError(_OpenApiError):
+class OpenApiResourceGrantsUnavailableError(OpenApiErrorBase):
     """资源授权服务不可用(管理面授权变更 / 依赖校验)——fail-closed(spec AC-06a / AC-24)。"""
 
     Code: int = 11814
@@ -147,7 +151,7 @@ class OpenApiResourceGrantsUnavailableError(_OpenApiError):
     HttpStatus: int = 503
 
 
-class OpenApiToolNotAllowedError(_OpenApiError):
+class OpenApiToolNotAllowedError(OpenApiErrorBase):
     """`tools[]` 指定了未绑定 / 未启用 / 不可识别的工具(spec AC-30,INV-24);`data.tool_key` 回带工具标识。"""
 
     Code: int = 11815
@@ -155,7 +159,7 @@ class OpenApiToolNotAllowedError(_OpenApiError):
     HttpStatus: int = 403
 
 
-class OpenApiOwnerPrivilegedError(_OpenApiError):
+class OpenApiOwnerPrivilegedError(OpenApiErrorBase):
     """运行时发现服务账号的资源所有者已被提权为管理员——拒绝调用(spec AC-04,防提权第二重)。"""
 
     Code: int = 11816
@@ -163,7 +167,7 @@ class OpenApiOwnerPrivilegedError(_OpenApiError):
     HttpStatus: int = 403
 
 
-class OpenApiIdentityInputRejectedError(_OpenApiError):
+class OpenApiIdentityInputRejectedError(OpenApiErrorBase):
     """请求中携带调用方指定的裸 `user_id`——身份不可由调用方指定(spec AC-25,INV-23 条款 3)。"""
 
     Code: int = 11817

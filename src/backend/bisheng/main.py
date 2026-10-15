@@ -9,6 +9,7 @@ from loguru import logger
 
 from bisheng.api.router import router, router_rpc
 from bisheng.common.errcode import BaseErrorCode
+from bisheng.common.errcode.open_api import OpenApiErrorBase
 from bisheng.common.exceptions.auth import AuthJWTException
 from bisheng.common.init_data import init_default_data
 from bisheng.common.middleware.admin_scope import AdminScopeMiddleware
@@ -41,9 +42,27 @@ def handle_request_validation_error(req: Request, exc: RequestValidationError) -
     return JSONResponse(content=msg)
 
 
+async def handle_open_api_error(req: Request, exc: "OpenApiErrorBase") -> JSONResponse:
+    """F076 T-13:开放 API 错误回**真实 HTTP 状态** + 统一信封(design §3 决策 3)。
+
+    与 handle_http_exception 的三点区别:
+    1. 状态码取 `exc.HttpStatus`(401/403/404/400/500/503),而不是业务码本体;
+       Starlette 按 MRO 匹配,17 个子类全部自动生效。
+    2. **不访问 `req.method`** —— WebSocket scope 下没有该属性,访问即
+       AttributeError → 握手 500 + traceback(design §5 坑 3)。
+    3. 不读请求体、不额外查询,纯映射。
+
+    作用域是全应用(不仅 /api/v2) —— 管理面的 118xx(如 400/11810)同样拿到真状态,
+    与上游管理接口的对外口径一致。
+    """
+    payload = exc.return_resp_instance()
+    return JSONResponse(status_code=exc.HttpStatus, content=payload.model_dump())
+
+
 _EXCEPTION_HANDLERS = {
     HTTPException: handle_http_exception,
     RequestValidationError: handle_request_validation_error,
+    OpenApiErrorBase: handle_open_api_error,
     BaseErrorCode: handle_http_exception,
     Exception: handle_http_exception,
 }
@@ -114,6 +133,7 @@ def _mount_local_storage(app: FastAPI) -> None:
             StaticFiles(directory=str(root / bucket), check_dir=False),
             name=f"local-storage-{bucket}",
         )
+
 
 def create_app():
     """Create the FastAPI app and include the router."""
