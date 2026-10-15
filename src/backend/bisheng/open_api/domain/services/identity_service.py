@@ -36,10 +36,15 @@ async def load_owner_payload(*, owner_user_id: int, tenant_id: int) -> UserPaylo
     """
     with bypass_tenant_filter():
         user = await UserDao.aget_user(owner_user_id)
-        if user is None or getattr(user, "status", _ACTIVE_STATUS) != _ACTIVE_STATUS:
-            logger.warning("open_api: service-account owner {} missing or inactive", owner_user_id)
+        # 停用判据是 User.delete(0=正常,1=停用)——T-06 首版误用不存在的
+        # `status` 字段,getattr 兜底让检查静默失效;T-17 集成时修正。
+        if user is None or int(getattr(user, "delete", 0) or 0) != 0:
+            logger.warning("open_api: service-account owner {} missing or disabled", owner_user_id)
             return None
         active = await UserTenantDao.aget_active_user_tenant(owner_user_id)
+        if active is not None and active.status != "active":
+            logger.warning("open_api: service-account owner {} tenant membership disabled", owner_user_id)
+            return None
 
     if active is None or active.tenant_id != tenant_id:
         # owner 的活跃租户与密钥所属租户不一致 = 归属漂移,按账号不可用处理。
@@ -55,6 +60,35 @@ async def load_owner_payload(*, owner_user_id: int, tenant_id: int) -> UserPaylo
         user_name=user.user_name,
         tenant_id=tenant_id,
     )
+
+
+async def assert_owner_assignable(owner_user_id: int, tenant_id: int) -> None:
+    """创建/变更服务账号时校验候选 owner 可被指派(第一重防提权,spec AC-03)。
+
+    - 用户不存在 / 已停用 → 11810(调用方给了一个不可用的主体);
+    - 已是全局超管或该租户租户管理员 → 11810;
+    - 该用户不是该租户的活跃成员 → 11810。
+
+    第二重(运行期)由 `owner_is_privileged` 在鉴权依赖里执行(11816)。
+    """
+    from bisheng.common.errcode.open_api import OpenApiOwnerNotAllowedError
+
+    with bypass_tenant_filter():
+        user = await UserDao.aget_user(owner_user_id)
+        if user is None or int(getattr(user, "delete", 0) or 0) != 0:
+            raise OpenApiOwnerNotAllowedError()
+        active = await UserTenantDao.aget_active_user_tenant(owner_user_id)
+
+    if active is None or active.tenant_id != tenant_id or active.status != "active":
+        raise OpenApiOwnerNotAllowedError()
+
+    payload = await UserPayload.init_login_user(
+        user_id=user.user_id,
+        user_name=user.user_name,
+        tenant_id=tenant_id,
+    )
+    if await owner_is_privileged(payload, tenant_id):
+        raise OpenApiOwnerNotAllowedError()
 
 
 async def owner_is_privileged(payload: UserPayload, tenant_id: int) -> bool:

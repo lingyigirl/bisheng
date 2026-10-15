@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from bisheng.core.context.tenant import bypass_tenant_filter, strict_tenant_filter
 from bisheng.core.database import get_async_db_session
@@ -218,3 +218,74 @@ class ServiceAccountDao:
                 result = await session.execute(select(ServiceAccount).where(ServiceAccount.id == account_id))
                 rows = _rows(result)
         return rows[0] if rows else None
+
+    @classmethod
+    async def aget_scoped(cls, account_id: int, *, tenant_id: int) -> ServiceAccount | None:
+        """管理面读取:按租户收窄(跨租户一律查不到,spec AC-07)。"""
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                result = await session.execute(
+                    select(ServiceAccount).where(
+                        ServiceAccount.id == account_id,
+                        ServiceAccount.tenant_id == tenant_id,
+                    )
+                )
+                rows = _rows(result)
+        return rows[0] if rows else None
+
+    @classmethod
+    async def alist(
+        cls,
+        *,
+        tenant_id: int,
+        keyword: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[ServiceAccount], int]:
+        """管理面分页列表(软删的一律不出现);返回 (rows, total)。"""
+        conditions = [
+            ServiceAccount.tenant_id == tenant_id,
+            ServiceAccount.deleted_at.is_(None),
+        ]
+        if keyword:
+            conditions.append(ServiceAccount.name.like(f"%{keyword}%"))
+        with strict_tenant_filter():
+            async with get_async_db_session() as session:
+                total = (
+                    await session.execute(select(func.count()).select_from(ServiceAccount).where(*conditions))
+                ).scalar_one()
+                result = await session.execute(
+                    select(ServiceAccount)
+                    .where(*conditions)
+                    .order_by(ServiceAccount.id.desc())
+                    .offset(max(page - 1, 0) * page_size)
+                    .limit(page_size)
+                )
+                return _rows(result), int(total)
+
+    @classmethod
+    async def aupdate_fields(cls, account_id: int, fields: dict[str, Any], *, tenant_id: int) -> int:
+        """管理面增量更新;bulk UPDATE 无租户自动注入,条件手写(C3 已知坑)。"""
+        if not fields:
+            return 0
+        fields = {**fields, "update_time": datetime.now()}
+        async with get_async_db_session() as session:
+            result = await session.execute(
+                update(ServiceAccount)
+                .where(
+                    ServiceAccount.id == account_id,
+                    ServiceAccount.tenant_id == tenant_id,
+                    ServiceAccount.deleted_at.is_(None),
+                )
+                .values(**fields)
+            )
+            await session.commit()
+            return result.rowcount or 0
+
+    @classmethod
+    async def asoft_delete(cls, account_id: int, *, tenant_id: int, now: datetime | None = None) -> int:
+        return await cls.aupdate_fields(
+            account_id,
+            {"deleted_at": now or datetime.now()},
+            tenant_id=tenant_id,
+        )
