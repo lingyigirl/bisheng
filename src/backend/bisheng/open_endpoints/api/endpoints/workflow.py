@@ -17,13 +17,18 @@ from bisheng.api.v1.schemas import resp_200
 from bisheng.common.chat.types import WorkType
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum
 from bisheng.common.errcode.http_error import NotFoundError, ServerError
-from bisheng.common.errcode.open_api import OpenApiToolScopeNotApplicableError
+from bisheng.common.errcode.open_api import OpenApiNotFoundError, OpenApiToolScopeNotApplicableError
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationAliveEventData
 from bisheng.common.services import telemetry_service
 from bisheng.core.logger import trace_id_var
 from bisheng.database.models.flow import FlowDao, FlowType
 from bisheng.open_api.domain.scopes import open_api_scope
-from bisheng.open_endpoints.domain.utils import get_default_operator, get_default_operator_async
+from bisheng.open_endpoints.domain.utils import (
+    _is_key_authenticated_call,
+    assert_open_api_app_visible,
+    get_default_operator,
+    get_default_operator_async,
+)
 from bisheng.worker.workflow.redis_callback import RedisCallback
 from bisheng.worker.workflow.tasks import continue_workflow, execute_workflow, workflow_stateful_worker
 from bisheng.workflow.common.workflow import WorkflowStatus
@@ -54,6 +59,9 @@ async def invoke_workflow(
         raise NotFoundError.http_exception()
     if workflow_info.flow_type != FlowType.WORKFLOW.value:
         raise NotFoundError.http_exception()
+    # F076 T-29(AC-23):密钥调用时,目标流程必须在调用身份的可见范围内,否则
+    # 404/11809 —— 与"不存在"不可区分(防枚举)。非密钥调用保持旧行为(AC-21)。
+    await assert_open_api_app_visible(workflow_id, login_user)
 
     # Resolve Outchat_idAndunique_id
     if not session_id:
@@ -187,6 +195,11 @@ async def stop_workflow(
 ):
     workflow_id = workflow_id.hex
     login_user = await get_default_operator_async()
+    # F076 T-29(AC-23):停止同样要按可见性收口——原先连存在性都不查,任意 id 都能停。
+    if _is_key_authenticated_call():
+        if not await FlowDao.aget_flow_by_id(workflow_id):
+            raise OpenApiNotFoundError()
+        await assert_open_api_app_visible(workflow_id, login_user)
     chat_id = session_id.split("_", 1)[0]
     unique_id = session_id
     workflow = RedisCallback(unique_id, workflow_id, chat_id, login_user.user_id, source="api")
@@ -205,6 +218,16 @@ async def workflow_ws(
         # Authorize.jwt_required(auth_from='websocket', websocket=websocket)
         # payload = Authorize.get_jwt_subject()
         login_user = await get_default_operator_async()
+        # F076 T-29(AC-23):连接期就按可见性收口(原先只在逐条消息时检查)。
+        # WS 没有 HTTP 状态,按 v1 先例显式 close 1008 并把业务码放进 reason。
+        if _is_key_authenticated_call():
+            try:
+                await assert_open_api_app_visible(workflow_id, login_user)
+            except OpenApiNotFoundError:
+                await websocket.close(
+                    code=http_status.WS_1008_POLICY_VIOLATION, reason=str(OpenApiNotFoundError.Code)
+                )
+                return
         await chat_manager.dispatch_client(
             websocket,
             workflow_id,

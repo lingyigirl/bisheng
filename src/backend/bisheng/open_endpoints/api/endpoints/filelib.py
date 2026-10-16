@@ -46,7 +46,12 @@ from bisheng.open_endpoints.domain.schemas.filelib import (
     RetrieveReq,
     RetrieveResp,
 )
-from bisheng.open_endpoints.domain.utils import get_default_operator, get_default_operator_async, resolve_operator
+from bisheng.open_endpoints.domain.utils import (
+    assert_open_api_knowledge_visible_sync,
+    get_default_operator,
+    get_default_operator_async,
+    resolve_operator,
+)
 from bisheng.role.domain.services.quota_service import QuotaService
 from bisheng.utils.util import sync_func_to_async
 
@@ -545,6 +550,8 @@ def add_qa(
     # Seed the tenant ContextVar (multi-tenant safe) — QAKnowledge is tenant-aware.
     login_user = get_default_operator()
     user_id = user_id if user_id else login_user.user_id
+    # F076 T-29(AC-23):密钥调用时校验目标知识库的写权限(不可见/不存在同码 11809)。
+    assert_open_api_knowledge_visible_sync(knowledge_id, login_user, write=True)
     knowledge = KnowledgeDao.query_by_id(knowledge_id)
     logger.info("add_qa_data knowledge_id={} size={}", knowledge_id, len(data))
     res = []
@@ -572,7 +579,9 @@ def append_qa(
     user_id: int | None = Body(default=None, embed=True),
 ):
     # Seed the tenant ContextVar (multi-tenant safe) — QAKnowledge is tenant-aware.
-    get_default_operator()
+    login_user = get_default_operator()
+    # F076 T-29(AC-23):密钥调用时校验写权限。
+    assert_open_api_knowledge_visible_sync(knowledge_id, login_user, write=True)
     knowledge = KnowledgeDao.query_by_id(knowledge_id)
     qa_db = QAKnoweldgeDao.get_qa_knowledge_by_primary_id(data.id)
     if not qa_db:
@@ -595,6 +604,8 @@ def delete_qa_data(*, qa_id: int, question: str | None = None):
     qa = QAKnoweldgeDao.get_qa_knowledge_by_primary_id(qa_id)
     if not qa:
         raise HTTPException(status_code=404, detail="qa Does not exist")
+    # F076 T-29(AC-23):原先任何调用方可删任意 qa;密钥调用时按 KB 写权限收口。
+    assert_open_api_knowledge_visible_sync(qa.knowledge_id, login_user, write=True)
 
     if question:
         qa.questions = [q for q in qa.questions if q != question]
@@ -627,11 +638,13 @@ def update_qa(
 ):
     """Deleteqa Question to Information"""
     # Seed the tenant ContextVar before any tenant-aware read/write.
-    get_default_operator()
+    login_user = get_default_operator()
     qa = QAKnoweldgeDao.get_qa_knowledge_by_primary_id(id)
 
     if not qa:
         raise HTTPException(status_code=404, detail="qa Does not exist")
+    # F076 T-29(AC-23):密钥调用时按 KB 写权限收口。
+    assert_open_api_knowledge_visible_sync(qa.knowledge_id, login_user, write=True)
 
     if original_question:
         qa.questions = [q if q != question else question for q in qa.questions]
@@ -656,8 +669,11 @@ def update_qa(
 def detail_qa(*, id: int):
     """Get questions on information"""
     # Seed the tenant ContextVar before the tenant-aware read.
-    get_default_operator()
+    login_user = get_default_operator()
     qa = QAKnoweldgeDao.get_qa_knowledge_by_primary_id(id)
+    if qa is not None:
+        # F076 T-29(AC-23):密钥调用时按 KB 读权限收口。
+        assert_open_api_knowledge_visible_sync(qa.knowledge_id, login_user)
     return resp_200(qa)
 
 

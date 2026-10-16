@@ -9,7 +9,7 @@ from loguru import logger
 
 from bisheng.api.router import router, router_rpc
 from bisheng.common.errcode import BaseErrorCode
-from bisheng.common.errcode.open_api import OpenApiErrorBase
+from bisheng.common.errcode.open_api import OpenApiErrorBase, OpenApiNotFoundError
 from bisheng.common.exceptions.auth import AuthJWTException
 from bisheng.common.init_data import init_default_data
 from bisheng.common.middleware.admin_scope import AdminScopeMiddleware
@@ -19,8 +19,19 @@ from bisheng.core.logger import set_logger_config
 from bisheng.utils.http_middleware import CustomMiddleware, WebSocketLoggingMiddleware
 from bisheng.utils.threadpool import thread_pool
 
+#: F076 T-29(AC-23):密钥鉴权的 /api/v2 调用里,"目标资源不存在或不可见"的各种 legacy
+#: 码统一成 11809/404 —— 两种情形不可区分(防枚举)。仅对打了 `open_api_call` 标记的
+#: 请求生效;控制台与旧行为不受影响。
+_OPEN_API_MASKED_CODES = frozenset({403, 404, 10400, 10962, 10970, 10971, 18000, 18010, 18040})
+
 
 def handle_http_exception(req: Request, exc: Exception) -> JSONResponse:
+    if req.scope.get("open_api_call"):
+        code = exc.status_code if isinstance(exc, HTTPException) else (exc.code if isinstance(exc, BaseErrorCode) else None)
+        if code in _OPEN_API_MASKED_CODES:
+            logger.info("open_api: masking resource rejection {} -> 11809 for {}", code, req.url.path)
+            masked = OpenApiNotFoundError()
+            return JSONResponse(status_code=masked.HttpStatus, content=masked.return_resp_instance().model_dump())
     if isinstance(exc, HTTPException):
         msg = {
             "status_code": exc.status_code,

@@ -55,22 +55,42 @@ _BANNED_IDENTITY_FIELDS = ("user_id",)
 
 
 async def _assert_no_identity_input(conn: HTTPConnection) -> None:
-    """HTTP 请求里出现裸 `user_id`(query / form)一律 11817。
+    """HTTP 请求里出现裸 `user_id`(query / form / JSON body)一律 11817。
 
-    body JSON 不在这里解析 —— 鉴权依赖不读请求体(design §5 坑 4):
-    端点自身在 schema 层已经不接受这些字段,JSON 里的 `user_id` 会被
-    Pydantic 忽略或报 422,grep 层面的收口由 T-12 的守卫测试兜底。
+    三个入口都要查(INV-23 ③ 的原文是"任何形式,不得静默忽略"):
+
+    - query / form:直接查参数;
+    - **JSON body**:T-28 复核发现 `filelib` retrieve/add_qa/add_relative_qa、`chat`
+      sync/messages 的 schema 里仍带着 `user_id`,密钥调用时被静默覆盖成 principal ——
+      虽然不会冒充谁,但违反"不得静默忽略",所以在这里显式拒绝。**只解析 JSON**:
+      multipart/表单已在上面按字段名拦掉,大文件上传绝不能在这里整包读(design §5 坑 4)。
+      Starlette 会缓存 body,端点随后仍能正常解析。
     """
     for field in _BANNED_IDENTITY_FIELDS:
         if field in conn.query_params:
             raise OpenApiIdentityInputRejectedError()
-    if isinstance(conn, Request) and conn.method in ("POST", "PUT", "PATCH"):
-        content_type = conn.headers.get("content-type", "")
-        if content_type.startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
-            form = await conn.form()
-            for field in _BANNED_IDENTITY_FIELDS:
-                if field in form:
-                    raise OpenApiIdentityInputRejectedError()
+    if not isinstance(conn, Request) or conn.method not in ("POST", "PUT", "PATCH"):
+        return
+
+    content_type = conn.headers.get("content-type", "")
+    if content_type.startswith(("multipart/form-data", "application/x-www-form-urlencoded")):
+        form = await conn.form()
+        for field in _BANNED_IDENTITY_FIELDS:
+            if field in form:
+                raise OpenApiIdentityInputRejectedError()
+        return
+
+    if "application/json" not in content_type:
+        return
+    try:
+        payload = await conn.json()
+    except Exception:
+        # 非法 JSON 交给端点的 schema 校验去报 422,这里不抢戏。
+        return
+    if isinstance(payload, dict):
+        for field in _BANNED_IDENTITY_FIELDS:
+            if field in payload:
+                raise OpenApiIdentityInputRejectedError()
 
 
 async def _guest_access_enabled() -> bool:
@@ -286,6 +306,14 @@ async def verify_open_api_access(conn: HTTPConnection) -> AsyncGenerator[None, N
     if principal is None:  # 旧行为分支:总闸关,或无名请求且租户未开启
         yield
         return
+
+    # F076 T-29(AC-23):给这次请求打标——异常处理器据此把"资源不可见/不存在"的
+    # legacy 码统一成 11809/404(防枚举)。只有密钥鉴权的调用会被打标,总闸关/无名
+    # 请求的旧错误口径逐字不变(spec AC-21)。
+    try:
+        conn.scope["open_api_call"] = True
+    except Exception:  # pragma: no cover - scope 不可写时不影响鉴权本身
+        logger.opt(exception=True).warning("open_api: cannot mark scope for call-face mapping")
 
     tokens = _install_context(principal)
     # 结果按"客户端真正看到什么"记(实测三档:成功 200/200;OpenApiError 用真状态+业务码;

@@ -17,6 +17,7 @@ from bisheng.api.v1.chat import chat_manager
 from bisheng.api.v1.schemas import OpenAIChatCompletionReq, OpenAIChatCompletionResp, OpenAIChoice
 from bisheng.common.chat.types import WorkType
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
+from bisheng.common.errcode import BaseErrorCode
 from bisheng.common.errcode.sensitive_word import SensitiveWordInputBlockedError
 from bisheng.common.schemas.api import PageData, resp_200
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationAliveEventData, ApplicationProcessEventData
@@ -58,6 +59,11 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
     # Find Assistant Information
     try:
         assistant_info = await AssistantService.get_assistant_info(assistant_id, login_user)
+    except BaseErrorCode:
+        # F076 T-29(AC-23):资源不存在/不可见是业务拒绝,必须按统一口径(真 HTTP 状态 +
+        # 信封;密钥调用再由异常处理器收敛成 11809/404)往外抛 —— 原先被下面的
+        # 500 兜底吞掉,既丢了状态码也让"不存在"与"没有权限"各自可辨识。
+        raise
     except Exception as e:
         return JSONResponse(status_code=500, content=str(e), media_type="application/json")
 
