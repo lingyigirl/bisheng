@@ -1326,7 +1326,8 @@
       "tenant": "テナント管理",
       "llm": "モデル管理",
       "approval": "承認管理",
-      "docExtract": "文書抽出"
+      "docExtract": "文書抽出",
+      "schedule": "定期タスク"
     },
     "eventTypeEnum": {
       "createChat": "新規チャット作成",
@@ -1404,7 +1405,13 @@
       "docExtractTemplateUpdate": "文書抽出テンプレートの変更",
       "docExtractTemplateDelete": "文書抽出テンプレートの削除",
       "docExtractTemplateEnable": "文書抽出テンプレートの有効化",
-      "docExtractTemplateDisable": "文書抽出テンプレートの無効化"
+      "docExtractTemplateDisable": "文書抽出テンプレートの無効化",
+      "scheduleTaskCreate": "定期タスクの作成",
+      "scheduleTaskUpdate": "定期タスクの更新",
+      "scheduleTaskEnable": "定期タスクの有効化",
+      "scheduleTaskDisable": "定期タスクの無効化",
+      "scheduleTaskDelete": "定期タスクの削除",
+      "scheduleTaskRunNow": "定期タスクの即時実行"
     },
     "objectTypeEnum": {
       "none": "なし",

@@ -1326,7 +1326,8 @@
       "tenant": "租户管理",
       "llm": "模型管理",
       "approval": "审批管理",
-      "docExtract": "文档抽取"
+      "docExtract": "文档抽取",
+      "schedule": "定时任务"
     },
     "eventTypeEnum": {
       "createChat": "新建会话",
@@ -1404,7 +1405,13 @@
       "docExtractTemplateUpdate": "修改文档抽取模板",
       "docExtractTemplateDelete": "删除文档抽取模板",
       "docExtractTemplateEnable": "启用文档抽取模板",
-      "docExtractTemplateDisable": "停用文档抽取模板"
+      "docExtractTemplateDisable": "停用文档抽取模板",
+      "scheduleTaskCreate": "新建定时任务",
+      "scheduleTaskUpdate": "编辑定时任务",
+      "scheduleTaskEnable": "启用定时任务",
+      "scheduleTaskDisable": "停用定时任务",
+      "scheduleTaskDelete": "删除定时任务",
+      "scheduleTaskRunNow": "立即运行定时任务"
     },
     "objectTypeEnum": {
       "none": "无",
