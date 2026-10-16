@@ -136,6 +136,8 @@ export function ServiceAccountPanel() {
 
     return (
         <div className="flex h-full w-full flex-col gap-4 overflow-hidden p-4">
+            {/* 说清用途:本页管的是"谁能从外部经 API 调进来",而不只是账号清单。 */}
+            <p className="shrink-0 text-sm text-muted-foreground">{t("subtitle")}</p>
             <div className="flex shrink-0 items-center justify-between gap-4">
                 <SearchInput
                     className="w-[320px] shrink-0"
