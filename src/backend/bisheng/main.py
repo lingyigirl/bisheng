@@ -10,6 +10,7 @@ from loguru import logger
 from bisheng.api.router import router, router_rpc
 from bisheng.common.errcode import BaseErrorCode
 from bisheng.common.errcode.open_api import OpenApiErrorBase, OpenApiNotFoundError
+from bisheng.common.errcode.scheduled_task import ScheduledTaskErrorBase
 from bisheng.common.exceptions.auth import AuthJWTException
 from bisheng.common.init_data import init_default_data
 from bisheng.common.middleware.admin_scope import AdminScopeMiddleware
@@ -27,7 +28,11 @@ _OPEN_API_MASKED_CODES = frozenset({403, 404, 10400, 10962, 10970, 10971, 18000,
 
 def handle_http_exception(req: Request, exc: Exception) -> JSONResponse:
     if req.scope.get("open_api_call"):
-        code = exc.status_code if isinstance(exc, HTTPException) else (exc.code if isinstance(exc, BaseErrorCode) else None)
+        code = (
+            exc.status_code
+            if isinstance(exc, HTTPException)
+            else (exc.code if isinstance(exc, BaseErrorCode) else None)
+        )
         if code in _OPEN_API_MASKED_CODES:
             logger.info("open_api: masking resource rejection {} -> 11809 for {}", code, req.url.path)
             masked = OpenApiNotFoundError()
@@ -70,10 +75,28 @@ async def handle_open_api_error(req: Request, exc: "OpenApiErrorBase") -> JSONRe
     return JSONResponse(status_code=exc.HttpStatus, content=payload.model_dump())
 
 
+async def handle_scheduled_task_error(req: Request, exc: "ScheduledTaskErrorBase") -> JSONResponse:
+    """F077:定时任务错误**分面**返回(design §3 决策 15)。
+
+    - 密钥鉴权的 ``/api/v2`` 调用(scope 打有 ``open_api_call`` 标记,由 F076 依赖设置)
+      → 真 HTTP 状态(``exc.HttpStatus``:400/409/429),对外契约与 F076 同形态;
+    - ``/api/v1`` 管理面 → 保持平台既有信封(HTTP 200 + 业务码),**不改变**平台
+      前端拦截器对 403/404 的既有行为(console 的 GET 404 会整页跳转,此处不得触发)。
+
+    与 ``handle_open_api_error`` 同样的纪律:**不访问 ``req.method``**(WS scope 下
+    没有该属性,访问即 AttributeError → 500 + traceback)。
+    """
+    payload = exc.return_resp_instance()
+    if req.scope.get("open_api_call"):
+        return JSONResponse(status_code=exc.HttpStatus, content=payload.model_dump())
+    return JSONResponse(content=payload.model_dump())
+
+
 _EXCEPTION_HANDLERS = {
     HTTPException: handle_http_exception,
     RequestValidationError: handle_request_validation_error,
     OpenApiErrorBase: handle_open_api_error,
+    ScheduledTaskErrorBase: handle_scheduled_task_error,
     BaseErrorCode: handle_http_exception,
     Exception: handle_http_exception,
 }
