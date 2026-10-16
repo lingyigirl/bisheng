@@ -4,7 +4,10 @@
 
 - **匿名校验路径**(`aget_by_hash`):调用方尚未证明身份,密钥摘要可能是任意租户的,
   因此必须 `bypass_tenant_filter()` 跨租户读取;命中后再以密钥自带的 `tenant_id`
-  建立上下文(design §2 约束 3 / §5 坑 1)。这是本模块唯一合理的 bypass 用法。
+  建立上下文(design §2 约束 3 / §5 坑 1)。
+- **专用身份反查**(`owner_user_ids` / `aowner_user_ids`,T-26):"这个用户是不是平台创建的
+  专用身份"与操作者所在租户无关,按租户过滤会让 ROOT 管理员操作子租户身份时漏判,
+  因此同样显式 bypass(design §5 坑 17)。
 - **管理面路径**(列表/编辑/吊销):服务账号与密钥是租户级配置,跨租户不可见
   (spec AC-07)。沿用 F061 的 `strict_tenant_filter()` 手法——全局监听器默认给子租户
   是 `tenant_id IN (child, ROOT)`,对"租户私有配置"过宽;收窄必须发生在产生实例
@@ -16,6 +19,7 @@ SELECT 结果要用 `_rows()` 解包:租户过滤器的 `do_orm_execute` 会把 
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -23,10 +27,11 @@ from loguru import logger
 from sqlalchemy import case, func, select, update
 
 from bisheng.core.context.tenant import bypass_tenant_filter, strict_tenant_filter
-from bisheng.core.database import get_async_db_session
+from bisheng.core.database import get_async_db_session, get_sync_db_session
 from bisheng.open_api.domain.models.api_credential import ApiCredential
 from bisheng.open_api.domain.models.open_api_tenant_setting import OpenApiTenantSetting
 from bisheng.open_api.domain.models.service_account import ServiceAccount
+from bisheng.user.domain.models.user import User
 
 
 def _rows(result) -> list:
@@ -291,6 +296,60 @@ class ServiceAccountDao:
                     .limit(page_size)
                 )
                 return _rows(result), int(total)
+
+    # ---- 反向查询:哪些用户是服务账号的专用身份(T-26 用户侧保护用) ----
+
+    @staticmethod
+    def _identity_query(ids: list[int]):
+        """专用身份的判定条件,三件事缺一不可:
+
+        1. **是某服务账号的资源所有者**(`resource_owner_user_id`;`svc-` 只是命名约定,
+           人工可以撞名,不能按名字认);
+        2. **平台创建的身份**(`user.external_id IS NULL`)——人类用户一律有 external_id
+           (管理员建号写 user_name、注册路径必填),所以这一条把"被显式指派为 owner 的
+           真实用户"排除在外:那种情况下被锁的是人的日常账号,超出本任务契约;
+        3. **软删账号也算**——账号软删后身份名字仍被占用、用户列表仍可见,保护不该消失。
+        """
+        return (
+            select(ServiceAccount)
+            .join(User, User.user_id == ServiceAccount.resource_owner_user_id)
+            .where(
+                User.external_id.is_(None),
+                ServiceAccount.resource_owner_user_id.in_(ids),
+            )
+        )
+
+    @classmethod
+    def owner_user_ids(cls, user_ids: Sequence[int]) -> set[int]:
+        """这些用户里哪些是服务账号的专用身份(同步,用户模块的同步端点用)。"""
+        return {int(getattr(one, "resource_owner_user_id", 0)) for one in cls._owners(user_ids)}
+
+    @classmethod
+    async def aowner_user_ids(cls, user_ids: Sequence[int]) -> set[int]:
+        """同上,异步版(用户列表批量标注用)。"""
+        return {int(getattr(one, "resource_owner_user_id", 0)) for one in await cls._aowners(user_ids)}
+
+    @classmethod
+    def _owners(cls, user_ids: Sequence[int]) -> list[ServiceAccount]:
+        ids = [int(one) for one in user_ids]
+        if not ids:
+            return []
+        with get_sync_db_session() as session:
+            # 身份是平台创建的,归属哪个租户不影响"能不能在用户侧改它";按租户过滤会让
+            # ROOT 管理员操作子租户身份时漏判(反向识别落空),所以这里显式跨租户。
+            with bypass_tenant_filter():
+                result = session.execute(cls._identity_query(ids))
+                return _rows(result)
+
+    @classmethod
+    async def _aowners(cls, user_ids: Sequence[int]) -> list[ServiceAccount]:
+        ids = [int(one) for one in user_ids]
+        if not ids:
+            return []
+        async with get_async_db_session() as session:
+            with bypass_tenant_filter():
+                result = await session.execute(cls._identity_query(ids))
+                return _rows(result)
 
     @classmethod
     async def aname_exists(cls, name: str, *, tenant_id: int, exclude_id: int | None = None) -> bool:

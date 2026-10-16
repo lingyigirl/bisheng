@@ -17,11 +17,15 @@ owner 是平台在创建服务账号时自动创建的**专用最小权限用户
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from loguru import logger
 
 from bisheng.common.dependencies.user_deps import UserPayload
+from bisheng.common.errcode.open_api import OpenApiIdentityProtectedError
 from bisheng.core.context.tenant import bypass_tenant_filter
 from bisheng.database.models.tenant import UserTenantDao
+from bisheng.open_api.domain.models.dao import ServiceAccountDao
 from bisheng.user.domain.models.user import UserDao
 
 #: 用户状态:1 = active(与 open_endpoints/domain/utils.py 的活跃租户判定同口径)。
@@ -96,3 +100,33 @@ async def owner_is_privileged(payload: UserPayload, tenant_id: int) -> bool:
     if payload.is_global_super:
         return True
     return await payload.has_tenant_admin(tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# T-26 用户侧保护:专用身份只在「系统 -> 服务账号」里管理
+# ---------------------------------------------------------------------------
+
+
+def assert_not_service_identity(user_ids: Sequence[int]) -> None:
+    """目标用户里只要有一个是服务账号的专用身份就拒绝(11821/400)。
+
+    同步实现——用户/用户组/部门的写入端点多为同步;查的是 `service_account`
+    (租户表,自动按当前租户过滤),所以只拦本租户的账号,跨租户不受影响。
+
+    为什么要拦:专用身份的角色/用户组/密码一旦被人工改动,账号就会**越权**
+    (AC-02 要求零角色零授权)或被**静默失效**(停用/改密);这些动作的正确入口是
+    服务账号页(启停账号、授权、换 owner)。
+    """
+    if ServiceAccountDao.owner_user_ids(user_ids):
+        raise OpenApiIdentityProtectedError()
+
+
+async def alist_service_identity_ids(user_ids: Sequence[int]) -> set[int]:
+    """批量标注用:返回其中属于服务账号专用身份的用户 id(异步,列表接口用)。"""
+    return await ServiceAccountDao.aowner_user_ids(user_ids)
+
+
+async def assert_not_service_identity_async(user_ids: Sequence[int]) -> None:
+    """`assert_not_service_identity` 的异步版:异步端点上调用,避免同步查库阻塞事件循环。"""
+    if await ServiceAccountDao.aowner_user_ids(user_ids):
+        raise OpenApiIdentityProtectedError()

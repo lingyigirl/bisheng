@@ -3,7 +3,7 @@
 分配前已按 v2.7.0 release-contract 的三来源口径扫描确认全空
 (`common/errcode/*.py` / 全部版本 release-contract / `packages/locales/src/api_errors/*.json`);
 118 此前由 F062 / F063 / F064 连续三次声明「留待后续 Feature」,由本特性正式申领
-(11801-11817,见 release-contract 的「已分配模块编码」表)。
+(11801-11821,见 release-contract 的「已分配模块编码」表)。
 
 **与全局错误码的两点差异(design §3 决策 3 / §4.2)**:
 
@@ -172,6 +172,20 @@ class OpenApiResourceTypeUnsupportedError(OpenApiErrorBase):
 
     Code: int = 11820
     Msg: str = "Unsupported resource type or permission level"
+    HttpStatus: int = 400
+
+
+class OpenApiIdentityProtectedError(OpenApiErrorBase):
+    """专用身份禁止在用户侧人工管理(T-26)。
+
+    服务账号的专用身份(svc-*)由平台创建与代管:改它的角色/用户组/密码,或在用户
+    列表里启停它,都会让账号越权或静默失效。所有用户侧的写入入口一律拒绝,并指向
+    正确的管理入口(「系统 -> 服务账号」)。HttpStatus 刻意用 400 而不是 401:
+    platform 对任何 401 一律清登录态并整页跳转(design §5 坑 13)。
+    """
+
+    Code: int = 11821
+    Msg: str = "A service account's dedicated identity cannot be modified here"
     HttpStatus: int = 400
 
 

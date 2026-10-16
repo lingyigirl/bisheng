@@ -1,6 +1,6 @@
 version = 1
-revision = 3
-requires-python = ">=3.11"
+revision = 2
+requires-python = ">=3.11, <4.0"
 resolution-markers = [
     "python_full_version >= '3.14'",
     "python_full_version == '3.13.*'",
@@ -544,7 +544,7 @@ requires-dist = [
     { name = "markdown", specifier = ">=3.9" },
     { name = "markdownify", specifier = ">=1.2.0" },
     { name = "matplotlib", specifier = ">=3.10.7" },
-    { name = "mcp", specifier = ">=1.27.0" },
+    { name = "mcp", specifier = ">=1.27.0,<2.0.0" },
     { name = "minio", specifier = "==7.2.18" },
     { name = "miniopy-async", specifier = ">=1.23.4" },
     { name = "openai", specifier = ">=2.26,<3.0.0" },

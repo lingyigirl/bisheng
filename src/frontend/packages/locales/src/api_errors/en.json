@@ -463,5 +463,6 @@
   "11817": "Specifying a user identity in the request is not allowed",
   "11818": "tools is not applicable to this call",
   "11819": "Unknown scope code",
-  "11820": "Unsupported resource type or permission level"
+  "11820": "Unsupported resource type or permission level",
+  "11821": "This user is a service account's dedicated identity; manage it under System -> Service accounts"
 }
