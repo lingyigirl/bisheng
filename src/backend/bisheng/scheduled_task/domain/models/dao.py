@@ -244,12 +244,19 @@ class ScheduledTaskDao:
         planned_at: datetime | None,
         trace_id: str,
         keep_next_run_at: bool = False,
+        require_due: bool = True,
     ) -> int:
         """**NORMAL 变体**：占租约 + 消耗本槽 + 写回下次（单条原子 UPDATE）。
 
-        条件 = 启用中 + 已到期 + （无租约或租约已过期）。``keep_next_run_at=True``
-        用于一次性任务（不推进 ``next_run_at``，终态时才自动停用）与立即运行
-        （不改变既定计划，也不写 ``last_planned_at``）。
+        条件 = 启用中 + （``require_due`` 时）已到期 + （无租约或租约已过期）。
+        ``keep_next_run_at=True`` 用于一次性任务（不推进 ``next_run_at``，终态时才
+        自动停用）与任何非计划轮次触发（manual / event：不改变既定计划，也不写
+        ``last_planned_at``）。
+
+        ``require_due=False`` 给**立即运行与事件触发**用：用户点"立即运行"时任务
+        通常还没到点，而计划轮次必须按到期才可抢——两者共用同一条原子写，只有
+        "到期"这一项条件不同（W2 复核发现：直接复用计划 claim 会让未到期任务的
+        rowcount=0，被调用方误判成"互斥中"而错回 11909）。
         """
         values: dict = {
             "run_lease_token": token,
@@ -262,18 +269,18 @@ class ScheduledTaskDao:
         if not keep_next_run_at:
             values["next_run_at"] = next_run_at
             values["last_planned_at"] = planned_at
+
+        conditions = [
+            ScheduledTask.id == task_id,
+            ScheduledTask.status == TaskStatus.ENABLED.value,
+            (ScheduledTask.lease_expires_at.is_(None)) | (ScheduledTask.lease_expires_at <= now),
+        ]
+        if require_due:
+            conditions.append(ScheduledTask.next_run_at.is_not(None))
+            conditions.append(ScheduledTask.next_run_at <= now)
+
         async with get_async_db_session() as session:
-            result = await session.execute(
-                update(ScheduledTask)
-                .where(
-                    ScheduledTask.id == task_id,
-                    ScheduledTask.status == TaskStatus.ENABLED.value,
-                    ScheduledTask.next_run_at.is_not(None),
-                    ScheduledTask.next_run_at <= now,
-                    (ScheduledTask.lease_expires_at.is_(None)) | (ScheduledTask.lease_expires_at <= now),
-                )
-                .values(**values)
-            )
+            result = await session.execute(update(ScheduledTask).where(*conditions).values(**values))
             await session.commit()
             return result.rowcount or 0
 

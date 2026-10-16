@@ -327,3 +327,45 @@ async def test_count_running_counts_live_leases(patched_db):
         )
     assert await ScheduledTaskDao.acount_running(NOW) == 2
     assert await ScheduledTaskDao.acount_enabled_by_app("1001", 10) == 2
+
+
+async def test_claim_without_due_for_sync_entries(patched_db):
+    """回归（W2 复核 finding-7）：立即运行/事件触发在任务**未到期**时也要能占租约。
+
+    计划轮次必须按到期才可抢（require_due=True，默认）；同步入口用
+    require_due=False——否则用户点"立即运行"时（任务通常还没到点）rowcount=0，
+    会被调用方误判成"互斥中"而错回 11909。
+    """
+    task = await ScheduledTaskDao.acreate(_task(next_run_at=NOW + timedelta(days=1)))
+
+    # 计划轮次的 claim 抢不到（未到期）
+    assert (
+        await ScheduledTaskDao.aclaim_lease(
+            task.id,
+            token="sched",
+            now=NOW,
+            lease_expires_at=NOW + timedelta(hours=1),
+            next_run_at=NOW + timedelta(days=1),
+            planned_at=NOW,
+            trace_id="t1",
+        )
+        == 0
+    )
+    # 同步入口可以（keep 语义：不推进计划）
+    assert (
+        await ScheduledTaskDao.aclaim_lease(
+            task.id,
+            token="manual",
+            now=NOW,
+            lease_expires_at=NOW + timedelta(hours=1),
+            next_run_at=None,
+            planned_at=None,
+            trace_id="t2",
+            keep_next_run_at=True,
+            require_due=False,
+        )
+        == 1
+    )
+    row = await _read(patched_db, task.id)
+    assert row.run_lease_token == "manual"
+    assert row.next_run_at.replace(tzinfo=None) == NOW + timedelta(days=1), "立即运行不改变既定计划"
