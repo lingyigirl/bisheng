@@ -14,9 +14,11 @@ traceback(design §5 坑 3)。
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncGenerator
 
-from fastapi import WebSocket, WebSocketException
+from fastapi import HTTPException, WebSocket, WebSocketException
+from fastapi.exceptions import RequestValidationError
 from loguru import logger
 from starlette import status as http_status
 from starlette.requests import HTTPConnection, Request
@@ -43,9 +45,10 @@ from bisheng.open_api.domain.context import (
 )
 from bisheng.open_api.domain.models.dao import ServiceAccountDao
 from bisheng.open_api.domain.scopes import get_open_api_scope_marker, is_scope_granted
-from bisheng.open_api.domain.services import tenant_setting_service
+from bisheng.open_api.domain.services import call_audit_service, tenant_setting_service
 from bisheng.open_api.domain.services.credential_validator import validate_bearer
 from bisheng.open_api.domain.services.identity_service import load_owner_payload, owner_is_privileged
+from bisheng.utils import get_request_ip
 
 #: removed-in-v2 的裸身份参数;出现即拒(spec AC-25 / INV-23 ③),不静默忽略。
 _BANNED_IDENTITY_FIELDS = ("user_id",)
@@ -80,8 +83,16 @@ async def _guest_access_enabled() -> bool:
     return bool(conf.get("enable_guest_access"))
 
 
-async def _resolve_principal(conn: HTTPConnection) -> OpenApiPrincipal | None:
-    """完成 ①-⑦ 的全部校验;返回 None 表示"走旧行为",否则返回可装载的主体。"""
+async def _resolve_principal(
+    conn: HTTPConnection,
+    audit_ctx: dict | None = None,
+) -> OpenApiPrincipal | None:
+    """完成 ①-⑦ 的全部校验;返回 None 表示"走旧行为",否则返回可装载的主体。
+
+    `audit_ctx` 是给调用方留的"口袋":③ 之后每一步失败(11805/11807/11816…)都属于
+    **已被鉴权**的调用,AC-36 要求逐条留痕,而异常里拿不到 credential/account——
+    所以这里边解析边把可审计字段塞进口袋,调用方在 except 分支里据此补记审计。
+    """
     # ① 部署总闸(关 → 旧行为,AC-21)
     if not settings.open_api.enforce_keys:
         return None
@@ -101,13 +112,18 @@ async def _resolve_principal(conn: HTTPConnection) -> OpenApiPrincipal | None:
             raise OpenApiKeyMissingError()
         return None
 
-    # ③ 凭据校验(11801 / 11802 / 11803 / 11804)
+    # ③ 凭据校验(11801 / 11802 / 11803 / 11804)——未通过校验时还没有可归因的身份,
+    # 不记调用审计(否则无效密钥扫描会把审计表灌爆);这些尝试只在服务端日志可见。
     credential = await validate_bearer(authorization)
+    if audit_ctx is not None:
+        audit_ctx["credential"] = credential
 
     # ④ 账号活性(11805)
     account = await ServiceAccountDao.aget_by_id(credential.service_account_id)
     if account is None or not account.is_enabled:
         raise OpenApiAccountDisabledError()
+    if audit_ctx is not None:
+        audit_ctx["account"] = account
 
     # ⑤ 端点标记与权限位(11811 漏标 / 11807 缺位)
     if marker is None:
@@ -168,11 +184,99 @@ def _reset_context(tokens) -> None:
     current_tenant_id.reset(tenant_token)
 
 
-async def verify_open_api_access(conn: HTTPConnection) -> AsyncGenerator[None, None]:
-    """`/api/v2` 的路由级鉴权依赖(HTTP 与 WS 共用;见模块 docstring)。"""
+def _audit_call(
+    conn: HTTPConnection,
+    principal: OpenApiPrincipal,
+    started: float,
+    *,
+    http_status_code: int,
+    biz_code: int,
+    reason: str | None = None,
+) -> None:
+    """把一次被鉴权的调用交给审计服务(只入队,不阻塞、不影响调用结果)。
+
+    业务码来源说明(实测口径,见 T-27 侦察报告):成功路径拿不到响应体,按信封惯例记
+    200;端点上抛的 118xx 用异常自身的 HttpStatus/code;校验错误与非 open-api 异常
+    都是"HTTP 200 + body 业务码"的惯例,分别记 422 / 500。**失败鉴权**(11801/11802
+    等)没有 principal,不写审计——否则无效密钥扫描会把审计表灌爆;那些尝试只在
+    服务端日志可见(已记偏差)。
+    """
+    is_ws = isinstance(conn, WebSocket)
+    marker = None
     try:
-        principal = await _resolve_principal(conn)
+        marker = get_open_api_scope_marker(conn.scope.get("endpoint"))
+    except Exception:  # pragma: no cover - marker 缺失不影响审计主体
+        marker = None
+    call_audit_service.record_call(
+        tenant_id=principal.tenant_id,
+        credential_id=principal.credential_id,
+        service_account_id=principal.service_account_id,
+        owner_user_id=principal.owner_user_id,
+        owner_name=getattr(principal.owner_payload, "user_name", None),
+        key_mask=principal.key_mask,
+        scopes=list(principal.scopes),
+        required_scope=getattr(marker, "scope", None),
+        # WS 没有 HTTP 状态:记 0 并在 metadata 里标 transport(close code 在依赖里
+        # 看不到,详见 design §5 坑 19)。
+        http_status=http_status_code,
+        biz_code=biz_code,
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        ip_address=get_request_ip(conn) if hasattr(conn, "headers") else None,
+        endpoint=conn.url.path if getattr(conn, "url", None) is not None else None,
+        method="WS" if is_ws else getattr(conn, "method", None),
+        reason=reason,
+    )
+
+
+def _audit_rejected_call(
+    conn: HTTPConnection,
+    audit_ctx: dict,
+    started: float,
+    exc: BaseErrorCode,
+) -> None:
+    """解析期被拒的**已鉴权**调用补记一条审计(AC-36)。
+
+    没走到 ③ 的失败(11801/11802:凭据本身无效)没有可归因身份,不记——否则无效密钥
+    扫描会把审计表灌爆,那些尝试只在服务端日志可见(design §5 坑 19)。
+    """
+    credential = audit_ctx.get("credential")
+    if credential is None:
+        return
+    account = audit_ctx.get("account")
+    try:
+        call_audit_service.record_call(
+            tenant_id=int(getattr(credential, "tenant_id", 0) or 0),
+            credential_id=int(getattr(credential, "id", 0) or 0),
+            service_account_id=int(getattr(credential, "service_account_id", 0) or 0),
+            owner_user_id=int(getattr(account, "resource_owner_user_id", 0) or 0),
+            key_mask=getattr(credential, "key_mask", ""),
+            scopes=list(getattr(credential, "scopes", None) or []),
+            http_status=int(getattr(exc, "HttpStatus", 0) or 0),
+            biz_code=int(getattr(exc, "code", 500)),
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            ip_address=get_request_ip(conn) if hasattr(conn, "headers") else None,
+            endpoint=conn.url.path if getattr(conn, "url", None) is not None else None,
+            method="WS" if isinstance(conn, WebSocket) else getattr(conn, "method", None),
+            reason="open_api_error",
+        )
+    except Exception:  # 审计绝不能改变调用结果(AC-36)
+        logger.opt(exception=True).warning("open_api: rejected-call audit enqueue failed")
+
+
+async def verify_open_api_access(conn: HTTPConnection) -> AsyncGenerator[None, None]:
+    """`/api/v2` 的路由级鉴权依赖(HTTP 与 WS 共用;见模块 docstring)。
+
+    F076 T-27:这里同时是**逐调用审计**的唯一 choke point——被鉴权(解析出 principal)
+    的调用在结束时入队一条 `open_api.call`。审计只做入队,写失败/队列满都不改变调用结果。
+    """
+    started = time.perf_counter()
+    audit_ctx: dict = {}
+    try:
+        principal = await _resolve_principal(conn, audit_ctx)
     except BaseErrorCode as exc:
+        # 已过 ③ 的失败(11805/11807/11811/11816/11817)是"被鉴权但被拒的调用",
+        # AC-36 要求留痕;此处按口袋里的凭据/账号补记一条。
+        _audit_rejected_call(conn, audit_ctx, started, exc)
         if isinstance(conn, WebSocket):
             # 预 accept 抛 1008 → 客户端见握手 403(design §4.3);reason 只带业务码,
             # 细节留在服务端日志,避免向未认证的对端泄露判断依据。
@@ -184,7 +288,35 @@ async def verify_open_api_access(conn: HTTPConnection) -> AsyncGenerator[None, N
         return
 
     tokens = _install_context(principal)
+    # 结果按"客户端真正看到什么"记(实测三档:成功 200/200;OpenApiError 用真状态+业务码;
+    # 其余异常在信封惯例下都是 HTTP 200 + body 业务码)。
+    outcome_status, outcome_code, outcome_reason = 200, 200, None
     try:
         yield
+    except BaseErrorCode as exc:
+        outcome_status = int(getattr(exc, "HttpStatus", 0) or 200)
+        outcome_code = int(getattr(exc, "code", 500))
+        outcome_reason = "open_api_error"
+        raise
+    except RequestValidationError:
+        outcome_status, outcome_code, outcome_reason = 200, 422, "request_validation"
+        raise
+    except HTTPException as exc:
+        outcome_status, outcome_code, outcome_reason = 200, int(exc.status_code), "http_exception"
+        raise
+    except Exception:
+        outcome_status, outcome_code, outcome_reason = 200, 500, "internal_error"
+        raise
     finally:
         _reset_context(tokens)
+        try:
+            _audit_call(
+                conn,
+                principal,
+                started,
+                http_status_code=outcome_status,
+                biz_code=outcome_code,
+                reason=outcome_reason,
+            )
+        except Exception:  # 审计绝不能改变调用结果(AC-36)
+            logger.opt(exception=True).warning("open_api: call audit enqueue failed")

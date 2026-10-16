@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -17,8 +17,12 @@ from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.open_api import OpenApiNotFoundError
 from bisheng.common.schemas.api import resp_200
 from bisheng.core.context.tenant import get_current_tenant_id
+from bisheng.database.models.tenant import ROOT_TENANT_ID
+from bisheng.open_api.domain.constants import OpenApiAuditAction
+from bisheng.open_api.domain.services import call_audit_service
 from bisheng.open_api.domain.services import service_account_service as svc
 from bisheng.open_api.domain.services.resource_grant_service import list_grants, mutate_grants
+from bisheng.utils import get_request_ip
 
 router = APIRouter(prefix="/service-accounts", tags=["OpenApiManagement"])
 
@@ -67,10 +71,14 @@ async def mutate_resource_grants(
     account_id: int,
     req: GrantMutateReq,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,  # FastAPI 按注解注入;默认值让测试可直接调用
 ):
-    """授予/撤销该账号的资源授权(先校验后执行,不会出现改了一半的中间态)。"""
+    """授予/撤销该账号的资源授权(先检查后执行,不会出现改了一半的中间态)。"""
     tenant_id = _acting_tenant(login_user)
     account = await _require_account(account_id, tenant_id)
+    # 审计要"关键前后取值":服务只回计数,且"授予=设定档位"会**隐式撤销**同资源其它
+    # 直接档位——只按请求条目记账会漏。这里先快照该身份当前可见范围(行很小)。
+    before_grants = await list_grants(account.resource_owner_user_id)
 
     result = await mutate_grants(
         owner_user_id=account.resource_owner_user_id,
@@ -86,4 +94,24 @@ async def mutate_resource_grants(
         result["granted"],
         result["revoked"],
     )
+    try:
+        after_grants = await list_grants(account.resource_owner_user_id)
+        call_audit_service.record_admin_action(
+            login_user=login_user,
+            tenant_id=tenant_id,
+            operator_tenant_id=get_current_tenant_id() or ROOT_TENANT_ID,
+            action=OpenApiAuditAction.SERVICE_ACCOUNT_GRANT_MUTATE.value,
+            target_type="service_account",
+            target_id=account_id,
+            target_name=account.name,
+            before={"grants": before_grants},
+            after={"grants": after_grants},
+            extra={
+                "requested_grants": [g.model_dump() for g in req.grants],
+                "requested_revokes": [r.model_dump() for r in req.revokes],
+            },
+            ip_address=get_request_ip(request) if request is not None else None,
+        )
+    except Exception:  # 审计绝不能改变管理动作的结果
+        logger.opt(exception=True).warning("open_api: grants audit enqueue failed")
     return resp_200(data={"account_id": account_id, **result})

@@ -7,14 +7,18 @@
 前端才能把原因说清楚(部署级由配置文件控制,租户管理员改不了)。
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from loguru import logger
 from pydantic import BaseModel
 
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.schemas.api import resp_200
 from bisheng.common.services.config_service import settings as app_settings
 from bisheng.core.context.tenant import get_current_tenant_id
-from bisheng.open_api.domain.services import tenant_setting_service
+from bisheng.database.models.tenant import ROOT_TENANT_ID
+from bisheng.open_api.domain.constants import OpenApiAuditAction
+from bisheng.open_api.domain.services import call_audit_service, tenant_setting_service
+from bisheng.utils import get_request_ip
 
 router = APIRouter(prefix="/open-api", tags=["OpenApiManagement"])
 
@@ -51,11 +55,30 @@ async def get_settings(login_user: UserPayload = Depends(UserPayload.get_tenant_
 async def update_settings(
     req: TenantSettingReq,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,  # FastAPI 按注解注入;默认值让测试可直接调用
 ):
     """写入本租户开关——**立即生效**(写后清缓存,spec AC-34)。
 
-    注:审计动作 `open_api.settings.update` 随 T-27 的审计落地一并接入。
+    审计动作 `open_api.settings.update`(T-27);同时记 `deployment_enforced`——
+    否则"我开了为什么没生效"在审计里无从解释(强制 = 部署级 ∧ 租户级)。
     """
     tenant_id = _acting_tenant(login_user)
+    # 缺行 = 未启用(fail-closed):before 记 None,读的是策略行本身而不是生效态。
+    before_row = await tenant_setting_service.get_policy(tenant_id)
     row = await tenant_setting_service.upsert_policy(tenant_id, enforce_keys=req.enforce_keys)
+    try:
+        call_audit_service.record_admin_action(
+            login_user=login_user,
+            tenant_id=tenant_id,
+            operator_tenant_id=get_current_tenant_id() or ROOT_TENANT_ID,
+            action=OpenApiAuditAction.SETTINGS_UPDATE.value,
+            target_type="open_api_tenant_setting",
+            target_id=tenant_id,
+            before={"enforce_keys": before_row.enforce_keys if before_row is not None else None},
+            after={"enforce_keys": row.enforce_keys},
+            extra={"deployment_enforced": bool(app_settings.open_api.enforce_keys)},
+            ip_address=get_request_ip(request) if request is not None else None,
+        )
+    except Exception:  # 审计绝不能改变管理动作的结果
+        logger.opt(exception=True).warning("open_api: settings audit enqueue failed")
     return resp_200(data=_serialize(tenant_id, row))

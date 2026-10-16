@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -29,14 +29,18 @@ from bisheng.common.errcode.open_api import (
 )
 from bisheng.common.schemas.api import PageData, resp_200
 from bisheng.core.context.tenant import get_current_tenant_id
+from bisheng.database.models.tenant import ROOT_TENANT_ID
+from bisheng.open_api.domain.constants import OpenApiAuditAction
 from bisheng.open_api.domain.models.api_credential import (
     REVOKE_REASON_BATCH,
     REVOKE_REASON_MANUAL,
 )
 from bisheng.open_api.domain.models.dao import ApiCredentialDao
 from bisheng.open_api.domain.scopes import ISSUABLE_OPEN_API_SCOPE_CODES, OPEN_API_SCOPES
+from bisheng.open_api.domain.services import call_audit_service
 from bisheng.open_api.domain.services import credential_service as cred_service
 from bisheng.open_api.domain.services import service_account_service as svc
+from bisheng.utils import get_request_ip
 
 router = APIRouter(prefix="/service-accounts", tags=["OpenApiManagement"])
 #: 可签发权限位目录(挂 /api/v1/open-api/scopes)。
@@ -63,6 +67,46 @@ def _validate_scopes(scopes: list[str]) -> None:
     unknown = [s for s in scopes if s not in ISSUABLE_OPEN_API_SCOPE_CODES]
     if unknown:
         raise OpenApiUnknownScopeError(**{"unknown": unknown})
+
+
+def _key_snapshot(row) -> dict:
+    """审计用快照:掩码 / 名称 / 权限位 / 有效期——**绝不含明文与 token_hash**。"""
+    return {
+        "key_mask": row.key_mask,
+        "name": row.name,
+        "scopes": list(row.scopes or []),
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+    }
+
+
+def _audit_key_action(
+    login_user: UserPayload,
+    tenant_id: int,
+    request: Request | None,
+    action: OpenApiAuditAction,
+    account_id: int,
+    key_id: int | None,
+    *,
+    before: dict | None = None,
+    after: dict | None = None,
+    extra: dict | None = None,
+) -> None:
+    """密钥管理动作审计(AC-15 / AC-37):best-effort,不改变接口结果。"""
+    try:
+        call_audit_service.record_admin_action(
+            login_user=login_user,
+            tenant_id=tenant_id,
+            operator_tenant_id=get_current_tenant_id() or ROOT_TENANT_ID,
+            action=action.value,
+            target_type="api_credential" if key_id is not None else "service_account",
+            target_id=key_id if key_id is not None else account_id,
+            before=before,
+            after=after,
+            extra={"service_account_id": account_id, **(extra or {})},
+            ip_address=get_request_ip(request) if request is not None else None,
+        )
+    except Exception:  # 审计绝不能改变管理动作的结果
+        logger.opt(exception=True).warning("open_api: key audit enqueue failed")
 
 
 def _key_status(row, now: datetime) -> str:
@@ -111,6 +155,7 @@ async def issue_key(
     account_id: int,
     req: KeyIssueReq,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,  # FastAPI 按注解注入;默认值让测试可直接调用
 ):
     """签发密钥——**明文仅在本响应出现一次**,调用方须当场保存。"""
     tenant_id = _acting_tenant(login_user)
@@ -133,6 +178,16 @@ async def issue_key(
         row.id,
         login_user.user_id,
     )
+    # 审计只记掩码与元数据:明文与 token_hash 一律不得入审计(AC-09 / INV-23)。
+    _audit_key_action(
+        login_user,
+        tenant_id,
+        request,
+        OpenApiAuditAction.API_KEY_ISSUE,
+        account_id,
+        row.id,
+        after=_key_snapshot(row),
+    )
     return resp_200(
         data={
             "id": row.id,
@@ -151,6 +206,7 @@ async def update_key(
     key_id: int,
     req: KeyUpdateReq,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,
 ):
     """改名称 / 权限位 / 有效期 —— 立即生效,无需重新签发(spec AC-13)。"""
     tenant_id = _acting_tenant(login_user)
@@ -171,6 +227,18 @@ async def update_key(
     if not changed:
         raise OpenApiNotFoundError()
     refreshed = await ApiCredentialDao.aget_by_id(key_id, tenant_id=tenant_id)
+    # 前后值都已在手:before=改动前那行(上面已读),after=重读结果;只记被改的键。
+    before_full, after_full = _key_snapshot(row), _key_snapshot(refreshed)
+    _audit_key_action(
+        login_user,
+        tenant_id,
+        request,
+        OpenApiAuditAction.API_KEY_UPDATE,
+        account_id,
+        key_id,
+        before={key: before_full[key] for key in fields if key in before_full},
+        after={key: after_full[key] for key in fields if key in after_full},
+    )
     return resp_200(data=_serialize_key(refreshed, datetime.now()))
 
 
@@ -178,12 +246,26 @@ async def update_key(
 async def revoke_all_keys(
     account_id: int,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,
 ):
     """全量吊销(轮换收尾 / 应急),立即清缓存。"""
     tenant_id = _acting_tenant(login_user)
     await _require_account(account_id, tenant_id)
+    # 服务只回带把数:审计要的"哪些密钥被收了"由这里预读(掩码,安全)。
+    alive = await ApiCredentialDao.alist_by_account(account_id, tenant_id=tenant_id)
+    before_masks = [row.key_mask for row in alive if row.revoked_at is None]
     revoked = await cred_service.revoke_account_credentials(account_id, tenant_id=tenant_id, reason=REVOKE_REASON_BATCH)
     logger.info("open_api: revoked {} key(s) of account {} by user {}", revoked, account_id, login_user.user_id)
+    _audit_key_action(
+        login_user,
+        tenant_id,
+        request,
+        OpenApiAuditAction.API_KEY_REVOKE_ALL,
+        account_id,
+        None,
+        before={"key_masks": before_masks},
+        after={"revoked": revoked},
+    )
     return resp_200(data={"account_id": account_id, "revoked": revoked})
 
 
@@ -192,6 +274,7 @@ async def revoke_key(
     account_id: int,
     key_id: int,
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,
 ):
     """吊销单把(吊销 ≠ 删除,记录保留供审计)。"""
     tenant_id = _acting_tenant(login_user)
@@ -204,6 +287,16 @@ async def revoke_key(
     if not changed:
         raise OpenApiNotFoundError()
     logger.info("open_api: key {} of account {} revoked by user {}", key_id, account_id, login_user.user_id)
+    _audit_key_action(
+        login_user,
+        tenant_id,
+        request,
+        OpenApiAuditAction.API_KEY_REVOKE,
+        account_id,
+        key_id,
+        before=_key_snapshot(row),
+        after={"revoked": True},
+    )
     return resp_200(data={"id": key_id, "revoked": True})
 
 
