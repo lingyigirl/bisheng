@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from bisheng.core.config.gpu_manage import GpuManageConf
 from bisheng.core.config.llm import LLMConf
 from bisheng.core.config.multi_tenant import MultiTenantConf
+from bisheng.core.config.open_api import OpenApiConf
 from bisheng.core.config.openfga import OpenFGAConf
 from bisheng.core.config.reconcile import ReconcileConf
 from bisheng.core.config.sso_sync import SSOSyncConf
@@ -481,6 +482,16 @@ class LinsightConf(BaseModel):
         "kernel built-in skills; data/skills/{tenant_id}/<name>/ for tenant custom skill bundles. "
         "Multi-node deployments must mount this path on a shared volume (design §7.1).",
     )
+    queue_namespace: str = Field(
+        default="linsight",
+        description="Redis namespace of the Linsight task queue (the key is '<namespace>:queue'). The API "
+        "and the Linsight worker MUST resolve the same value, so leave it unset unless you have a reason: "
+        "setting it lets a developer pointed at a shared Redis take a private queue instead of competing "
+        "with colleagues' workers for the same tasks. It does NOT isolate session data (MySQL) or the "
+        "cache/login state (redis_url). Read from config.yaml only — ConfigService.get_linsight_conf() / "
+        "aget_linsight_conf() build a SEPARATE instance from the DB's initdb_config `linsight` section and "
+        "never write it back here, so a value set through the config center is silently ignored.",
+    )
 
 
 class DailyChatConf(BaseModel):
@@ -830,6 +841,7 @@ class Settings(BaseModel):
     information_conf: IntelligenceCenterConf = IntelligenceCenterConf()
     mcp: McpConf = McpConf()
     multi_tenant: MultiTenantConf = MultiTenantConf()
+    open_api: OpenApiConf = OpenApiConf()
     openfga: OpenFGAConf = OpenFGAConf()
     user_tenant_sync: UserTenantSyncConf = UserTenantSyncConf()
     sso_sync: SSOSyncConf = SSOSyncConf()

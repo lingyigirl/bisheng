@@ -1680,7 +1680,15 @@ class DepartmentService:
         if not default_role_ids or not user_ids:
             return
         from bisheng.database.constants import AdminRole
+        from bisheng.open_api.domain.services.identity_service import alist_service_identity_ids
         from bisheng.user.domain.models.user_role import UserRoleDao
+
+        # F076 T-26:兜底——即便身份通过历史数据/旁路进了部门,也不给它发角色。
+        protected = await alist_service_identity_ids(user_ids)
+        if protected:
+            user_ids = [uid for uid in user_ids if int(uid) not in protected]
+            if not user_ids:
+                return
 
         assignable = await cls.aget_assignable_roles(dept_id, login_user)
         allowed_ids = {r["id"] for r in assignable}
@@ -1705,6 +1713,13 @@ class DepartmentService:
         data: DepartmentMemberAdd,
         login_user,
     ) -> None:
+        # F076 T-26:专用身份不得进部门——部门会发默认角色(AC-02 要求零角色),
+        # 而且进部门后连改名/改角色等组织侧入口都会对它敞开。整批拒绝,不做静默跳过。
+        # 用异步守卫:这里在事件循环里,不能走同步查库。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+        await assert_not_service_identity_async(list(data.user_ids or []))
+
         default_role_ids_snapshot: list[int] = []
         is_primary_add = int(data.is_primary or 0) == 1
         async with get_async_db_session() as session:
@@ -1885,6 +1900,11 @@ class DepartmentService:
         login_user,
     ) -> list[dict]:
         """Set department admins (full replace). Returns updated admin list."""
+        # F076 T-26:专用身份不得被设为部门管理员(部门管理员可管理知识空间等资源)。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+        await assert_not_service_identity_async(list(user_ids))
+
         async with get_async_db_session() as session:
             dept = await _get_dept_and_check_permission(session, dept_id, login_user)
 
@@ -2965,6 +2985,12 @@ class DepartmentService:
         user = await UserDao.aget_user(user_id)
         if not user or user.delete != 0:
             raise DepartmentMemberNotFoundError()
+
+        # F076 T-26:专用身份不参与组织侧编辑(这张表单能改角色/用户组/主属部门/用户名)。
+        # 与上面的 AdminRole 判定同一道防线;身份正常进不了部门,这里是兜底。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+        await assert_not_service_identity_async([user_id])
 
         old_roles = UserRoleDao.get_user_roles(user_id)
         old_role_ids = [int(r.role_id) for r in old_roles]

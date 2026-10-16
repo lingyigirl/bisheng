@@ -526,6 +526,10 @@ async def list_user(
     res = []
     role_dict = {}
     group_dict = {}
+    # F076 T-26:一条查询标出本页哪些用户是服务账号专用身份。
+    from bisheng.open_api.domain.services.identity_service import alist_service_identity_ids
+
+    service_identity_ids = await alist_service_identity_ids([int(u.user_id) for u in users if u.user_id is not None])
     for one, avatar_url in zip(users, avatar_urls):
         one_data = one.model_dump()
         # Never expose sensitive/internal User columns in the list response — the
@@ -537,6 +541,8 @@ async def list_user(
         if with_department_path:
             one_data["department_path"] = dept_path_by_id.get(primary_dept_id) if primary_dept_id is not None else None
         one_data["avatar"] = avatar_url
+        # F076 T-26:标注服务账号专用身份——控制台据此显示标签并锁掉角色/密码动作。
+        one_data["is_service_identity"] = int(one.user_id) in service_identity_ids
         user_roles = get_user_roles(one, role_dict)
         user_groups = get_user_groups(one, group_dict)
         # If not hyper-managed, data needs to be filtered, Cannot see the list of roles and user groups within a user group not managed by him
@@ -706,6 +712,11 @@ async def update(*, request: Request, user: UserUpdate, login_user: LoginUser = 
             ).first()
         if admin:
             raise HTTPException(status_code=500, detail="Cannot operate admin")
+        # F076 T-26:专用身份不能在用户侧启停——停用会让账号所有调用 11805 失败,
+        # 请走服务账号页的启停。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+        await assert_not_service_identity_async([user.user_id])
         if (
             user.delete == 0
             and int(getattr(db_user, "delete", 0) or 0) == 1
@@ -900,6 +911,12 @@ async def user_addrole(
         raise HTTPException(status_code=500, detail="Editing is not allowed by the system administrator")
     if any(one == AdminRole for one in user_role.role_id):
         raise HTTPException(status_code=500, detail="Setting as system administrator is not allowed")
+
+    # F076 T-26:服务账号的专用身份不允许在用户侧改角色(AC-02:零角色零授权),
+    # 否则账号会被人工提权或破坏其"最小权限"前提。
+    from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+    await assert_not_service_identity_async([user_role.user_id])
 
     if not login_user.is_admin():
         from bisheng.database.models.department import DepartmentDao
@@ -1211,6 +1228,12 @@ async def reset_password(
     if user_payload.is_admin() and login_user.user_id != user_id:
         raise HTTPException(status_code=500, detail="System administrators can only reset passwords themselves")
 
+    # F076 T-26:专用身份的口令由平台随机生成且不可登录,重置它没有业务意义,
+    # 只会把身份与账号的绑定关系搞乱。
+    from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+    await assert_not_service_identity_async([user_id])
+
     # Query the user group the user belongs to
     user_groups = UserGroupDao.get_user_group(user_info.user_id)
     user_group_ids = [one.group_id for one in user_groups]
@@ -1240,6 +1263,12 @@ async def change_password(
     user_info = UserDao.get_user(login_user.user_id)
     if not user_info.password:
         return UserNotPasswordError.return_resp()
+
+    # F076 T-26:防御性拦截——专用身份理论上是登录不进来的(无 external_id),
+    # 但一旦登录口径变化,这里必须挡住"自己改自己密码"。
+    from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+    await assert_not_service_identity_async([login_user.user_id])
 
     password = UserService.decrypt_md5_password(password)
 

@@ -9,6 +9,8 @@ export type User = {
     department_id?: number | null;
     /** 主部门全路径（``总公司/研发部/平台组``），仅 /user/list?with_department_path 返回 */
     department_path?: string | null;
+    /** F076 T-26：该用户是某个服务账号的专用身份（仅 /user/list 返回），角色/密码/启停一律不可改 */
+    is_service_identity?: boolean;
     remark: string | null;
     delete: number;
     create_time: string;

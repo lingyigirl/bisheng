@@ -19,13 +19,15 @@
 
 ## 2. 认证
 
-沿用 BiSheng OpenAPI（`/api/v2/*`）的统一模式：服务账号身份。
+沿用 BiSheng OpenAPI（`/api/v2/*`）的统一鉴权：**服务账号密钥**。
 
-- 不接收用户 JWT，也不读取 `access_token_cookie`。
-- 后端以「默认操作员」身份发起调用（DB 配置项 `default_operator.user`）。
-- 调用方需在网络层负责访问控制（VPN / 内网 / 反向代理鉴权）。
+- 请求头携带 `Authorization: Bearer bs-sak-<43 字符>`；不接收用户 JWT，也不读取 `access_token_cookie`。
+- 调用身份 = 该密钥所属**服务账号的专用身份**（`svc-*`，零角色零资源授权，不继承管理员特权）；请求里的 `user_id` 等身份参数不予采用（query/form 形态出现即 `400/11817`）。
+- 本端点需要权限位 **`knowledge:read`**，缺失返回 `403/11807`（响应 `data.required` 回带缺失的 code）。
+- 可见范围 = 该身份的资源授权（默认空）。调用未授权的知识库按"不可见"处理——**对接方请把 403 与 404 都当作"未授权/不存在"处理**，不要据此区分资源存在性。
 
-> 部署前置条件：DB `initdb_config` 已配置 `default_operator.user`，且该用户对要检索的知识库具有访问权限（推荐配置 super_admin 以避免权限边界问题）。
+> 部署前置条件：管理员已建服务账号、签发带 `knowledge:read` 的密钥，并把目标知识库授予该账号（服务账号页「资源授权」，或 `POST /api/v1/service-accounts/{id}/resource-grants:mutate`）。
+> 完整契约（密钥获取、权限位目录、错误码全表、WebSocket 携带方式）见 [`open-api-auth.md`](open-api-auth.md)；存量切换与回退见 [`../开放API密钥鉴权迁移指引.md`](../开放API密钥鉴权迁移指引.md)。
 
 ---
 
@@ -163,15 +165,16 @@ Content-Type: application/json
 }
 ```
 
-### 5.2 业务错误（HTTP 200 + 错误 status_code）
+### 5.2 业务错误
 
-BiSheng 沿用了「HTTP 200 + body 内 status_code」的统一响应模型用于业务错误：
+鉴权与授权失败返回**真实 HTTP 状态码**（401/403/404/400/503）+ 统一信封；其余业务错误沿用「HTTP 200 + body 内 status_code」：
 
-| `status_code` | 含义 | 何时触发 |
-|---|---|---|
-| 404 | 知识库不存在 | `knowledge_base_ids` 中某个 ID 在数据库中查不到 |
-| 403 | 默认操作员对该 KB 无访问权限 | 多租户 / ReBAC 权限检查不通过 |
-| 500 | 服务器内部错误 | 向量库 / ES 不可用、embedding 服务异常等 |
+| `status_code` | HTTP | 含义 | 何时触发 |
+|---|---|---|---|
+| 11801 / 11802 / 11803 / 11804 / 11805 | 401 | 密钥缺失/无效/过期/已吊销、账号停用 | 见 [`open-api-auth.md`](open-api-auth.md) §6 |
+| 11807 | 403 | 密钥缺 `knowledge:read` 权限位（`data.required` 回带） | 密钥未勾选该权限位 |
+| 404 | 404 | 知识库不存在，或不在该身份的授权范围（防枚举，两者不可区分） | ID 查不到，或未授予该账号 |
+| 500 | **200** | 服务器内部错误 | 向量库 / ES 不可用、embedding 服务异常等 |
 
 ```json
 {
@@ -276,7 +279,7 @@ def bisheng_retrieve(query: str, knowledge_base_ids: list[int], top_k: int = 10)
 
 每个 KB 独立执行以下流程，最终结果合并：
 
-1. 权限校验：default operator 是否对该 KB 有 view 权限。
+1. 权限校验：调用身份（服务账号的专用身份）是否对该 KB 有 view 权限。
 2. 解析过滤：tag 名（如有）→ tag id → file id 列表。无对应文件时该 KB 返回空。
 3. 构建过滤器：file id 列表 + 主版本过滤（排除已废弃的文档版本）→ Milvus expr + ES filter。
 4. 双路召回：Milvus 向量检索 + Elasticsearch 全文检索，各取 top 100。
@@ -294,8 +297,8 @@ def bisheng_retrieve(query: str, knowledge_base_ids: list[int], top_k: int = 10)
 
 ### 7.3 多租户
 
-- 接口本身不携带租户参数；租户从 `default_operator` 的关联租户自动注入。
-- 跨租户检索**不支持**——`default_operator` 看不到其他租户的知识库。
+- 接口本身不携带租户参数；租户取自**密钥所属的服务账号**。
+- 跨租户检索**不支持**——服务账号的专用身份看不到其他租户的知识库。
 
 ### 7.4 文档版本
 
@@ -345,7 +348,7 @@ A：当前实现按 KB 顺序串接，未做跨库 score 归一化。如下游�
 A：很可能是 `max_content` 提前截断了。调大 `max_content`，或检查知识库实际命中量。
 
 **Q：能传 user_id 让接口以某个特定用户身份检索吗?**
-A：当前不支持。如需多用户身份语义，需在调用层做。后续版本可能加 `as_user_id` 可选参数。
+A：不能。调用身份由**密钥**决定（服务账号的专用身份）；query/form 里出现 `user_id` 会被拒（`400/11817`），出现在请求体里也不会生效——不会"代表"任何用户执行。多用户身份语义需在调用层自行处理。
 
 **Q：如何拿到 chunk 的 page、bbox、source 等元信息?**
 A：当前响应不透传 metadata。后续版本会加可选的 `include_metadata` 开关。

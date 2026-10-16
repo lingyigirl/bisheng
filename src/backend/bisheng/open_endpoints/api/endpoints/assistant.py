@@ -17,6 +17,7 @@ from bisheng.api.v1.chat import chat_manager
 from bisheng.api.v1.schemas import OpenAIChatCompletionReq, OpenAIChatCompletionResp, OpenAIChoice
 from bisheng.common.chat.types import WorkType
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
+from bisheng.common.errcode import BaseErrorCode
 from bisheng.common.errcode.sensitive_word import SensitiveWordInputBlockedError
 from bisheng.common.schemas.api import PageData, resp_200
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationAliveEventData, ApplicationProcessEventData
@@ -25,12 +26,15 @@ from bisheng.common.services.config_service import settings
 from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.core.logger import trace_id_var
 from bisheng.llm.domain.utils import extract_reasoning_content
+from bisheng.open_api.domain.context import get_open_api_principal
+from bisheng.open_api.domain.scopes import open_api_scope
 from bisheng.open_endpoints.domain.utils import get_default_operator
 from bisheng.utils import generate_uuid, get_request_ip
 
 router = APIRouter(prefix="/assistant", tags=["OpenAPI", "Assistant"])
 
 
+@open_api_scope("assistant:invoke", guest=True)
 @router.post("/chat/completions")
 async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompletionReq):
     """
@@ -55,8 +59,24 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
     # Find Assistant Information
     try:
         assistant_info = await AssistantService.get_assistant_info(assistant_id, login_user)
+    except BaseErrorCode:
+        # F076 T-29(AC-23):资源不存在/不可见是业务拒绝,必须按统一口径(真 HTTP 状态 +
+        # 信封;密钥调用再由异常处理器收敛成 11809/404)往外抛 —— 原先被下面的
+        # 500 兜底吞掉,既丢了状态码也让"不存在"与"没有权限"各自可辨识。
+        raise
     except Exception as e:
         return JSONResponse(status_code=500, content=str(e), media_type="application/json")
+
+    # F076 T-18: `tools[]` 白名单校验 —— 放在上面的 try/except 之外,
+    # 否则 11815 会被"取助手信息失败"的 500 兜底吞掉(那片 except 是给
+    # get_assistant_info 用的,不该吃业务校验错误)。
+    # 不传 tools 时返回 None,行为与升级前完全一致(design 决策 6)。
+    from bisheng.open_api.domain.schemas.tools import parse_tool_selection
+    from bisheng.open_api.domain.services import tool_scope_service
+
+    enabled_tool_ids = tool_scope_service.resolve_assistant_tool_ids(
+        assistant_info, parse_tool_selection(req_data.tools)
+    )
 
     start_time = time.time()
     try:
@@ -92,7 +112,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
         # Generated per request rather than invented from the payload: calling
         # it a conversation id would be a lie, and the OpenAI-compatible API has
         # no such concept to borrow.
-        http_chat_id = f'openapi-{generate_uuid()}'
+        http_chat_id = f"openapi-{generate_uuid()}"
 
         if input_guard is not None:
             blocked_reply = await input_guard(http_chat_id, question)
@@ -104,7 +124,12 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
                 )
 
         # Initialization Assistantagent
-        agent = AssistantAgent(assistant_info, "", invoke_user_id=login_user.user_id)
+        agent = AssistantAgent(
+            assistant_info,
+            "",
+            invoke_user_id=login_user.user_id,
+            enabled_tool_ids=enabled_tool_ids,
+        )
         await agent.init_assistant()
 
         # Determine if the model supports streaming calls
@@ -203,7 +228,7 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
 
                 # F056: 冲刷 mask 模式缓冲尾部, 作为最后一个内容分片外发
                 if output_guard is not None and not output_blocked:
-                    flushed = await output_guard(http_chat_id, '')
+                    flushed = await output_guard(http_chat_id, "")
                     if flushed.safe_text:
                         tail_chunk = {
                             "id": openai_resp_id,
@@ -306,6 +331,7 @@ def _check_model_supports_streaming(agent: AssistantAgent) -> bool:
         return True
 
 
+@open_api_scope("assistant:read", guest=True)
 @router.get("/info/{assistant_id}")
 async def get_assistant_info(request: Request, assistant_id: UUID):
     """
@@ -314,13 +340,15 @@ async def get_assistant_info(request: Request, assistant_id: UUID):
     assistant_id = assistant_id.hex
     logger.info(f"act=get_default_operator assistant_id={assistant_id}, ip={get_request_ip(request)}")
     # Determine if the configuration under is turned on
-    if not settings.get_from_db("default_operator").get("enable_guest_access"):
+    # F076(T-14):免登录开关只拦匿名访问;带密钥的服务账号调用不受它影响。
+    if get_open_api_principal() is None and not settings.get_from_db("default_operator").get("enable_guest_access"):
         raise HTTPException(status_code=403, detail="No permission to access")
     login_user = get_default_operator()
     res = await AssistantService.get_assistant_info(assistant_id, login_user)
     return resp_200(data=res)
 
 
+@open_api_scope("assistant:read", guest=True)
 @router.get("/list", status_code=200)
 def get_assistant_list(
     request: Request,
@@ -336,13 +364,15 @@ def get_assistant_list(
     """
     logger.info(f"public_get_list ip: {request.client.host} user_id:{user_id}")
 
-    if not settings.get_from_db("default_operator").get("enable_guest_access"):
+    # F076(T-14):免登录开关只拦匿名访问;带密钥的服务账号调用不受它影响。
+    if get_open_api_principal() is None and not settings.get_from_db("default_operator").get("enable_guest_access"):
         raise HTTPException(status_code=403, detail="No permission to access")
     login_user = get_default_operator()
     data, total = AssistantService.get_assistant(login_user, name, status, tag_id, page, limit)
     return resp_200(PageData(data=data, total=total))
 
 
+@open_api_scope("assistant:invoke", guest=True)
 @router.websocket("/chat/{assistant_id}")
 async def chat(*, websocket: WebSocket, assistant_id: str, chat_id: str | None = None):
     """

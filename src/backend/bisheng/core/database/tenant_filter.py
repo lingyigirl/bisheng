@@ -120,6 +120,15 @@ _TENANT_AWARE_MODEL_MODULES = (
     "bisheng.finetune.domain.models.preset_train",
     "bisheng.finetune.domain.models.model_deploy",
     "bisheng.finetune.domain.models.finetune",
+    # F076: open API service accounts, their API keys and the per-tenant
+    # enforce policy. Same reasoning as F059/F058/F061 above — the discovery
+    # snapshot runs once, so listing them explicitly is what keeps them
+    # filtered if the router import edge moves. The consequence of missing
+    # here is the F061 class of bug: rows land in the ROOT tenant, and one
+    # tenant's credentials would be visible to another.
+    "bisheng.open_api.domain.models.service_account",
+    "bisheng.open_api.domain.models.api_credential",
+    "bisheng.open_api.domain.models.open_api_tenant_setting",
 )
 
 

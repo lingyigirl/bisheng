@@ -1,6 +1,7 @@
 // @ts-strict-ignore
 import { FilterIcon } from "@/components/bs-icons/filter";
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
+import { Badge } from "@/components/bs-ui/badge";
 import { Button } from "@/components/bs-ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/bs-ui/popover";
 import FilterUserGroup from "@/components/bs-ui/select/filter";
@@ -168,6 +169,13 @@ export default function Users(params) {
 
     const operations = (el) => {
         const isSuperAdmin = el.roles.some(role => role.id === 1)
+        // F076 T-26:服务账号的专用身份由平台代管——角色/密码/启停都在「系统 → 服务账号」
+        // 里操作,这里全部置灰(后端同样拒绝,11821)。
+        if (el.is_service_identity) return <div title={t('serviceAccount:users.hint')}>
+            <Button variant="link" disabled className="px-0">{t('edit')}</Button>
+            <Button variant="link" disabled className="px-0 pl-4">{t('system.resetPwd')}</Button>
+            <Button variant="link" disabled className="text-red-500 px-0 pl-4">{t('disable')}</Button>
+        </div>
         // 禁止编辑admin用户
         if (isSuperAdmin) return <div>
             <Button variant="link" disabled className="px-0">{t('edit')}</Button>
@@ -255,7 +263,15 @@ export default function Users(params) {
                     {users.map((el: any) => (
                         <TableRow key={el.id}>
                             <TableCell {...urc.getTdProps(0)} className="truncate font-medium">
-                                {el.user_name}
+                                <span className="inline-flex items-center gap-1.5">
+                                    {el.user_name}
+                                    {/* F076 T-26:标注服务账号的专用身份(后端 /user/list 回带) */}
+                                    {el.is_service_identity && (
+                                        <Badge variant="secondary" className="font-normal">
+                                            {t("serviceAccount:users.badge")}
+                                        </Badge>
+                                    )}
+                                </span>
                             </TableCell>
                             <TableCell {...urc.getTdProps(1)} className="break-all">{(el.groups || []).map(el => el.name).join(',')}</TableCell>
                             <TableCell {...urc.getTdProps(2)} className="break-all">{(el.roles || []).map(el => el.name).join(',')}</TableCell>

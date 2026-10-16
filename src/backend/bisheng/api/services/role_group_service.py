@@ -184,6 +184,10 @@ class RoleGroupService():
         user_role_list = UserRoleDao.get_user_roles(user_id)
         if any(one.role_id == AdminRole for one in user_role_list):
             raise AdminUserUpdateForbiddenError()
+        # F076 T-26:用户组可能携带角色,专用身份一样不许改(与上面同一条防线)。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity
+
+        assert_not_service_identity([user_id])
 
         # Get all previous groupings of users
         old_group = UserGroupDao.get_user_group(user_id)
@@ -256,6 +260,11 @@ class RoleGroupService():
                 else:
                     need_delete_admin.append(user.user_id)
         if need_add_admin:
+            # F076 T-26:专用身份不得被设为用户组管理员——用户组会带来资源授权,
+            # 而它的角色/用户组一律由平台代管。只拦"新增",移除某个身份不受影响。
+            from bisheng.open_api.domain.services.identity_service import assert_not_service_identity
+
+            assert_not_service_identity(list(need_add_admin))
             # Users who are not in the group can be assigned as administrators. Do user creation
             for user_id in need_add_admin:
                 res.append(UserGroupDao.insert_user_group_admin(user_id, group_id))
@@ -281,6 +290,11 @@ class RoleGroupService():
 
         need_add = list(target_ids - current_ids)
         need_delete = list(current_ids - target_ids)
+
+        # F076 T-26:专用身份不得被拉进用户组(同理:组会带来授权)。只拦"新增"。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity
+
+        assert_not_service_identity(need_add)
 
         UserGroupDao.batch_add_group_members(group_id, need_add)
         UserGroupDao.batch_delete_group_members(group_id, need_delete)

@@ -17,7 +17,6 @@ from pydantic import Field, SkipValidation
 from bisheng.api.services.assistant_base import AssistantUtils
 from bisheng.citation.domain.schemas.citation_schema import CitationRegistryItemSchema, CitationType
 from bisheng.citation.domain.services.citation_prompt_helper import (
-    CITATION_PROMPT_RULES,
     CitationRegistryCollector,
     annotate_rag_documents_with_citations,
     annotate_web_results_with_citations,
@@ -25,7 +24,6 @@ from bisheng.citation.domain.services.citation_prompt_helper import (
     cache_citation_registry_items_sync,
     collect_rag_citation_registry_items,
     collect_web_citation_registry_items,
-    prompt_has_citation_rules,
 )
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.common.errcode.assistant import (
@@ -219,8 +217,17 @@ class AssistantAgent(AssistantUtils):
     - When there is time information involved in a question, such as recently6Months, yesterday, last year, etc., you need to use the time tool to query the time information.
     """
 
-    def __init__(self, assistant_info: Assistant, chat_id: str, invoke_user_id: int):
+    def __init__(
+        self,
+        assistant_info: Assistant,
+        chat_id: str,
+        invoke_user_id: int,
+        enabled_tool_ids: list[int] | None = None,
+    ):
         self.assistant = assistant_info
+        # F076 T-18:开放 API 以 `tools[]` 指定"本轮启用哪些工具";None = 未指定,
+        # 完全沿用应用默认配置(平台侧 WS 与内部调用都走 None,行为不变)。
+        self.enabled_tool_ids = enabled_tool_ids
 
         # To record the data tracking points
         self.invoke_user_id = invoke_user_id
@@ -307,6 +314,11 @@ class AssistantAgent(AssistantUtils):
                 tool_ids.append(link.tool_id)
             else:
                 flow_links.append(link)
+        if tool_ids and self.enabled_tool_ids is not None:
+            # 白名单过滤必须在进 ToolExecutor 之前:执行链里的
+            # skip_unauthorized=True 会静默丢弃无权限工具,校验与收窄都不能依赖它。
+            allowed = set(self.enabled_tool_ids)
+            tool_ids = [tid for tid in tool_ids if tid in allowed]
         if tool_ids:
             tools = await ToolExecutor.init_by_tool_ids(
                 tool_ids,
