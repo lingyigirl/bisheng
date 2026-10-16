@@ -16,6 +16,7 @@ from bisheng.core.config.multi_tenant import MultiTenantConf
 from bisheng.core.config.open_api import OpenApiConf
 from bisheng.core.config.openfga import OpenFGAConf
 from bisheng.core.config.reconcile import ReconcileConf
+from bisheng.core.config.scheduled_task import ScheduledTaskConf
 from bisheng.core.config.sso_sync import SSOSyncConf
 from bisheng.core.config.user_tenant_sync import UserTenantSyncConf
 
@@ -273,6 +274,22 @@ class CeleryConf(BaseModel):
                 # via bucket lifecycle; LocalStorage walks its tmp directory.
                 "task": "bisheng.worker.storage.cleanup.cleanup_tmp_storage",
                 "schedule": crontab.from_string("0 3 * * *"),
+            }
+        if "scheduled_task_scan" not in self.beat_schedule:
+            # F077: the scheduled-task round (reclaim expired leases, scan due
+            # tasks, observe running ones). Two deliberate choices:
+            #   * 20.0 — a float, never a cron string: `crontab("...")` is a
+            #     trap in this file (see the str->crontab conversion below),
+            #     and a numeric schedule dodges it entirely. 20s keeps the
+            #     worst-case lateness under the 30s the spec promises.
+            #   * options.queue — `task_routers` is replaced wholesale by any
+            #     non-empty `celery_task.task_routers` in config.yaml, so a
+            #     task relying on routers can silently land in a queue nobody
+            #     consumes. Pin the default queue here instead.
+            self.beat_schedule["scheduled_task_scan"] = {
+                "task": "bisheng.worker.scheduled_task.scan.scan_scheduled_tasks",
+                "schedule": 20.0,
+                "options": {"queue": "celery"},
             }
 
         # convert str to crontab
@@ -842,6 +859,7 @@ class Settings(BaseModel):
     mcp: McpConf = McpConf()
     multi_tenant: MultiTenantConf = MultiTenantConf()
     open_api: OpenApiConf = OpenApiConf()
+    scheduled_task: ScheduledTaskConf = ScheduledTaskConf()
     openfga: OpenFGAConf = OpenFGAConf()
     user_tenant_sync: UserTenantSyncConf = UserTenantSyncConf()
     sso_sync: SSOSyncConf = SSOSyncConf()

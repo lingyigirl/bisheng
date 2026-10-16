@@ -47,6 +47,22 @@ celery_task:
     bisheng.worker.knowledge.*:
       queue: knowledge_celery
 
+# F077 定时任务（可选段；缺省即用代码默认值，见 core/config/scheduled_task.py）。
+# 注意：扫描节拍不在这里配——beat 条目在 CeleryConf 里（scheduled_task_scan，默认 20 秒），
+# 复制一份会变成两处真相。
+# scheduled_task:
+#   global_max_running: 10           # 全局同时运行的定时任务上限（AC-12）
+#   max_tasks_per_app: 20            # 每应用启用中的任务上限（AC-05）
+#   run_timeout_seconds: 3600        # 运行租约上限，秒（AC-15）
+#   consecutive_failure_threshold: 5 # 连续失败自动停用阈值（AC-55）
+#   replay_window_seconds: 300       # 事件触发防重放时间窗，秒（AC-37）
+#   event_rate_limit_per_minute: 10  # 任务级触发频率上限（AC-38）
+#   preset_input_max_items: 20       # 预设输入条数上限（AC-44）
+#   preset_input_max_chars: 2000     # 预设输入单项字符上限（AC-44）
+#   nl_max_chars: 2000               # 自然语言输入字符上限（AC-41）
+#   preview_count: 5                 # 触发计划预览的未来次数（AC-07）
+#   dispatch_lock_ttl_seconds: 15    # 扫描轮的平台级 Redis 锁 TTL（略小于节拍）
+
 # 以下值原先用 !env ${VAR} 占位（容器由 docker-compose 注入）。本地开发直接内联，
 # 免去导出 10 个环境变量；!env 引用不存在的变量会直接报错。
 vector_stores:
