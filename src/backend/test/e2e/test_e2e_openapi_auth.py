@@ -281,6 +281,34 @@ def test_assistant_visibility_allow_and_deny(client, state):
     _expect(deny, 404, 11809)
 
 
+def test_filelib_retrieve_masks_ungranted_and_missing(client, state):
+    """AC-23 在知识库面同样成立:未授权与不存在返回同一个 404/11809。
+
+    T-29 追加修复:该端点原先把业务错误包成 HTTP 200 信封直接返回,异常不传播、
+    中央映射不生效,对接方可按错误码区分"不存在"与"未授权"(可枚举)。
+    """
+    key = _issue_key(client, state, name="kb", scopes=["knowledge:read"])
+
+    missing = client.post(
+        f"{V2_BASE}/filelib/retrieve",
+        headers=_bearer(key),
+        json={"knowledge_base_ids": [999_999_999], "query": "e2e", "top_k": 1},
+    )
+    missing_body = _expect(missing, 404, 11809)
+
+    # 真实存在但未授予该账号的知识库:同一个码、同一个状态(不可区分)
+    listing = client.get(f"{API_BASE}/knowledge", headers=_admin_headers(state), params={"page_size": 1})
+    items = listing.json().get("data", {}).get("data") or []
+    if items:
+        ungranted = client.post(
+            f"{V2_BASE}/filelib/retrieve",
+            headers=_bearer(key),
+            json={"knowledge_base_ids": [int(items[0]["id"])], "query": "e2e", "top_k": 1},
+        )
+        ungranted_body = _expect(ungranted, 404, 11809)
+        assert ungranted_body.get("status_code") == missing_body.get("status_code")
+
+
 def test_unknown_tool_is_rejected(client, state):
     """AC-31(工具白名单 deny):已授权助手上指定未绑定的 tool_key → 403/11815(不静默忽略)。"""
     key = _issue_key(client, state, name="tools", scopes=["assistant:invoke"])

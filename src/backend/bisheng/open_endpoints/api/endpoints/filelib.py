@@ -714,8 +714,12 @@ async def retrieve_chunks(
             top_k=req.top_k,
             max_content=req.max_content,
         )
-    except BaseErrorCode as e:
-        return e.return_resp_instance()
+    except BaseErrorCode:
+        # F076 T-29 追加:密钥调用时资源不可见/不存在必须走统一口径(真 HTTP 404 / 11809,
+        # 中央映射在异常处理器里)。原先这里把业务错误直接包成 HTTP 200 信封返回,异常
+        # 不会传播、映射不生效,对接方就能按错误码区分"不存在"与"未授权"(可枚举)。
+        # 非密钥调用(旧行为)不受影响:处理器只在打过 open_api_call 标记的请求上改写。
+        raise
 
     chunks = [
         RetrieveChunk(
