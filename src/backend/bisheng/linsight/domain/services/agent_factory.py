@@ -179,7 +179,7 @@ __KB_TOOL_LINE__- write_file / read_file / edit_file / ls：工作区文件工�
 - export_pdf(source_path, dest_path)：把 output/ 下的 markdown 转 PDF，必须在对应 .md 写好之后。
 - task(description, subagent_type, run_in_background=false)：把独立、可隔离、较重的子任务委派给子代理；subagent_type 从任务工具描述的可用列表中选择（内置 general-purpose / data-analyst / chart-designer / quality-reviewer + 已配置协作人员）。description 必须自包含——子代理看不到你的对话历史与上下文，只能读到 description，因此完成该子任务所需的全部背景、目标、约束与必要标识都要写进去；不得委派最终交付物撰写，也不得委派“问用户/澄清”。**若该子任务需要产出文件（表格/图表/代码/下载的数据等），必须在 description 中写明目标文件路径与格式（如 scratch/数据.xlsx 或 output/charts/x.png），子代理会把文件写到该路径，并在它的最终一行用 `产物: <paths>` 汇报**——你不需要（也不应该）去猜它产出了什么文件。run_in_background=true 时立即返回 job id，用 job_output 收集、job_kill 终止。
 - job_list()：列出自后台任务（job id / 状态 / 描述 / 已运行时长）；收尾前自查用。
-- job_output(job_id)：取回后台任务结果：运行中返回状态；完成后返回该子代理的最终报告（含 `产物:` 清单）。
+- job_output(job_id, wait_seconds=60)：取回后台任务结果，默认异步等待最多 60 秒（上限 120 秒），超时不终止子任务；wait_seconds=0 仅查询。没有其他独立工作时直接调用它等待，禁止调用代码执行器 sleep 或密集轮询。完成后返回最终报告（含 `产物:` 清单）。
 - job_kill(job_id)：终止不再需要的后台任务。
 
 __PATH_NAMESPACE_LINE__# 风格

@@ -23,16 +23,17 @@ Design — aligned with dsh's background-subagent tasks:
   final report — including its ``产物:`` line — is exactly what ``job_output``
   returns.
 
-Known v1 limitation: a background child's intermediate tool activity is NOT
-streamed to the UI (it runs outside the parent's astream); the UI shows the
-job-start call and, later, the collected result. Foreground runs keep the
-existing live view.
+The launch acknowledgement never closes the delegation card. A custom stream
+event settles that same invocation with its real result, status and duration;
+the executor persists it through the existing replay channel. job_output uses
+bounded asynchronous waiting instead of model-driven busy polling.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -40,6 +41,7 @@ from typing import Any, Literal
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
+from langgraph.config import get_stream_writer
 from langgraph.types import Command
 from loguru import logger
 from pydantic import BaseModel, Field, create_model
@@ -93,9 +95,12 @@ class _Job:
     error: str = ""
     task: asyncio.Task[Any] | None = None
     notified: bool = False
+    ended_at: float | None = None
+    call_id: str = ""
+    writer: Callable[[Any], None] | None = None
 
     def age_seconds(self) -> int:
-        return int(time.monotonic() - self.created_at)
+        return int((self.ended_at or time.monotonic()) - self.created_at)
 
 
 def _flatten_content(content: Any) -> str:
@@ -159,12 +164,19 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
     def _running_jobs(self) -> list[_Job]:
         return [job for job in self._jobs.values() if job.status == "running"]
 
-    def _start_job(self, description: str, call: Any) -> _Job:
+    def _start_job(self, description: str, call: Any, call_id: str = "") -> _Job:
         self._seq += 1
+        try:
+            writer = get_stream_writer()
+        except RuntimeError:
+            # Unit harnesses may execute middleware without a graph stream.
+            writer = None
         job = _Job(
             job_id=f"job_{self._seq}",
             description=description[:80] or "(无描述)",
             created_at=time.monotonic(),
+            call_id=call_id,
+            writer=writer,
         )
         task = asyncio.create_task(call)
         job.task = task
@@ -180,6 +192,9 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
         return job
 
     def _settle(self, job: _Job, task: asyncio.Task[Any]) -> None:
+        if job.status != "running":
+            return
+        job.ended_at = time.monotonic()
         if task.cancelled():
             job.status = "killed"
             job.result_text = "（后台任务已被终止）"
@@ -190,8 +205,24 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
                 job.error = f"{type(exc).__name__}: {exc}"
                 job.result_text = f"后台子代理执行失败：{job.error}"
             else:
-                job.status = "completed"
-                job.result_text = _result_text(task.result())
+                result = task.result()
+                messages = (result.update or {}).get("messages", []) if isinstance(result, Command) else [result]
+                failed = any(isinstance(message, ToolMessage) and message.status == "error" for message in messages)
+                job.status = "failed" if failed else "completed"
+                job.result_text = _result_text(result)
+                if failed:
+                    job.error = job.result_text
+        if job.writer is not None:
+            job.writer(
+                {
+                    "type": "background_subagent_end",
+                    "call_id": job.call_id,
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "output": job.result_text,
+                    "elapsed_seconds": job.age_seconds(),
+                }
+            )
         logger.info("[linsight-bg] {} settled: {}", job.job_id, job.status)
 
     def _ensure_watchdog(self) -> None:
@@ -293,9 +324,7 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
                 notices.append(f"[后台任务通知] {job.job_id} 已被终止（{job.description}）。")
         if not notices:
             return request
-        return request.override(
-            messages=[*request.messages, HumanMessage(content="\n".join(notices))]
-        )
+        return request.override(messages=[*request.messages, HumanMessage(content="\n".join(notices))])
 
     async def awrap_model_call(self, request: Any, handler: Any) -> Any:
         request = self._with_extended_task_tool(request)
@@ -331,7 +360,7 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
 
         description = str(args.get("description") or "")
         cleaned = request.override(tool_call={**tool_call, "args": args})
-        job = self._start_job(description, handler(cleaned))
+        job = self._start_job(description, handler(cleaned), tool_call_id)
         return ToolMessage(
             content=(
                 f"⏱ 已放入后台：{job.job_id}（{job.description}）。\n"
@@ -342,6 +371,7 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
             name=TASK_TOOL,
             tool_call_id=tool_call_id,
             status="success",
+            additional_kwargs={"background_job_id": job.job_id},
         )
 
     # ------------------------------------------------------------- job tools
@@ -363,13 +393,19 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
 
         @tool(
             "job_output",
-            description="取回一个后台子代理任务的结果：运行中返回状态；完成后返回该子代理的最终报告（含它的 `产物:` 清单）；失败/被终止时返回对应说明。",
+            description="取回后台子代理最终报告。默认异步等待最多 60 秒，不消耗模型轮询；wait_seconds 可设 0~120，0 为只查询。没有其他工作时直接等待，不要调用沙箱 sleep 或密集轮询。等待超时不会终止子任务。",
         )
-        async def job_output(job_id: str) -> str:
+        async def job_output(job_id: str, wait_seconds: int = 60) -> str:
             job = middleware._jobs.get(job_id)
             if job is None:
                 known = ", ".join(middleware._jobs) or "（无）"
                 return f"没有后台任务 {job_id}。当前后台任务：{known}"
+            if job.status == "running" and job.task is not None:
+                # asyncio.wait does not cancel the child on timeout or when the
+                # collector is cancelled; run ownership remains the cleanup net.
+                done, _ = await asyncio.wait({job.task}, timeout=max(0, min(wait_seconds, 120)))
+                if done:
+                    middleware._settle(job, job.task)
             if job.status == "running":
                 return f"{job.job_id} 仍在运行（已 {job.age_seconds()}s）：{job.description}"
             if job.status == "completed":

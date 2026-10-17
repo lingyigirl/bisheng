@@ -202,6 +202,8 @@ class StreamEventMapper:
 
         ns = self._namespace_str(namespace)
         if mode == "custom":
+            if isinstance(chunk, dict) and chunk.get("type") == "background_subagent_end":
+                return self._handle_background_end(chunk)
             if not isinstance(chunk, dict) or chunk.get("type") not in {"subagent_identity", "subagent_failure"}:
                 return []
             identity = {key: value for key, value in chunk.items() if key != "type"}
@@ -678,6 +680,9 @@ class StreamEventMapper:
         return events
 
     def _handle_tool_end(self, message: Any, call_id: str, ns: str | None) -> list[BaseEvent]:
+        if getattr(message, "additional_kwargs", {}).get("background_job_id"):
+            # This is a launch acknowledgement, not the child's completion.
+            return []
         output = self._message_text(message)
         payload = {"output": output, "outcome": getattr(message, "status", "success")}
 
@@ -693,6 +698,27 @@ class StreamEventMapper:
         self._enrich_delegation_from_buffer(open_call)
         self.ctx.tool_arg_buffers.pop(call_id, None)
         return [self._build_end_step(open_call, payload)]
+
+    def _handle_background_end(self, chunk: dict[str, Any]) -> list[BaseEvent]:
+        call_id = chunk["call_id"]
+        payload = {"output": chunk["output"], "outcome": "success" if chunk["status"] == "completed" else "error"}
+        open_call = self.ctx.open_calls.pop(call_id, None)
+        if open_call is None:
+            self.ctx.orphan_ends[call_id] = payload
+            return []
+        self._enrich_delegation_from_buffer(open_call)
+        event = self._build_end_step(open_call, payload)
+        identity = self._member_calls.get(call_id, {})
+        event.extra_info = {
+            **event.extra_info,
+            **identity,
+            "job_id": chunk["job_id"],
+            "job_status": chunk["status"],
+            "elapsed_seconds": chunk["elapsed_seconds"],
+        }
+        event.name = identity.get("agent_name", event.name)
+        self.ctx.tool_arg_buffers.pop(call_id, None)
+        return [event]
 
     def _build_end_step(self, open_call: _OpenCall, payload: dict[str, Any]) -> ExecStep:
         output, truncated = _truncate(payload.get("output"))

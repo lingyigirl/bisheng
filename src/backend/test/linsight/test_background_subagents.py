@@ -238,7 +238,7 @@ async def test_watchdog_waits_on_the_run_task_not_on_the_spawning_hook_task():
 
         await asyncio.create_task(hook())  # per-node task ends right here
         await asyncio.sleep(0.1)  # the run keeps going
-        observed["mid_run"] = await _call_tool(mw, "job_output", {"job_id": "job_1"})
+        observed["mid_run"] = await _call_tool(mw, "job_output", {"job_id": "job_1", "wait_seconds": 0})
 
     run_task = asyncio.create_task(run_owner())
     await run_task  # the run task ends now
@@ -249,3 +249,96 @@ async def test_watchdog_waits_on_the_run_task_not_on_the_spawning_hook_task():
     assert "仍在运行" in observed["mid_run"]
     # ...and was cancelled by the watchdog once the RUN task ended.
     assert "终止" in out
+
+
+async def test_output_waits_for_result_without_cancelling_child_on_timeout():
+    mw = BackgroundSubagentMiddleware()
+    gate = asyncio.Event()
+
+    async def handler(_request):
+        await gate.wait()
+        return ToolMessage(content="real report", tool_call_id="tc1")
+
+    await mw.awrap_tool_call(_bg_call(), handler)
+    status = await _call_tool(mw, "job_output", {"job_id": "job_1", "wait_seconds": 0})
+    assert "仍在运行" in status
+    assert not mw._jobs["job_1"].task.cancelled()
+    collector = asyncio.create_task(_call_tool(mw, "job_output", {"job_id": "job_1"}))
+    await asyncio.sleep(0)
+    assert not collector.done()
+    gate.set()
+    assert "real report" in await collector
+
+
+async def test_cancelling_collector_does_not_cancel_child():
+    mw = BackgroundSubagentMiddleware()
+    gate = asyncio.Event()
+
+    async def handler(_request):
+        await gate.wait()
+        return "real report"
+
+    await mw.awrap_tool_call(_bg_call(), handler)
+    collector = asyncio.create_task(_call_tool(mw, "job_output", {"job_id": "job_1"}))
+    await asyncio.sleep(0)
+    collector.cancel()
+    await asyncio.gather(collector, return_exceptions=True)
+    assert not mw._jobs["job_1"].task.cancelled()
+    gate.set()
+    assert "real report" in await _call_tool(mw, "job_output", {"job_id": "job_1"})
+
+
+async def test_graph_stream_settles_original_invocation_with_real_error():
+    from langgraph.graph import END, START, StateGraph
+
+    from bisheng.linsight.domain.services.stream_event_mapper import StreamEventMapper
+
+    mw = BackgroundSubagentMiddleware()
+    mapper = StreamEventMapper("test")
+    mapper._handle_tool_starts([{"id": "tc1", "name": "task", "args": {"subagent_type": "general-purpose"}}], None)
+
+    async def handler(_request):
+        await asyncio.sleep(0.01)
+        return ToolMessage(content="connector failed", tool_call_id="tc1", status="error")
+
+    async def node(state):
+        ack = await mw.awrap_tool_call(_bg_call(), handler)
+        assert ack.additional_kwargs["background_job_id"] == "job_1"
+        assert mapper._handle_tool_end(ack, "tc1", None) == []
+        assert "tc1" in mapper.ctx.open_calls
+        await _call_tool(mw, "job_output", {"job_id": "job_1"})
+        return {}
+
+    graph = StateGraph(dict)
+    graph.add_node("run", node)
+    graph.add_edge(START, "run")
+    graph.add_edge("run", END)
+    frames = [chunk async for chunk in graph.compile().astream({}, stream_mode="custom")]
+    ends = [frame for frame in frames if frame.get("type") == "background_subagent_end"]
+    assert len(ends) == 1
+    event = mapper.normalize("custom", ends[0])[0]
+    assert event.call_id == "tc1"
+    assert event.status == "end"
+    assert event.output == "connector failed"
+    assert event.extra_info["outcome"] == "error"
+    assert event.extra_info["job_status"] == "failed"
+    assert "tc1" not in mapper.ctx.open_calls
+
+
+async def test_kill_wakes_output_waiter_and_emits_terminal_event(monkeypatch):
+    import bisheng.linsight.domain.services.background_subagents as module
+
+    frames = []
+    monkeypatch.setattr(module, "get_stream_writer", lambda: frames.append)
+    mw = BackgroundSubagentMiddleware()
+
+    async def handler(_request):
+        await asyncio.Event().wait()
+
+    await mw.awrap_tool_call(_bg_call(), handler)
+    collector = asyncio.create_task(_call_tool(mw, "job_output", {"job_id": "job_1"}))
+    await asyncio.sleep(0)
+    await _call_tool(mw, "job_kill", {"job_id": "job_1"})
+    assert "终止" in await collector
+    assert len(frames) == 1
+    assert frames[0]["status"] == "killed"
