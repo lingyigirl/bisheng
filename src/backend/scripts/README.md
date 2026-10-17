@@ -2,6 +2,27 @@
 
 This directory contains manual maintenance and migration scripts for the backend.
 
+## Verification / Acceptance Scripts
+
+### `f076_acceptance_probe.py`
+
+F076 开放 API 鉴权**验收探针**：把《docs/开放API条款验收表.md》的 B-J 行逐条跑一遍并输出预填的
+markdown 表（通过 / 需现场人工 / 不通过）。自建一次性服务账号（前缀 `f076-probe-`，结束即删），
+只读探测为主；`--enable-tenant-switch` 允许在测试环境临时打开默认租户开关（跑完还原）。
+
+前置：部署总闸 `open_api.enforce_keys=true`；`E2E_ADMIN_PASSWORD` 经环境变量传入；
+H 行直查库时须 `export config=` 与服务一致。
+
+Usage:
+
+```bash
+cd src/backend
+E2E_ADMIN_PASSWORD='<管理员口令>' E2E_API_BASE='http://<目标>:7860/api/v1' \
+  PYTHONPATH=./ .venv/bin/python scripts/f076_acceptance_probe.py
+# 预发/测试环境需要连"不带密钥被拒"一起验：
+  ... --enable-tenant-switch
+```
+
 ## Export Scripts
 
 ### `export_daily_chat_messages.py`

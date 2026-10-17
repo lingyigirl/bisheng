@@ -52,12 +52,34 @@ export interface ApprovalInstanceItem {
   update_time?: string;
 }
 
+/** F066: evaluation report block attached to an agent-publish approval. */
+export interface EvaluationReportBlock {
+  /** false when the app/version has no successful evaluation (or the report could not be built) */
+  available: boolean;
+  evaluation_id?: number;
+  evaluated_at?: string | null;
+  data_set?: string | null;
+  question_count?: number | null;
+  /** percentage strings, e.g. "62.35%" — null when unavailable */
+  f1?: string | null;
+  recall?: string | null;
+  precision?: string | null;
+  success_rate?: string | null;
+  avg_duration_ms?: number | null;
+  /** tokens per second */
+  token_rate?: number | null;
+  download_url?: string;
+  download_file_name?: string;
+}
+
 export interface ApprovalTaskDetail extends ApprovalTaskItem {
   comment?: string | null;
   reason?: string | null;
   detail_snapshot?: Record<string, any>;
   payload_snapshot?: Record<string, any>;
   detail?: Record<string, any>;
+  /** F066: present only for the agent-publish scenario */
+  evaluation_report?: EvaluationReportBlock;
   flow_nodes?: ApprovalFlowNode[];
   tasks?: ApprovalTaskItem[];
   action_logs?: Array<{

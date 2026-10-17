@@ -256,11 +256,11 @@ async def start_execute(
 
     await MessageSessionDao.touch_session(session_version_model.session_id)
 
-    from bisheng.linsight.worker import LinsightQueue
+    from bisheng.linsight.worker import build_linsight_queue
 
     try:
         redis_client = await get_redis_client()
-        queue = LinsightQueue("queue", namespace="linsight", redis=redis_client)
+        queue = build_linsight_queue(redis_client)
 
         await queue.put(data=linsight_session_version_id)
 
@@ -334,10 +334,10 @@ async def continue_conversation(
         )
 
     try:
-        from bisheng.linsight.worker import LinsightQueue, encode_queue_item
+        from bisheng.linsight.worker import build_linsight_queue, encode_queue_item
 
         redis_client = await get_redis_client()
-        queue = LinsightQueue("queue", namespace="linsight", redis=redis_client)
+        queue = build_linsight_queue(redis_client)
         await queue.put(data=encode_queue_item(session_version_id, continue_question=question))
     except Exception as e:
         logger.error(f"Failed to continue the Ideas conversation: {e!s}")
@@ -419,10 +419,10 @@ async def user_input(
         # park-and-release (design §4.6): re-enqueue the parked task at the HEAD
         # of the queue so it resumes ahead of newly-queued tasks (PRD §4.4.4). A
         # parked task holds no worker slot; this lpush is what wakes it up.
-        from bisheng.linsight.worker import LinsightQueue, encode_queue_item
+        from bisheng.linsight.worker import build_linsight_queue, encode_queue_item
 
         redis_client = await get_redis_client()
-        queue = LinsightQueue("queue", namespace="linsight", redis=redis_client)
+        queue = build_linsight_queue(redis_client)
         await queue.put_head(encode_queue_item(session_version_id, resume=True, user_input=input_content))
 
     return resp_200(data=True, message="User input submitted")
@@ -462,10 +462,10 @@ async def terminate_execute(
 
     await MessageSessionDao.touch_session(session_version_model.session_id)
 
-    from bisheng.linsight.worker import LinsightQueue
+    from bisheng.linsight.worker import build_linsight_queue
 
     redis_client = await get_redis_client()
-    queue = LinsightQueue("queue", namespace="linsight", redis=redis_client)
+    queue = build_linsight_queue(redis_client)
 
     try:
         # Remove task from queue
@@ -759,10 +759,11 @@ async def get_queue_status(
     :param login_user:
     :return:
     """
-    from bisheng.linsight.worker import LinsightQueue
+
+    from bisheng.linsight.worker import build_linsight_queue
 
     redis_client = await get_redis_client()
-    queue = LinsightQueue("queue", namespace="linsight", redis=redis_client)
+    queue = build_linsight_queue(redis_client)
     try:
         index = await queue.index(session_version_id)
         return resp_200(data={"index": index}, message="Get Ideas queue queue status successfully")

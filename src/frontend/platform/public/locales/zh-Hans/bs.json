@@ -790,6 +790,7 @@
     "status": "状态",
     "score": "评测分数",
     "download": "下载",
+    "downloadReport": "下载评测报告",
     "confirmDeleteEvaluation": "确认删除该评测任务？",
     "createTitle": "新建任务",
     "selectLabel": "选择要评测的应用：",

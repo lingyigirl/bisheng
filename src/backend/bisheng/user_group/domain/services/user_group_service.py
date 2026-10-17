@@ -357,6 +357,10 @@ class UserGroupService:
         raw_existing = await UserGroupDao.acheck_members_exist(group_id, user_ids)
         existing = _normalize_id_rows(raw_existing)
         to_add = [uid for uid in user_ids if uid not in existing]
+        # F076 T-26:专用身份不得被拉进用户组(组会带来资源授权)。只拦"新增"。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+        await assert_not_service_identity_async(to_add)
         if not to_add:
             return
 
@@ -389,6 +393,11 @@ class UserGroupService:
             await GroupChangeHandler.execute_async(ops)
 
         if to_add:
+            # F076 T-26:与 aadd_members 同一道防线——"全量同步"同样能把专用身份加进组。
+            from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+            await assert_not_service_identity_async(to_add)
+
             await UserGroupDao.aadd_members_batch(group_id, to_add)
             ops = GroupChangeHandler.on_members_added(group_id, to_add)
             await GroupChangeHandler.execute_async(ops)
@@ -401,6 +410,11 @@ class UserGroupService:
 
         Memberships in groups outside the caller's mutation scope are preserved.
         """
+        # F076 T-26:专用身份不得被放进用户组(编辑人员表单里勾选组也走这里)。
+        from bisheng.open_api.domain.services.identity_service import assert_not_service_identity_async
+
+        await assert_not_service_identity_async([user_id])
+
         manageable_groups = await cls._list_manageable_groups(login_user)
         manageable_ids = {int(g.id) for g in manageable_groups}
         desired_ids = {int(gid) for gid in desired_group_ids if int(gid) > 0}

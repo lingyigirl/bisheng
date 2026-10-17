@@ -10,13 +10,15 @@ from bisheng.common.schemas.api import UnifiedResponseModel, resp_200
 from bisheng.database.models.role_access import AccessType
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao
 from bisheng.knowledge.domain.models.knowledge_file import KnowledgeFileDao
+from bisheng.open_api.domain.scopes import open_api_scope
 from bisheng.open_endpoints.domain.schemas.citation import OpenCitationResponse
 from bisheng.open_endpoints.domain.utils import get_default_operator_async
 
-router = APIRouter(prefix='/citation', tags=['OpenAPI', 'Citation'])
+router = APIRouter(prefix="/citation", tags=["OpenAPI", "Citation"])
 
 
-@router.get('/{citation_id}', response_model=UnifiedResponseModel[OpenCitationResponse])
+@open_api_scope("knowledge:read")
+@router.get("/{citation_id}", response_model=UnifiedResponseModel[OpenCitationResponse])
 async def get_open_citation_detail(
     citation_id: str,
     default_user: UserPayload = Depends(get_default_operator_async),
@@ -49,12 +51,14 @@ async def get_open_citation_detail(
         raise NotFoundError()
 
     first_item = payload.items[0] if payload.items else None
-    return resp_200(OpenCitationResponse(
-        file_id=payload.documentId,
-        file_name=payload.documentName,
-        file_type=payload.fileType,
-        knowledge_name=payload.knowledgeName,
-        download_url=payload.downloadUrl,
-        preview_url=payload.previewUrl,
-        bbox=first_item.bbox if first_item else None,
-    ))
+    return resp_200(
+        OpenCitationResponse(
+            file_id=payload.documentId,
+            file_name=payload.documentName,
+            file_type=payload.fileType,
+            knowledge_name=payload.knowledgeName,
+            download_url=payload.downloadUrl,
+            preview_url=payload.previewUrl,
+            bbox=first_item.bbox if first_item else None,
+        )
+    )

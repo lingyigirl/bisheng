@@ -943,6 +943,7 @@
     "status": "Status",
     "score": "Evaluation Score",
     "download": "Download",
+    "downloadReport": "Download Report",
     "confirmDeleteEvaluation": "Confirm deletion of this evaluation task?",
     "createTitle": "Create New Task",
     "selectLabel": "Select the skill or assistant to evaluate:",

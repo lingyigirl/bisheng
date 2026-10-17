@@ -21,6 +21,7 @@ import {
   Evaluation,
   deleteEvaluationApi,
   getEvaluationApi,
+  getEvaluationReportApi,
   getEvaluationUrlApi,
 } from "@/controllers/API/evaluate";
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
@@ -86,6 +87,16 @@ export default function EvaluationPage() {
   const handleDownload = async (el) => {
     const { url } = await getEvaluationUrlApi(el.result_file_path);
     await downloadFile(checkSassUrl(url), el.file_name);
+  };
+
+  // F066: the xlsx report is generated on demand by the backend, then downloaded
+  // through the same presigned-link path as the raw result file.
+  const handleDownloadReport = async (el) => {
+    captureAndAlertRequestErrorHoc(
+      getEvaluationReportApi(el.id).then(async ({ url, file_name }) => {
+        await downloadFile(checkSassUrl(url), file_name || `evaluation_report_${el.id}.xlsx`);
+      })
+    );
   };
 
   return (
@@ -243,6 +254,13 @@ export default function EvaluationPage() {
                           onClick={() => handleDownload(el)}
                         >
                           {t("evaluation.download")}
+                        </Button>}
+                        {el.status === EvaluationStatusEnum.success && <Button
+                          variant="link"
+                          className="no-underline hover:underline"
+                          onClick={() => handleDownloadReport(el)}
+                        >
+                          {t("evaluation.downloadReport")}
                         </Button>}
                         <Button
                           variant="link"

@@ -68,6 +68,23 @@ export const getEvaluationUrlApi = async (id): Promise<{ url: string }> => {
     return await axios.get(`/api/v1/evaluation/result/file/download?file_url=${id}`);
 };
 
+// ============ F066 评测报告 ============
+
+export type EvaluationReportResp = {
+    /** MinIO presigned download link for the generated xlsx report */
+    url: string;
+    /** suggested download file name */
+    file_name: string;
+};
+
+/**
+ * 下载评测报告（效果 + 性能，xlsx 双 sheet，后端按需生成）
+ * @param id 评测任务 id
+ */
+export const getEvaluationReportApi = async (id: number): Promise<EvaluationReportResp> => {
+    return await axios.get(`/api/v1/evaluation/${id}/report/download`);
+};
+
 // ============ F053 版本对比评测 ============
 
 export type EvaluationCompareResp = {

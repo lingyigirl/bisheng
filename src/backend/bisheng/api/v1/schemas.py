@@ -394,7 +394,11 @@ class OpenAIChatCompletionReq(BaseModel):
     )
     tools: list[dict] = Field(
         default_factory=list,
-        description="Tools List, The assistant is temporarily unsupported, use the configuration of the assistant",
+        description=(
+            "F076: this round's enabled tools (whitelist, limited to tools bound to the assistant). "
+            "Empty/absent = use the assistant configuration (pre-upgrade behaviour). "
+            "Item shape mirrors the daily-chat ToolPayload: {id, tool_key, type}."
+        ),
     )
 
 
