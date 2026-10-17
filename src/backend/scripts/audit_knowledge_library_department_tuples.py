@@ -60,6 +60,7 @@ How to run (from src/backend/)
 Requires the `config` env var to point at the same YAML the service uses when
 the default does not (see scripts/AGENTS.md §6.1).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -71,7 +72,7 @@ import os
 import sys
 from collections import Counter
 
-_BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _BACKEND_ROOT not in sys.path:
     sys.path.insert(0, _BACKEND_ROOT)
 
@@ -98,7 +99,7 @@ def _parse_department_id(tuple_user: str) -> int | None:
     """`department:42#member` -> 42; anything else -> None."""
     if not tuple_user.startswith(_DEPARTMENT_PREFIX):
         return None
-    raw = tuple_user[len(_DEPARTMENT_PREFIX):].split("#", 1)[0]
+    raw = tuple_user[len(_DEPARTMENT_PREFIX) :].split("#", 1)[0]
     return int(raw) if raw.isdigit() else None
 
 
@@ -140,9 +141,7 @@ async def _collect_department_tuples() -> list[dict]:
         rows = (
             await session.exec(
                 select(Knowledge.id).where(
-                    Knowledge.type.in_(
-                        [KnowledgeTypeEnum.NORMAL.value, KnowledgeTypeEnum.QA.value]
-                    )
+                    Knowledge.type.in_([KnowledgeTypeEnum.NORMAL.value, KnowledgeTypeEnum.QA.value])
                 )
             )
         ).all()
@@ -154,9 +153,7 @@ async def _collect_department_tuples() -> list[dict]:
             user = key.get("user", "")
             if _parse_department_id(user) is None:
                 continue
-            tuples.append(
-                {"user": user, "relation": key.get("relation", ""), "object": key.get("object", "")}
-            )
+            tuples.append({"user": user, "relation": key.get("relation", ""), "object": key.get("object", "")})
     return tuples
 
 
@@ -185,11 +182,7 @@ async def _count_users_in_subtree(department_id: int) -> int:
     user_ids: set[int] = set()
     async with get_async_db_session() as session:
         rows = (
-            await session.exec(
-                select(UserDepartment.user_id).where(
-                    UserDepartment.department_id.in_(subtree_ids)
-                )
-            )
+            await session.exec(select(UserDepartment.user_id).where(UserDepartment.department_id.in_(subtree_ids)))
         ).all()
     for row in rows:
         user_ids.add(int(row if isinstance(row, int) else row[0]))
@@ -212,7 +205,9 @@ async def _load_departments(ids: list[int]) -> dict[int, Department]:
     return {int(d.id): d for d in rows}
 
 
-def _classify(entry: dict, knowledge: Knowledge | None, owner_dept: Department | None, grant_dept: Department | None) -> str:
+def _classify(
+    entry: dict, knowledge: Knowledge | None, owner_dept: Department | None, grant_dept: Department | None
+) -> str:
     if grant_dept is None or not grant_dept.path:
         return ORPHAN
     if knowledge is None:
@@ -244,9 +239,7 @@ async def _report(apply_placeholder: bool = False, json_path: str | None = None)
     knowledge_by_id = await _load_knowledge(sorted(set(knowledge_ids)))
     dept_by_id = await _load_departments(sorted(set(grant_dept_ids)))
 
-    owner_dept_ids = [
-        int(k.department_id) for k in knowledge_by_id.values() if k.department_id is not None
-    ]
+    owner_dept_ids = [int(k.department_id) for k in knowledge_by_id.values() if k.department_id is not None]
     owner_depts = await _load_departments(sorted(set(owner_dept_ids)))
 
     report: list[dict] = []
