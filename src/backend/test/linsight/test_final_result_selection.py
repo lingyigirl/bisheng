@@ -201,3 +201,36 @@ async def test_read_file_directory_carries_zone_and_mtime(tmp_path):
     assert details[0]["file_mtime"] > 0
     # and that detail flows straight into selection as an output/ deliverable
     assert _names(select_deliverables(details)) == [os.path.join("output", "报告.md")]
+
+
+def test_snapshot_file_paths_skips_toolchain_trees(tmp_path):
+    """node_modules / cache trees are toolchain by-products, not task state.
+
+    2026-10-14 docx incident: a task that ran ``npm install`` spent ~14 min of
+    file-API calls crawling node_modules per run, and its completion harvest
+    uploaded 470+ junk files; the baselines must ignore those trees outright.
+    """
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "a.md").write_text("a")
+    nm = tmp_path / "node_modules" / "pkg"
+    nm.mkdir(parents=True)
+    (nm / "index.js").write_text("junk")
+    pycache = tmp_path / "__pycache__"
+    pycache.mkdir()
+    (pycache / "mod.pyc").write_bytes(b"0")
+
+    snap = snapshot_file_paths(str(tmp_path))
+
+    assert snap == {str(tmp_path / "output" / "a.md")}
+
+
+async def test_read_file_directory_skips_toolchain_trees(tmp_path):
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "a.md").write_text("a")
+    nm = tmp_path / "node_modules"
+    nm.mkdir()
+    (nm / "index.js").write_text("junk")
+
+    details = await read_file_directory(str(tmp_path))
+
+    assert [d["rel_path"] for d in details] == [os.path.join("output", "a.md")]

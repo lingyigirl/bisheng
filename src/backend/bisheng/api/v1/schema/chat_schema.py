@@ -87,6 +87,7 @@ class UseKnowledgeBaseParam(BaseModel):
 
 
 class APIChatCompletion(BaseModel):
+    agent_config: dict | None = None
     clientTimestamp: str
     conversationId: str | None = None
     error: bool | None = False

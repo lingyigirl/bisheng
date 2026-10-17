@@ -53,6 +53,7 @@ import asyncio
 import base64
 import hashlib
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -164,6 +165,20 @@ class FileEntry:
 # workspace zone. Used ONLY to word the error message — never to pick a file.
 _HOST_ROOT_HINTS = frozenset({"root", "home", "tmp", "var", "usr", "opt", "mnt", "media", "Users", "app"})
 
+# A Windows drive root ("C:\..." / "C:/...") — the dev-box dialect of an
+# interpreter host path. POSIX host paths start with "/" and never match this.
+_WIN_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:[/\\]")
+
+
+def _forward_slashes(value: str) -> str:
+    """Prefix-matching form of a possibly Windows-style path.
+
+    Used ONLY for comparing the file_dir prefix; the returned remainder keeps
+    forward slashes (the workspace key dialect). Never applied to a POSIX path,
+    where a backslash is a legitimate file-name character.
+    """
+    return value.replace("\\", "/")
+
 
 def strip_executor_host_prefix(path: str, file_dir: str | None) -> tuple[str, bool]:
     """Drop the code interpreter's host-directory prefix; return ``(path, stripped)``.
@@ -179,6 +194,13 @@ def strip_executor_host_prefix(path: str, file_dir: str | None) -> tuple[str, bo
     ``root/report.md`` keeps it, and a near-miss sibling like ``/tmp/ws/<svid8>x/...``
     is left alone.
 
+    Two host dialects, one rule: production/E2B hosts are POSIX (``/root/.cache/...``),
+    while a Windows dev box reports ``C:\\...\\<file_dir>\\output\\a.png``. The
+    comparison runs on a forward-slash form of both sides; ``os.path.normpath``
+    used to rewrite the POSIX prefix into ``\\root\\.cache\\...`` on Windows and
+    silently killed the fold there (the workspace_path_namespace tests were red
+    on the dev box for exactly that reason).
+
     A "strip any sibling task dir under the same parent" rule was considered — it
     would also catch the model quoting a path from an EARLIER turn's log — and
     rejected: it cannot distinguish a real sibling task dir from a directory that
@@ -187,13 +209,19 @@ def strip_executor_host_prefix(path: str, file_dir: str | None) -> tuple[str, bo
     wrong file is worse than an error message. Guessing belongs in the error text
     (``WorkspaceBackend._not_found_error``), never in file selection.
     """
-    if not file_dir or not path.startswith("/"):
+    if not file_dir:
         return path, False
-    root = os.path.normpath(file_dir)
-    if path == root:
+    is_win_abs = bool(_WIN_DRIVE_PREFIX.match(path))
+    if not (path.startswith("/") or is_win_abs):
+        return path, False
+    candidate = _forward_slashes(path) if is_win_abs else path
+    root = _forward_slashes(file_dir).rstrip("/")
+    if not root:
+        return path, False
+    if candidate == root:
         return "", True
-    if path.startswith(root + "/"):
-        return path[len(root) + 1 :], True
+    if candidate.startswith(root + "/"):
+        return candidate[len(root) + 1 :], True
     return path, False
 
 

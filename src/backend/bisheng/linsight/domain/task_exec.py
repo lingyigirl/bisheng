@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import shutil
 import traceback
@@ -42,7 +43,7 @@ from bisheng.linsight.domain.services.state_message_manager import (
 from bisheng.linsight.domain.services.stream_event_mapper import StreamEventMapper
 from bisheng.linsight.domain.services.tool_loop_middleware import LinsightToolLoopError
 from bisheng.linsight.domain.services.workbench_impl import LinsightWorkbenchImpl
-from bisheng.linsight.domain.services.workspace_backend import UPLOADS_DIR
+from bisheng.linsight.domain.services.workspace_backend import OUTPUT_DIR, UPLOADS_DIR
 from bisheng.tool.domain.services.tool import ToolServices
 from bisheng_langchain.linsight.const import TaskStatus
 from bisheng_langchain.linsight.event import BaseEvent, ExecStep, GenerateSubTask, NeedUserInput, TaskEnd, TaskStart
@@ -79,6 +80,9 @@ class TaskAlreadyInProgressError(Exception):
 _PARTIAL_RESULT_PREAMBLE_TOOL_LOOP = (
     "抱歉，在生成报告文件时遇到问题，模型未能正确调用写入工具。以下是已完成的分析内容："
 )
+_PARTIAL_RESULT_PREAMBLE_NO_PROGRESS = (
+    "抱歉，模型在执行过程中陷入了重复操作、没有取得新进展，未能完全收尾。以下是已完成的内容："
+)
 _PARTIAL_RESULT_PREAMBLE_STEP_LIMIT = "抱歉，任务执行步骤数已达上限，未能完全收尾。以下是已完成的内容："
 
 # Friendly failure copy when the abort left nothing salvageable (no analysis text
@@ -92,6 +96,10 @@ _PARTIAL_NO_SALVAGE_TOOL_LOOP = (
 # just deserves to know the content was closed out on the materials already
 # gathered rather than everything the task might have explored.
 _SOFT_LANDING_NOTE = "任务步骤已接近模型调用次数上限，内容基于现有材料收尾。"
+
+_PARTIAL_NO_SALVAGE_NO_PROGRESS = (
+    "任务未能完成：模型重复执行相同的操作且没有产出中间结果。建议简化任务范围，或更换能力更强的模型后重试。"
+)
 
 _PARTIAL_NO_SALVAGE_STEP_LIMIT = (
     "任务未能完成：任务执行步骤数已达上限，且没有可供返回的中间结果。建议简化任务范围，或拆成多轮执行。"
@@ -149,7 +157,8 @@ class LinsightWorkflowTask:
     # window escapes the cancel entirely (terminate-vs-complete race, 2026-06-18).
     USER_TERMINATION_CHECK_INTERVAL = 1
 
-    def __init__(self):
+    def __init__(self, *, memory_adapter=None):
+        self.memory_adapter = memory_adapter
         self._state_manager: LinsightStateMessageManager | None = None
         self._is_terminated = False
         self._termination_task: asyncio.Task | None = None
@@ -175,6 +184,12 @@ class LinsightWorkflowTask:
         # the very step that would have ended the graph) must NOT be rendered as
         # a failed/partial run. Defaults True (conservative: assume mid-loop).
         self._last_ai_has_pending_tool_calls: bool = True
+        # Whether that same last AIMessage carried ONLY unparseable tool calls
+        # (``invalid_tool_calls`` with no valid call — e.g. a malformed
+        # ``ask_user``). The direct-answer fallback must fail the round instead
+        # of completing with the model's one-line preamble (2026-10-14 clarify
+        # incident: ask_user(INVALID) ended "COMPLETED" with no clarify card).
+        self._last_ai_invalid_tool_calls: bool = False
         # Shared with the MAIN graph's resilience middleware, which sets
         # ``soft_landing`` when the turn budget forced the run to wrap up early.
         # The result then carries a one-line note so the user knows the content
@@ -184,6 +199,11 @@ class LinsightWorkflowTask:
         # Files present in ``file_dir`` before the agent ran (set by
         # _init_file_directory); the deliverable scan diffs against it.
         self._baseline_files: set[str] = set()
+        # Previous-turn ``output/`` files staged into ``file_dir`` this run, as
+        # ``{normpath(local_path): md5}``. The completion scan drops entries
+        # that are still byte-identical to what was staged — an inherited file
+        # the agent never rewrote is not THIS run's deliverable.
+        self._synced_output_md5: dict[str, str] = {}
         # Set per run in _create_agent; gates every prompt hint that names the
         # code interpreter (prompt ⟺ tool lockstep).
         self._has_code_interpreter: bool = False
@@ -226,6 +246,16 @@ class LinsightWorkflowTask:
             # Stop Terminating Monitoring
             await self._stop_termination_monitor()
 
+            for collaborator_tool in getattr(self, "_collaborator_tools", []):
+                if collaborator_tool.name == CODE_INTERPRETER_TOOL and callable(
+                    getattr(collaborator_tool, "close", None)
+                ):
+                    try:
+                        await asyncio.to_thread(collaborator_tool.close)
+                    except Exception:
+                        # Cleanup is best-effort; one failed close must not leak the other sandboxes.
+                        logger.exception("Could not close collaborator sandbox")
+            self._collaborator_tools = []
             # Clean File Directory
             if self.file_dir and os.path.exists(self.file_dir):
                 shutil.rmtree(self.file_dir, ignore_errors=True)
@@ -369,6 +399,14 @@ class LinsightWorkflowTask:
             # Rebuild on the SAME thread_id with a durable checkpointer so the
             # parked interrupt checkpoint is located (design §4.4).
             agent = await self._create_agent(session_model, tools, checkpointer=make_checkpointer())
+            if getattr(self, "_crash_recovery", False):
+                saved = await self._prepare_recovered_graph(agent, session_model)
+                if saved is None:
+                    return
+                if not saved.next:
+                    self._capture_values_snapshot(saved.values)
+                    await self._handle_task_completion(session_model)
+                    return
             self._check_termination()
             await self._drive_resume(agent, session_model, user_input)
             # F035 reload parity: the resume re-stream above may have rewritten the
@@ -401,6 +439,11 @@ class LinsightWorkflowTask:
         """
         from langgraph.types import Command
 
+        from bisheng.linsight.domain.services.background_subagents import bind_run_owner
+
+        # T2: this task awaits the graph for the whole resumed turn — it is the
+        # run owner background subagent jobs are cancelled against.
+        bind_run_owner()
         linsight_conf = settings.get_linsight_conf()
         mapper = StreamEventMapper(svid=session_model.id)
         config = {
@@ -409,9 +452,9 @@ class LinsightWorkflowTask:
         }
         try:
             async for chunk in agent.astream(
-                Command(resume=user_input),
+                None if getattr(self, "_crash_recovery", False) else Command(resume=user_input),
                 config=config,
-                stream_mode=["updates", "messages", "values"],
+                stream_mode=["updates", "messages", "values", "custom"],
                 subgraphs=True,
             ):
                 mode, raw, namespace = self._unpack_stream_chunk(chunk)
@@ -425,6 +468,52 @@ class LinsightWorkflowTask:
             self._stash_partial_abort(e)
 
     # ==================== Continue (multi-turn conversation) ====================
+
+    async def _prepare_recovered_graph(self, agent, session_model, *, allow_empty=False):
+        """Restore projection and parked interrupts for any crashed execution path."""
+        from bisheng.linsight.domain.services.event_replay import EventReplayService
+        from bisheng.linsight.domain.services.recovery_context import RecoveryBlocked, execution_fence
+
+        config = {"configurable": {"thread_id": session_model.id}}
+        saved = await agent.aget_state(config, subgraphs=True)
+        if not saved.values and not allow_empty:
+            raise RecoveryBlocked("No usable checkpoint remains")
+        if any(getattr(task, "interrupts", ()) for task in saved.tasks):
+            # A crash between interrupt persistence and WAITING status must park.
+            interrupt = next(item for task in saved.tasks for item in task.interrupts)
+            payload = interrupt.value if isinstance(interrupt.value, dict) else {"reason": str(interrupt.value)}
+            await self._handle_need_user_input(
+                agent,
+                NeedUserInput(
+                    task_id=session_model.id,
+                    call_reason=payload.get("reason") or payload.get("call_reason") or "",
+                    params=payload.get("params"),
+                    step_type="call_user_input",
+                ),
+                session_model,
+            )
+            return
+        fence = execution_fence.get()
+        from bisheng.linsight.domain.services.recovery_projection import reset_incomplete_projection
+
+        await reset_incomplete_projection(self._state_manager)
+        replay = EventReplayService(fence.redis, session_model.tenant_id, session_model.id)
+        await replay.append(
+            {
+                "event_type": "task_recovery",
+                "data": {
+                    "epoch": fence.epoch,
+                    "phase": "recovering",
+                    "attempt": session_model.recovery_state["attempts"],
+                },
+            }
+        )
+        return saved
+
+    async def async_recover(self, session_version_id: str) -> None:
+        """Continue persisted graph work without inventing user input."""
+        self._crash_recovery = True
+        await self.async_resume(session_version_id)
 
     async def async_continue(self, session_version_id: str, question: str) -> None:
         """Continue a finished conversation with a new user turn (F035 multi-turn).
@@ -475,6 +564,9 @@ class LinsightWorkflowTask:
             )
             tools.extend(linsight_tools)
             agent = await self._create_agent(session_model, tools, checkpointer=make_checkpointer())
+            if getattr(self, "_crash_recovery", False):
+                if await self._prepare_recovered_graph(agent, session_model, allow_empty=True) is None:
+                    return
             self._check_termination()
             await self._drive_continue(agent, session_model, question)
             await self._handle_task_completion(session_model)
@@ -492,6 +584,10 @@ class LinsightWorkflowTask:
         durable checkpointer mean the new turn appends to the persisted message
         history and the agent answers with full prior context.
         """
+        from bisheng.linsight.domain.services.background_subagents import bind_run_owner
+
+        # T2: bind this task as the run owner (see _drive_resume).
+        bind_run_owner()
         linsight_conf = settings.get_linsight_conf()
         mapper = StreamEventMapper(svid=session_model.id)
         config = {
@@ -503,11 +599,23 @@ class LinsightWorkflowTask:
         agent_input = {
             "messages": [{"role": "user", "content": f"{self._current_time_block()}\n# 用户问题\n{question}"}]
         }
+        continuation = (getattr(session_model, "recovery_state", None) or {}).get("continuation")
+        if continuation:
+            message_id = f"continue-{continuation['id']}"
+            agent_input["messages"][0]["id"] = message_id
+            saved = await agent.aget_state(config)
+            if any(getattr(message, "id", None) == message_id for message in (saved.values or {}).get("messages", [])):
+                # The initial input checkpoint is durable before graph work.
+                # A takeover must resume it, never append the same question again.
+                if not saved.next:
+                    self._capture_values_snapshot(saved.values)
+                    return
+                agent_input = None
         try:
             async for chunk in agent.astream(
                 agent_input,
                 config=config,
-                stream_mode=["updates", "messages", "values"],
+                stream_mode=["updates", "messages", "values", "custom"],
                 subgraphs=True,
             ):
                 mode, raw, namespace = self._unpack_stream_chunk(chunk)
@@ -541,6 +649,16 @@ class LinsightWorkflowTask:
         # Must run between the seed and tool construction: the code interpreter's
         # file list is snapshotted from file_dir when the tool is built.
         await self._sync_workspace_originals(session_model)
+        from bisheng.linsight.domain.services.recovery_context import execution_fence
+
+        if execution_fence.get():
+            from bisheng.linsight.domain.repositories.recovery_repository import RecoveryRepository
+
+            baseline = {
+                os.path.relpath(path, self.file_dir).replace("\\", "/"): digest
+                for path, digest in self._synced_output_md5.items()
+            }
+            session_model.recovery_state = await RecoveryRepository().save_output_baseline(session_model.id, baseline)
 
         # Initialization Execution Component
         self.llm = await self._get_llm(session_model)
@@ -595,6 +713,12 @@ class LinsightWorkflowTask:
 
     async def _is_session_in_progress(self, session_model: LinsightSessionVersion) -> bool:
         """Check if the session is already in progress"""
+        from bisheng.linsight.domain.services.recovery_context import execution_fence
+
+        fence = execution_fence.get()
+        if fence and fence.task_id == session_model.id and fence.epoch == session_model.recovery_epoch:
+            await fence.check()
+            return False
         if session_model.status == SessionVersionStatusEnum.IN_PROGRESS:
             logger.info(f"Sessions {session_model.id} Already in progress")
             return True
@@ -636,6 +760,11 @@ class LinsightWorkflowTask:
     async def _init_file_directory(self, session_model: LinsightSessionVersion) -> str:
         """Initialization file directory"""
         file_dir = os.path.join(CACHE_DIR, "linsight", session_model.id[:8])
+        from bisheng.linsight.domain.services.recovery_context import execution_fence
+
+        fence = execution_fence.get()
+        if fence:
+            file_dir = os.path.join(CACHE_DIR, "linsight", session_model.id, f"attempt-{fence.epoch}")
         file_dir = os.path.normpath(file_dir)
         os.makedirs(file_dir, exist_ok=True)
 
@@ -771,6 +900,23 @@ class LinsightWorkflowTask:
 
         minio = await get_minio_storage()
         backend = WorkspaceBackend(svid=session_model.id, minio=minio, file_dir=self.file_dir)
+        from bisheng.linsight.domain.services.recovery_context import execution_fence
+
+        fence = execution_fence.get()
+        if fence:
+            from bisheng.linsight.domain.services.recovery_workspace import restore_attempt_workspace
+
+            backend = await restore_attempt_workspace(session_model, minio, self.file_dir, fence)
+        # Baselines use relative paths because a takeover has a new local dir.
+        inherited = (getattr(session_model, "recovery_state", None) or {}).get("inherited_output_md5", {})
+        self._synced_output_md5 = (
+            {
+                os.path.normpath(os.path.join(self.file_dir, *path.split("/"))): digest
+                for path, digest in inherited.items()
+            }
+            if fence
+            else getattr(self, "_synced_output_md5", {})
+        )
         # F035 Fork X: copy this run's allowed skill bundles into the workspace
         # /skills/ subtree (governance-enabled ∩ user-selected — the copy IS the
         # whitelist gate). Re-runs harmlessly on resume/continue since this builds a
@@ -778,6 +924,7 @@ class LinsightWorkflowTask:
         copied_skills = await materialize_session_skills(
             backend, session_model.tenant_id, getattr(session_model, "skills", None)
         )
+        self._collaborator_tools = []
         return await create_linsight_agent(
             session_model=session_model,
             tools=tools,
@@ -788,6 +935,8 @@ class LinsightWorkflowTask:
             backend=backend,
             skills_present=bool(copied_skills),
             turn_budget_sink=self._turn_budget,
+            memory_adapter=getattr(self, "memory_adapter", None),
+            resource_sink=self._collaborator_tools,
         )
 
     async def _seed_workspace_from_previous(self, session_model: LinsightSessionVersion) -> None:
@@ -813,7 +962,9 @@ class LinsightWorkflowTask:
             if prev is None:
                 return
             minio = await get_minio_storage()
-            copied = await seed_workspace_from_previous(minio, src_svid=prev.id, dst_svid=session_model.id)
+            workspace_epoch = (prev.recovery_state or {}).get("workspace_epoch")
+            source_id = f"{prev.id}/attempt-{workspace_epoch}" if workspace_epoch else prev.id
+            copied = await seed_workspace_from_previous(minio, src_svid=source_id, dst_svid=session_model.id)
             if copied:
                 logger.info(
                     f"Seeded {copied} file(s) from previous turn {prev.id[:8]} into "
@@ -823,14 +974,18 @@ class LinsightWorkflowTask:
             logger.warning(f"workspace seed-from-previous skipped (non-fatal): {e}")
 
     async def _sync_workspace_originals(self, session_model: LinsightSessionVersion) -> None:
-        """Make workspace originals reachable by the code interpreter this turn.
+        """Make workspace files reachable by the code interpreter this turn.
 
-        ``_init_file_directory`` prefetches originals from THIS turn's ``files``,
-        which is empty on a follow-up ("总结一下刚才那个表") — the originals only
-        exist in the workspace, copied there by the seed. The code interpreter's
-        file list is built from the local ``file_dir``, so without this step the
-        model sees ``uploads/x.xlsx`` in ``ls``, is told by the pointer block that
-        it can compute on it, and then finds nothing in the sandbox.
+        ``_init_file_directory`` prefetches files from THIS turn's ``files``,
+        which is empty on a follow-up ("总结一下刚才那个表") — uploads exist only
+        in the workspace (copied there by the seed), and the previous turn's
+        ``output/`` deliverables live there too. The code interpreter's file list
+        is built from the local ``file_dir``, so without this step the model sees
+        ``uploads/x.xlsx`` (or ``output/report.xlsx``) in ``ls``, is told by the
+        pointer block / its own listing that it can compute on it, and then finds
+        nothing in the sandbox. 2026-10-15: a "转成ppt" follow-up could not open
+        the previous turn's ``output/全球二手车市场行情研究报告.xlsx`` and scanned
+        ``/root/.cache`` 15+ times printing ``0`` until the task was terminated.
 
         Runs after the seed and before tools are built. Idempotent: on a fresh turn
         the prefetch already wrote these files and ``_materialize`` serves them from
@@ -841,22 +996,43 @@ class LinsightWorkflowTask:
 
             minio = await get_minio_storage()
             backend = WorkspaceBackend(svid=session_model.id, minio=minio, file_dir=self.file_dir)
-            ls_res = await backend.als(UPLOADS_DIR)
-            if getattr(ls_res, "error", None):
-                return
+            synced_output_md5 = getattr(self, "_synced_output_md5", None)
+            if synced_output_md5 is None:
+                synced_output_md5 = self._synced_output_md5 = {}
 
             synced: list[str] = []
-            for entry in ls_res.entries or []:
-                rel = str(entry.get("path") or "").lstrip("/")
-                # Markdown views are already local (or are read through read_file,
-                # which goes to MinIO anyway); only the originals need a local copy.
-                if not rel.startswith(f"{UPLOADS_DIR}/") or rel.endswith(".md"):
+            for zone in (UPLOADS_DIR, OUTPUT_DIR):
+                ls_res = await backend.als(zone)
+                if getattr(ls_res, "error", None):
+                    # A missing/empty zone lists as empty, not as an error; a real
+                    # listing failure skips ONLY this zone so the other one still
+                    # reaches the sandbox.
                     continue
-                local_path = os.path.join(self.file_dir, rel)
-                if os.path.exists(local_path):
-                    continue
-                if await asyncio.to_thread(backend.ensure_local, rel):
-                    synced.append(local_path)
+                for entry in ls_res.entries or []:
+                    rel = str(entry.get("path") or "").lstrip("/")
+                    if not rel.startswith(f"{zone}/"):
+                        continue
+                    # uploads/: markdown views are already local (or are read
+                    # through read_file, which goes to MinIO anyway); only the
+                    # originals need a local copy. output/: deliverables the
+                    # follow-up runs on — every file needs a local copy.
+                    if zone == UPLOADS_DIR and rel.endswith(".md"):
+                        continue
+                    local_path = os.path.join(self.file_dir, rel)
+                    if os.path.exists(local_path):
+                        continue
+                    if await asyncio.to_thread(backend.ensure_local, rel):
+                        synced.append(local_path)
+                        if zone == OUTPUT_DIR:
+                            # Remember the staged content so the completion scan
+                            # does not present the previous turn's file as this
+                            # run's output; a rewrite changes the md5 and lifts
+                            # the exclusion (see _read_deliverable_file_details).
+                            try:
+                                with open(local_path, "rb") as fh:
+                                    synced_output_md5[os.path.normpath(local_path)] = hashlib.md5(fh.read()).hexdigest()
+                            except OSError:
+                                pass
 
             if synced:
                 # These arrived AFTER _init_file_directory took the baseline, so
@@ -864,11 +1040,35 @@ class LinsightWorkflowTask:
                 # delivered back to the user as this turn's output.
                 self._baseline_files.update(synced)
                 logger.info(
-                    "Synced {} workspace original(s) into the local task dir for the code interpreter",
+                    "Synced {} workspace file(s) into the local task dir for the code interpreter",
                     len(synced),
                 )
         except Exception as e:
             logger.warning(f"workspace original sync skipped (non-fatal): {e}")
+
+    async def _read_deliverable_file_details(self) -> list[dict]:
+        """``read_file_directory`` minus previous-turn files we only staged.
+
+        ``_sync_workspace_originals`` copies the previous turn's ``output/``
+        files into ``file_dir`` so the code interpreter can open them, but the
+        deliverable scan (``select_deliverables``) treats EVERY ``output/`` file
+        as this run's product — a read-only follow-up ("转成ppt" round before it
+        writes anything new) would otherwise headline the inherited workbook as
+        if it had just been produced. Drop only files still byte-identical to
+        the staged copy; anything the agent rewrote keeps its md5 change and
+        stays deliverable.
+        """
+        details = await linsight_execute_utils.read_file_directory(self.file_dir)
+        synced_md5 = getattr(self, "_synced_output_md5", None)
+        if not synced_md5:
+            return details
+        kept = []
+        for info in details:
+            recorded = synced_md5.get(os.path.normpath(str(info.get("file_path") or "")))
+            if recorded and info.get("file_md5") == recorded:
+                continue
+            kept.append(info)
+        return kept
 
     # ==================== Mission Execution ====================
 
@@ -1028,6 +1228,12 @@ class LinsightWorkflowTask:
 
         async def agent_execution():
             """Agent performs a task via astream + mapper."""
+            from bisheng.linsight.domain.services.background_subagents import bind_run_owner
+
+            # T2: this coroutine runs AS `agent_task` (created below) and awaits
+            # the whole graph run — bind it as the owner that background
+            # subagent jobs are cancelled against when the run ends/stops.
+            bind_run_owner()
             file_list = await LinsightWorkbenchImpl.prepare_file_list(
                 session_model, has_code_interpreter=self._has_code_interpreter
             )
@@ -1058,7 +1264,7 @@ class LinsightWorkflowTask:
             async for chunk in agent.astream(
                 task_input,
                 config=config,
-                stream_mode=["updates", "messages", "values"],
+                stream_mode=["updates", "messages", "values", "custom"],
                 subgraphs=True,
             ):
                 mode, raw, namespace = self._unpack_stream_chunk(chunk)
@@ -1341,18 +1547,41 @@ class LinsightWorkflowTask:
             return bool(tool_calls)
         return True
 
+    @staticmethod
+    def _last_ai_invalid_only_tool_calls(messages) -> bool:
+        """True when the LAST AIMessage carried ONLY unparseable tool calls.
+
+        Such a turn is a mid-intent abort: the model tried to call a tool, the
+        arguments never parsed (``invalid_tool_calls`` — the call never reached
+        the tool node), and LangGraph reads the empty ``tool_calls`` as a
+        text-only close-out. Completing it as a direct answer would present the
+        model's one-line preamble as the whole result.
+        """
+        for msg in reversed(messages or []):
+            if not LinsightWorkflowTask._is_assistant_message(msg):
+                continue
+            tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+            invalid_calls = (
+                msg.get("invalid_tool_calls") if isinstance(msg, dict) else getattr(msg, "invalid_tool_calls", None)
+            )
+            return bool(invalid_calls) and not bool(tool_calls)
+        return False
+
     def _capture_values_snapshot(self, raw: dict) -> None:
         """Record what the agent's latest top-level ``values`` snapshot tells us.
 
-        Two things, both consumed only on the completion paths: the last
-        assistant text (fallback answer when no TaskEnd is emitted) and whether
-        that turn left tool calls pending (see ``_last_ai_pending_tool_calls``).
+        Three things, all consumed only on the completion paths: the last
+        assistant text (fallback answer when no TaskEnd is emitted), whether
+        that turn left tool calls pending (see ``_last_ai_pending_tool_calls``)
+        and whether those tool calls were ALL unparseable (see
+        ``_last_ai_invalid_only_tool_calls``).
         """
         messages = raw.get("messages")
         text = self._extract_last_message_text(messages)
         if text:
             self._last_assistant_text = text
         self._last_ai_has_pending_tool_calls = self._last_ai_pending_tool_calls(messages)
+        self._last_ai_invalid_tool_calls = self._last_ai_invalid_only_tool_calls(messages)
 
     # ==================== Event processing ====================
 
@@ -1618,6 +1847,17 @@ class LinsightWorkflowTask:
         '规划中'. Fall back to a clean failure if no text was captured, so the
         frontend still unsticks.
         """
+        if self._last_ai_invalid_tool_calls:
+            # The last turn tried to call a tool whose arguments never parsed
+            # (e.g. ask_user(INVALID), 2026-10-14): nothing executed and the
+            # loop read the empty tool_calls as a close-out. Completing with the
+            # one-line preamble as a "direct answer" would fake success — fail
+            # with a precise message so the user retries instead.
+            await self._handle_task_failure(
+                session_model,
+                "模型生成的工具调用参数不合法（无法解析为 JSON），本轮未执行任何操作，请重试或更换模型。",
+            )
+            return
         answer = (self._last_assistant_text or "").strip()
         if not answer:
             await self._handle_task_failure(session_model, "Task produced no result")
@@ -1645,7 +1885,7 @@ class LinsightWorkflowTask:
         # planned_tasks dropped those files from the result panel ("暂无产物文件")
         # though they were written to the workspace. read_file_directory returns []
         # for an empty output/, so a greeting still yields nothing here.
-        file_details = await linsight_execute_utils.read_file_directory(self.file_dir)
+        file_details = await self._read_deliverable_file_details()
         final_files = await linsight_execute_utils.get_final_result_file(
             session_model=session_model, file_details=file_details, baseline_paths=self._baseline_files
         )
@@ -1729,19 +1969,30 @@ class LinsightWorkflowTask:
         # kept calling a tool wrong"; a recursion ceiling means the step budget ran
         # out, which has nothing to do with the write tools.
         is_tool_loop = isinstance(self._partial_error, LinsightToolLoopError)
+        is_no_progress = is_tool_loop and getattr(self._partial_error, "reason", "failure") == "no_progress"
         body = (self._partial_salvage or "").strip() or (self._last_assistant_text or "").strip()
         if not body:
-            no_salvage = _PARTIAL_NO_SALVAGE_TOOL_LOOP if is_tool_loop else _PARTIAL_NO_SALVAGE_STEP_LIMIT
+            if is_no_progress:
+                no_salvage = _PARTIAL_NO_SALVAGE_NO_PROGRESS
+            elif is_tool_loop:
+                no_salvage = _PARTIAL_NO_SALVAGE_TOOL_LOOP
+            else:
+                no_salvage = _PARTIAL_NO_SALVAGE_STEP_LIMIT
             await self._handle_task_failure(session_model, no_salvage, exc=self._partial_error)
             return
 
-        preamble = _PARTIAL_RESULT_PREAMBLE_TOOL_LOOP if is_tool_loop else _PARTIAL_RESULT_PREAMBLE_STEP_LIMIT
+        if is_no_progress:
+            preamble = _PARTIAL_RESULT_PREAMBLE_NO_PROGRESS
+        elif is_tool_loop:
+            preamble = _PARTIAL_RESULT_PREAMBLE_TOOL_LOOP
+        else:
+            preamble = _PARTIAL_RESULT_PREAMBLE_STEP_LIMIT
         answer = f"{preamble}\n\n{body}"
         session_model.status = SessionVersionStatusEnum.COMPLETED
         # Collect any output/ deliverable the model managed to write before looping;
         # otherwise synthesize a report from the salvaged answer (same backstop as
         # the success / direct-answer paths).
-        file_details = await linsight_execute_utils.read_file_directory(self.file_dir)
+        file_details = await self._read_deliverable_file_details()
         final_files = await linsight_execute_utils.get_final_result_file(
             session_model=session_model, file_details=file_details, baseline_paths=self._baseline_files
         )
@@ -1771,7 +2022,7 @@ class LinsightWorkflowTask:
         """Processing task successful"""
         try:
             # Read File Directory File Details
-            file_details = await linsight_execute_utils.read_file_directory(self.file_dir)
+            file_details = await self._read_deliverable_file_details()
             logger.debug(f"Read File Directory File Details: {file_details}")
 
             # The TaskEnd answer can be empty when the model delegates to `task`
@@ -1866,6 +2117,17 @@ class LinsightWorkflowTask:
         "view details" disclosure. Vendor-agnostic — see ``llm_error_classifier``.
         """
         classified = classify_for_event(exc if exc is not None else error_msg)
+        from bisheng.linsight.domain.services.recovery_context import RecoveryBlocked
+
+        if isinstance(exc, RecoveryBlocked):
+            from dataclasses import replace
+
+            classified = replace(classified, error_type="recovery_blocked")
+            session_model.recovery_state = {
+                **(session_model.recovery_state or {}),
+                "phase": "blocked",
+                "reason": error_msg,
+            }
         session_model.status = SessionVersionStatusEnum.FAILED
         session_model.output_result = {
             "error_message": error_msg,

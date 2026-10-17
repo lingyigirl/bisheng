@@ -218,6 +218,51 @@ def _with_truncation_nudge(request: ModelRequest) -> ModelRequest:
     return request.override(messages=[*request.messages, HumanMessage(content=_TRUNCATION_NUDGE)])
 
 
+# Layer 2b: malformed tool-call guard. A weak model can emit a tool call whose
+# arguments are not valid JSON at all — LangChain surfaces it ONLY as
+# ``invalid_tool_calls`` (the call never reaches the tool node, no ToolMessage
+# is produced). The 2026-10-14 incident: ``ask_user(INVALID)`` — the clarify
+# turn never parked, the agent loop read the empty ``tool_calls`` as a
+# text-only close-out, and the task ended COMPLETED with just the preamble
+# ("我先确认几个关键点…") plus the previous turn's files. One bounded nudge lets
+# a recoverable model re-emit legal JSON; if it still fails, ``task_exec``'s
+# completion guard fails the round instead of faking a direct answer.
+_INVALID_CALL_NUDGE = (
+    "你刚才对 {tools} 的工具调用没有生成合法参数（无法解析，未执行）。"
+    "请立刻重新输出该怎么调用：arguments 必须是严格合法的 JSON（双引号、无尾逗号、"
+    "不要包在 markdown 代码块里），一次只输出一个工具调用；如果无需调用工具，就直接给出最终回答。"
+)
+
+
+def _is_invalid_only_tool_call(response: object) -> bool:
+    """True when the turn's ONLY attempted tool calls were unparseable.
+
+    Mixed turns (valid + invalid calls) keep running — the valid call's tool
+    result gives the model a chance to self-correct. The invalid-ONLY turn is
+    the fatal one: LangGraph sees no ``tool_calls`` and ends the loop.
+    """
+    ai = _response_ai_message(response)
+    if ai is None:
+        return False
+    return bool(getattr(ai, "invalid_tool_calls", None)) and not bool(getattr(ai, "tool_calls", None))
+
+
+def _with_invalid_call_nudge(request: ModelRequest, response: object) -> ModelRequest:
+    """A new request with the malformed-call corrective nudge appended (ephemeral)."""
+    ai = _response_ai_message(response)
+    names: list[str] = []
+    for tc in getattr(ai, "invalid_tool_calls", None) or []:
+        name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+        if name and str(name) not in names:
+            names.append(str(name))
+    return request.override(
+        messages=[
+            *request.messages,
+            HumanMessage(content=_INVALID_CALL_NUDGE.format(tools="、".join(names) or "工具")),
+        ]
+    )
+
+
 def _is_state_only_turn(response: object) -> bool:
     """True iff this model call produced ONLY pure state-maintenance tool calls.
 
@@ -304,12 +349,18 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
         jitter: bool = True,
         max_degrade: int = 3,
         truncation_retry_limit: int = 2,
+        invalid_call_retry_limit: int = 2,
         is_subagent: bool = False,
         turn_limit: int = 115,
         soft_landing_turns: int = 8,
         budget_sink: dict | None = None,
+        usage_recorder: object | None = None,
     ) -> None:
         super().__init__()
+        # F086 context display: when set, every successful model call folds its
+        # real usage_metadata into the run's token snapshot (context_usage.py).
+        # None (the default) keeps every existing caller byte-identical.
+        self._usage_recorder = usage_recorder
         self.tools = []  # registers no extra tools
         self.max_retries = max(0, max_retries)
         self.initial_delay = max(0.0, initial_delay)
@@ -318,6 +369,7 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
         self.jitter = jitter
         self.max_degrade = max(0, max_degrade)
         self.truncation_retry_limit = max(0, truncation_retry_limit)
+        self.invalid_call_retry_limit = max(0, invalid_call_retry_limit)
         self.is_subagent = is_subagent
         # KNOWN GAP (not fixed here to keep the backport surface small): this counter
         # has the same cross-``task``-call sharing problem the turn budget had — every
@@ -562,6 +614,7 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
         current, budget_key = self._apply_turn_budget(request)
         exc_attempts = 0
         trunc_attempts = 0
+        invalid_attempts = 0
         while True:
             try:
                 response = await handler(current)
@@ -585,6 +638,15 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
             # One greppable diagnostic line per model call (finish_reason / tokens /
             # tool-call arg keys) — the only observability for task-mode calls.
             _log_call_diagnostics(response, is_subagent=self.is_subagent)
+            if self._usage_recorder is not None:
+                # F086: same response, same usage_metadata — fold the REAL token
+                # numbers into the run snapshot (best-effort, never raises).
+                recorder_ai = _response_ai_message(response)
+                await self._usage_recorder.record(
+                    is_subagent=self.is_subagent,
+                    usage=(getattr(recorder_ai, "usage_metadata", None) or {}) if recorder_ai else {},
+                    request=current,
+                )
             # L2 truncation guard: a length-truncated tool call → nudge + retry.
             if trunc_attempts < self.truncation_retry_limit and _is_truncated_tool_call(response):
                 trunc_attempts += 1
@@ -593,6 +655,14 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
                     f"nudging to write in smaller parts (retry {trunc_attempts}/{self.truncation_retry_limit})"
                 )
                 current = _with_truncation_nudge(current)
+                continue
+            if invalid_attempts < self.invalid_call_retry_limit and _is_invalid_only_tool_call(response):
+                invalid_attempts += 1
+                logger.warning(
+                    "[linsight-resilience] malformed tool call (invalid_tool_calls, none valid); "
+                    f"nudging to re-emit legal arguments (retry {invalid_attempts}/{self.invalid_call_retry_limit})"
+                )
+                current = _with_invalid_call_nudge(current, response)
                 continue
             # Two-phase turn accounting: the soft-landing STAGE had to be picked before
             # the call (it shapes the request), but whether this turn did any real work
@@ -613,6 +683,7 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
         current, budget_key = self._apply_turn_budget(request)
         exc_attempts = 0
         trunc_attempts = 0
+        invalid_attempts = 0
         while True:
             try:
                 response = handler(current)
@@ -632,6 +703,14 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
                 trunc_attempts += 1
                 current = _with_truncation_nudge(current)
                 continue
+            if invalid_attempts < self.invalid_call_retry_limit and _is_invalid_only_tool_call(response):
+                invalid_attempts += 1
+                logger.warning(
+                    "[linsight-resilience] malformed tool call (invalid_tool_calls, none valid); "
+                    f"nudging to re-emit legal arguments (retry {invalid_attempts}/{self.invalid_call_retry_limit})"
+                )
+                current = _with_invalid_call_nudge(current, response)
+                continue
             # Refund a pure state-maintenance turn — see the async twin above for why
             # this sits at the loop's single success exit.
             if _is_state_only_turn(response):
@@ -640,12 +719,19 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
 
 
 def build_resilience_middleware(
-    linsight_conf, *, is_subagent: bool, budget_sink: dict | None = None
+    linsight_conf,
+    *,
+    is_subagent: bool,
+    budget_sink: dict | None = None,
+    usage_recorder: object | None = None,
 ) -> LinsightModelResilienceMiddleware:
     """Construct a middleware instance from ``LinsightConf`` (one per graph).
 
     ``budget_sink`` is the task executor's shared dict; only the main graph passes
     one, so a subagent wrapping up early never adds a note to the user's result.
+    ``usage_recorder`` (F086) is the run's :class:`ContextUsageRecorder`; every
+    graph of the run (main + subagents) shares ONE instance so the snapshot
+    covers the whole run. Omitted -> no usage accounting, behavior unchanged.
     """
     turn_limit = (
         getattr(linsight_conf, "max_model_turns_subagent", 30)
@@ -657,8 +743,10 @@ def build_resilience_middleware(
         initial_delay=float(getattr(linsight_conf, "retry_sleep", 5)),
         max_degrade=getattr(linsight_conf, "max_degrade", 3),
         truncation_retry_limit=getattr(linsight_conf, "truncation_retry_limit", 2),
+        invalid_call_retry_limit=getattr(linsight_conf, "invalid_call_retry_limit", 2),
         is_subagent=is_subagent,
         turn_limit=turn_limit,
         soft_landing_turns=getattr(linsight_conf, "soft_landing_turns", 8),
         budget_sink=budget_sink,
+        usage_recorder=usage_recorder,
     )

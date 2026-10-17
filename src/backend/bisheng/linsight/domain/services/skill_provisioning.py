@@ -36,10 +36,12 @@ WORKSPACE_SKILLS_DIR = "skills"
 """Workspace subtree the copied bundles live under (``/skills/<name>/...``)."""
 
 
-def _collect_bundle_pairs(store: SkillStore, tenant_id: int, name: str) -> list[tuple[str, bytes]]:
+def _collect_bundle_pairs(
+    store: SkillStore, tenant_id: int, name: str, workspace_dir: str = WORKSPACE_SKILLS_DIR
+) -> list[tuple[str, bytes]]:
     """Read a bundle's files as ``(workspace_path, bytes)`` upload pairs (sync disk I/O)."""
     return [
-        (f"/{WORKSPACE_SKILLS_DIR}/{name}/{entry['path']}", store.read_bytes(tenant_id, name, entry["path"]))
+        (f"/{workspace_dir}/{name}/{entry['path']}", store.read_bytes(tenant_id, name, entry["path"]))
         for entry in store.list_files(tenant_id, name)
     ]
 
@@ -49,6 +51,7 @@ async def materialize_session_skills(
     tenant_id: int,
     selected: list[str] | None,
     store: SkillStore | None = None,
+    workspace_dir: str = WORKSPACE_SKILLS_DIR,
 ) -> list[str]:
     """Copy allowed skill bundles into the workspace ``/skills/`` subtree.
 
@@ -87,7 +90,7 @@ async def materialize_session_skills(
         try:
             # Bundle reads (rglob + per-file read_bytes) are sync disk I/O — run them
             # off the worker's event loop so concurrent tasks aren't stalled.
-            pairs = await asyncio.to_thread(_collect_bundle_pairs, store, tenant_id, name)
+            pairs = await asyncio.to_thread(_collect_bundle_pairs, store, tenant_id, name, workspace_dir)
             if not pairs:
                 logger.warning("linsight skill {!r} (tenant {}) has no files on disk; skipping", name, tenant_id)
                 continue

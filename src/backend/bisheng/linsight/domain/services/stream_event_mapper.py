@@ -178,6 +178,8 @@ class StreamEventMapper:
 
     def __init__(self, svid: str):
         self.ctx = StreamContext(svid=svid)
+        self._member_namespaces: dict[str, dict] = {}
+        self._member_calls: dict[str, dict] = {}
 
     # -- public entry ------------------------------------------------------
 
@@ -199,6 +201,42 @@ class StreamEventMapper:
             return []
 
         ns = self._namespace_str(namespace)
+        if mode == "custom":
+            if not isinstance(chunk, dict) or chunk.get("type") not in {"subagent_identity", "subagent_failure"}:
+                return []
+            identity = {key: value for key, value in chunk.items() if key != "type"}
+            self._member_calls[identity["invocation_id"]] = identity
+            if ns:
+                self._member_namespaces[ns] = identity
+                return []
+            if chunk["type"] == "subagent_identity":
+                # A resumed tool node has no fresh AI tool-call start message.
+                # Its trusted delegation identity reconstructs the open call so
+                # the eventual ToolMessage can close the same invocation.
+                self.ctx.open_calls.setdefault(
+                    identity["invocation_id"],
+                    _OpenCall(
+                        call_id=identity["invocation_id"],
+                        task_id=self.ctx.svid,
+                        name=identity["agent_name"],
+                        params={},
+                        step_type="subagent",
+                        call_reason=identity.get("delegate_goal", ""),
+                        namespace=None,
+                        delegate_goal=identity.get("delegate_goal", ""),
+                    ),
+                )
+            return [
+                ExecStep(
+                    task_id=self.ctx.svid,
+                    call_id=identity["invocation_id"],
+                    step_type="subagent",
+                    name=identity["agent_name"],
+                    status="end" if chunk["type"] == "subagent_failure" else "start",
+                    call_reason=identity.get("delegate_goal", ""),
+                    extra_info=identity,
+                )
+            ]
         try:
             if mode == "updates":
                 result = self._handle_updates(chunk, ns)
@@ -223,6 +261,13 @@ class StreamEventMapper:
         # a thinking ExecStep and must not reset their own segment.
         if not self._is_thinking_continuation(result):
             self.ctx.thinking_call_ids.pop(ns or "", None)
+        for event in result:
+            if isinstance(event, ExecStep):
+                identity = self._member_namespaces.get(ns or "") or self._member_calls.get(event.call_id)
+                if identity:
+                    event.extra_info = {**(event.extra_info or {}), **identity}
+                    if not ns and event.step_type == "subagent":
+                        event.name = identity["agent_name"]
         return result
 
     @staticmethod
@@ -634,7 +679,7 @@ class StreamEventMapper:
 
     def _handle_tool_end(self, message: Any, call_id: str, ns: str | None) -> list[BaseEvent]:
         output = self._message_text(message)
-        payload = {"output": output}
+        payload = {"output": output, "outcome": getattr(message, "status", "success")}
 
         open_call = self.ctx.open_calls.pop(call_id, None)
         if open_call is None:
@@ -651,7 +696,7 @@ class StreamEventMapper:
 
     def _build_end_step(self, open_call: _OpenCall, payload: dict[str, Any]) -> ExecStep:
         output, truncated = _truncate(payload.get("output"))
-        extra_info: dict[str, Any] = {"truncated": truncated}
+        extra_info: dict[str, Any] = {"truncated": truncated, "outcome": payload.get("outcome", "success")}
         if open_call.delegate_goal is not None:
             extra_info["delegate_goal"] = open_call.delegate_goal
         if open_call.namespace:

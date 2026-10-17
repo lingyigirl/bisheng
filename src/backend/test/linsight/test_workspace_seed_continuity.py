@@ -35,7 +35,10 @@ def _minio(listing: dict[str, list[str]]) -> MagicMock:
     def _list(bucket, prefix="", recursive=True):
         return iter([_Obj(k) for k in listing.get(prefix, [])])
 
-    minio.minio_client_sync.list_objects.side_effect = _list
+    # ``seed_workspace_from_previous`` lists through ``minio.list_objects_sync``;
+    # stubbing the raw client left every listing empty (n always 0) and made the
+    # suite fail regardless of the implementation.
+    minio.list_objects_sync.side_effect = _list
     return minio
 
 
@@ -63,7 +66,7 @@ async def test_seed_copies_output_and_uploads_skips_scratch():
     assert (f"workspace/{SRC}/output/report.md", f"workspace/{DST}/output/report.md") in copied
     assert (f"workspace/{SRC}/uploads/doc/index.md", f"workspace/{DST}/uploads/doc/index.md") in copied
     # scratch/ was never even listed (continuity carries deliverables + sources only)
-    queried_prefixes = [c.kwargs.get("prefix") for c in minio.minio_client_sync.list_objects.call_args_list]
+    queried_prefixes = [c.args[1] if len(c.args) > 1 else c.kwargs.get("prefix") for c in minio.list_objects_sync.call_args_list]
     assert all("scratch" not in (p or "") for p in queried_prefixes)
 
 

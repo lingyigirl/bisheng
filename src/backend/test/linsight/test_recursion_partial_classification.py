@@ -31,8 +31,10 @@ from langgraph.errors import GraphRecursionError
 from bisheng.linsight.domain.services.resilience_middleware import _MAX_STATE_ONLY_REFUNDS
 from bisheng.linsight.domain.services.tool_loop_middleware import LinsightToolLoopError
 from bisheng.linsight.domain.task_exec import (
+    _PARTIAL_NO_SALVAGE_NO_PROGRESS,
     _PARTIAL_NO_SALVAGE_STEP_LIMIT,
     _PARTIAL_NO_SALVAGE_TOOL_LOOP,
+    _PARTIAL_RESULT_PREAMBLE_NO_PROGRESS,
     _PARTIAL_RESULT_PREAMBLE_STEP_LIMIT,
     _PARTIAL_RESULT_PREAMBLE_TOOL_LOOP,
     _RECURSION_LIMIT_MARGIN,
@@ -177,6 +179,25 @@ async def test_tool_loop_no_salvage_copy_keeps_the_tool_wording():
     task = _salvage_task(LinsightToolLoopError(tool_name="write_file", count=8))
     await task._handle_task_partial(object())
     assert task._handle_task_failure.await_args.args[1] == _PARTIAL_NO_SALVAGE_TOOL_LOOP
+
+
+async def test_no_progress_no_salvage_copy_does_not_blame_the_write_tool():
+    """A no-progress abort (identical successful output on repeat) is not a tool
+    failure — its copy must say repetition, not 'write tool misuse'."""
+    task = _salvage_task(
+        LinsightToolLoopError(
+            tool_name="bisheng_code_interpreter", count=8, reason="no_progress"
+        )
+    )
+    await task._handle_task_partial(object())
+    message = task._handle_task_failure.await_args.args[1]
+    assert message == _PARTIAL_NO_SALVAGE_NO_PROGRESS
+    assert "写入工具" not in message
+
+
+def test_no_progress_preamble_describes_repetition():
+    assert "重复" in _PARTIAL_RESULT_PREAMBLE_NO_PROGRESS
+    assert "写入工具" not in _PARTIAL_RESULT_PREAMBLE_NO_PROGRESS
 
 
 def test_the_two_preambles_describe_different_causes():

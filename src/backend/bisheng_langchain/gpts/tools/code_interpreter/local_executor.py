@@ -19,6 +19,7 @@ from matplotlib import font_manager
 from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
     OUTPUT_DIR_NAME,
     BaseExecutor,
+    is_skipped_workspace_name,
     path_namespace_rules,
 )
 
@@ -114,7 +115,7 @@ class LocalExecutor(BaseExecutor):
             installed_fonts = {font.name for font in font_manager.fontManager.ttflist}
             cjk_font = next((name for name in candidates if name in installed_fonts), "WenQuanYi Zen Hei")
             font_setup = (
-                'import matplotlib\n'
+                "import matplotlib\n"
                 f'matplotlib.rc("font", family="{cjk_font}")\n'
                 'matplotlib.rcParams["axes.unicode_minus"] = False'
             )
@@ -239,7 +240,16 @@ class LocalExecutor(BaseExecutor):
         runaway one keeps a CPU core and a worker slot pinned for good.
         """
         if WIN32:
-            proc.kill()
+            # taskkill /T takes the whole tree: proc.kill() reaps only the direct
+            # child, and a surviving grandchild (LibreOffice, pandoc, sleep) keeps
+            # the stdout/stderr pipes open — the follow-up communicate() then
+            # blocks until that grandchild exits on its own, so the "timeout"
+            # never actually aborts the call on Windows.
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                check=False,
+            )
             return
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -296,8 +306,9 @@ class LocalExecutor(BaseExecutor):
         """
         snapshot: dict[str, tuple[float, int]] = {}
         for root, dirs, files in os.walk(dir_path):
-            # hidden dirs and __pycache__ are never deliverables or inputs
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+            # hidden dirs, caches and toolchain trees (node_modules / venvs) are
+            # never deliverables or inputs; walking them per run is pure cost
+            dirs[:] = [d for d in dirs if not d.startswith(".") and not is_skipped_workspace_name(d)]
             for name in files:
                 if name.startswith("."):
                     continue
@@ -341,7 +352,12 @@ class LocalExecutor(BaseExecutor):
                 # will not be delivered) — never fail the user's code run over this
                 logger.exception("relocate root deliverable failed: {}", src)
                 continue
-            moved.append((rel, os.path.relpath(dst, dir_path)))
+            # Forward slashes on purpose: this pair goes straight into the
+            # relocation notice the MODEL reads, and the workspace dialect is
+            # POSIX. os.path.relpath returned "output\\report.xlsx" on a Windows
+            # dev box, so the model was told a path that does not resolve in the
+            # sandbox / on the file-tool side.
+            moved.append((rel, f"{OUTPUT_DIR_NAME}/{rel}"))
         return moved
 
     def run_with_dir(self, code: str, dir_path: str, lang: str) -> (int, str, list):
@@ -435,8 +451,9 @@ class LocalExecutor(BaseExecutor):
         if not files_info:
             return
         for file in files_info:
-            # ignore hidden files
-            if file.name.startswith("."):
+            # hidden files and toolchain trees (node_modules / caches) are never
+            # task state
+            if file.name.startswith(".") or is_skipped_workspace_name(file.name):
                 continue
             if file.is_file():
                 self.download_file(file, root_path)

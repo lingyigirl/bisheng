@@ -1218,7 +1218,12 @@ async def log_telemetry_events(user_id: str, conversation_id: str, start_time: f
         trace_id=trace_id_var.get(),
         # F046: reaching here means the chat completed; failure paths raise
         # before this helper runs and produce no event (same as before)
-        event_data=ApplicationProcessEventData(**common_data, process_time=duration_ms, status=StatusEnum.SUCCESS, input_snapshot=get_input_snapshot(conversation_id)),
+        event_data=ApplicationProcessEventData(
+            **common_data,
+            process_time=duration_ms,
+            status=StatusEnum.SUCCESS,
+            input_snapshot=get_input_snapshot(conversation_id),
+        ),
     )
 
 
@@ -1442,7 +1447,7 @@ async def _agent_stream_chat_completion(
         """
         nonlocal output_blocked
         if output_blocked or not text:
-            return '' if output_blocked else text
+            return "" if output_blocked else text
         result = await output_guard(conversation_id, text)
         if result.blocked:
             output_blocked = True
@@ -1684,9 +1689,7 @@ async def _agent_stream_chat_completion(
             # empty block leaves `sys_prompt` exactly as it was, including `None`
             # (spec AC-22 / AC-32).
             if sys_prompt:
-                sys_prompt = append_block(
-                    sys_prompt, await resolve_term_block(login_user.tenant_id, llm_messages)
-                )
+                sys_prompt = append_block(sys_prompt, await resolve_term_block(login_user.tenant_id, llm_messages))
 
             logger.info(
                 f"[agent_chat] prepared messages user={login_user.user_id}"
@@ -2060,7 +2063,7 @@ async def _agent_stream_chat_completion(
         filtered_msg = filter_answer_text(final_msg, _tenant_id_for(login_user))
         if filtered_msg != final_msg:
             logger.info(
-                'workstation answer filtered before persistence (len {} -> {})',
+                "workstation answer filtered before persistence (len {} -> {})",
                 len(final_msg),
                 len(filtered_msg),
             )
@@ -2197,7 +2200,7 @@ def _tenant_id_for(login_user: UserPayload) -> int | None:
     """
     from bisheng.core.context.tenant import get_current_tenant_id
 
-    return get_current_tenant_id() or getattr(login_user, 'tenant_id', None)
+    return get_current_tenant_id() or getattr(login_user, "tenant_id", None)
 
 
 async def _check_input_policy(data: APIChatCompletion, login_user: UserPayload) -> str | None:
@@ -2218,7 +2221,7 @@ async def _check_input_policy(data: APIChatCompletion, login_user: UserPayload) 
     conversation: the output side used to pass a conversation id into that slot,
     which put two different meanings in one column depending on direction.
     """
-    text = (data.text or '').strip()
+    text = (data.text or "").strip()
     if not text:
         return None
 
@@ -2229,8 +2232,8 @@ async def _check_input_policy(data: APIChatCompletion, login_user: UserPayload) 
         return await guard(data.conversationId, text)
     except Exception:
         logger.opt(exception=True).warning(
-            'workstation input guard failed for user={}; allowing the turn',
-            getattr(login_user, 'user_id', None),
+            "workstation input guard failed for user={}; allowing the turn",
+            getattr(login_user, "user_id", None),
         )
         return None
 
@@ -2249,8 +2252,8 @@ def _blocked_input_stream(reply: str, conversation_id: str | None) -> StreamingR
     replaces with the real id on its next turn.
     """
     return StreamingResponse(
-        iter([_sse_resp('agent_answer', 'over', {'msg': reply}, conversation_id or '')]),
-        media_type='text/event-stream',
+        iter([_sse_resp("agent_answer", "over", {"msg": reply}, conversation_id or "")]),
+        media_type="text/event-stream",
     )
 
 
@@ -2403,6 +2406,24 @@ def _to_linsight_submit(data: APIChatCompletion, org_knowledge_ids: list[int] | 
 
     ukb = data.use_knowledge_base
 
+    # F035 follow-up continuity: the client may echo back the LAST ROUND's
+    # persisted snapshot — schema_version + subagents PLUS resolver-added fields
+    # (main_model_id / skill_digests / event_protocol / recovery_protocol). The
+    # submit schema is strict (AgentConfig forbids extras), so canonicalize to
+    # the two user-editable keys here. Without this, a follow-up sent with an
+    # untouched member picker 500'd with four ``extra_forbidden`` errors and the
+    # message silently vanished (2026-10-15).
+    agent_config = None
+    if isinstance(data.agent_config, dict):
+        from bisheng.linsight.domain.schemas.agent_config import AgentConfig
+
+        agent_config = AgentConfig.model_validate(
+            {
+                "schema_version": data.agent_config.get("schema_version", 1),
+                "subagents": data.agent_config.get("subagents", []),
+            }
+        )
+
     # Tools: wrap the daily flat selection into one grouped linsight tool whose
     # children carry the real GptsTools ids. The whitelist is dropped downstream,
     # so every selected tool the user has access to binds in the task agent.
@@ -2467,4 +2488,5 @@ def _to_linsight_submit(data: APIChatCompletion, org_knowledge_ids: list[int] | 
         # F035 Track H: thread the daily task-mode skill picker onto the submit so
         # only the user's explicit selection is materialized (None/[] = no skills).
         skills=data.skills,
+        agent_config=agent_config,
     )

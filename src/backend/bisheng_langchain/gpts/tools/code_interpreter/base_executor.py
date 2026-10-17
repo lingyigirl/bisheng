@@ -51,6 +51,37 @@ OUTPUT_DIR_NAME = "output"
 SCRATCH_DIR_NAME = "scratch"
 
 
+# Directories that are toolchain/cache by-products rather than task workspace
+# state. Package managers drop large trees (node_modules, caches) into the
+# sandbox home; walking, re-reading and harvesting them costs minutes of small
+# file-API calls per run (2026-10-14: one docx/npm task burned ~3,700 E2B
+# file calls / ~14 min, and the completion harvest uploaded 470+ junk files).
+# Shared by the sandbox walks (``e2b_executor`` / ``local_executor``) AND the
+# linsight harvester (``bisheng.linsight.domain.utils``) so every pass agrees
+# on what counts as task state.
+SKIPPED_WORKSPACE_NAMES = frozenset(
+    {
+        "node_modules",
+        "__pycache__",
+        "venv",
+        ".venv",
+        "site-packages",
+        ".git",
+        ".cache",
+        ".npm",
+        ".pnpm-store",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+)
+
+
+def is_skipped_workspace_name(name: str) -> bool:
+    """True for toolchain/cache entries that are not task workspace state."""
+    return name in SKIPPED_WORKSPACE_NAMES
+
+
 def path_namespace_rules(include_skills: bool = True) -> str:
     """The mapping between the two path namespaces the model is shown.
 
@@ -61,9 +92,12 @@ def path_namespace_rules(include_skills: bool = True) -> str:
     three model round-trips discovering it, then failed four `read_file` calls at the
     end by handing back a host path it had seen in the interpreter.
 
-    ``include_skills`` is False for E2B: the sandbox copy-in snapshots the working dir
-    BEFORE skills are materialised, so `skills/` genuinely is not there and promising
-    it would just point the model at nothing.
+    ``include_skills`` gates the skills examples. E2B used to pass False (its
+    copy-in snapshot predated skill materialisation, so `skills/` truly was
+    absent); the executor now stages the workspace `skills/` subtree into the
+    sandbox on first run (``E2bCodeExecutor._materialize_working_set``), so its
+    description advertises the zone again. The parameter stays for callers that
+    genuinely lack the tree.
     """
     zones = "`/output/x` is `output/x`, `/scratch/x` is `scratch/x`, `/uploads/x` is `uploads/x`"
     # Every example has to stay inside the zone set this executor actually has, or

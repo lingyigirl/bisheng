@@ -78,6 +78,14 @@ class PermissionService:
 
     # ── Public API ──────────────────────────────────────────────
 
+    @staticmethod
+    def check_private_session_owner(user_id: int, owner_id: int, resource_tenant_id: int) -> bool:
+        """Private task sessions have no shared FGA resource or admin execution grant."""
+        from bisheng.core.context.tenant import get_current_tenant_id
+
+        tenant_id = get_current_tenant_id()
+        return tenant_id is not None and tenant_id == resource_tenant_id and user_id == owner_id
+
     @classmethod
     async def check(
         cls,

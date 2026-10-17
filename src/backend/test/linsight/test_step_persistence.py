@@ -36,10 +36,14 @@ def _make_manager(monkeypatch):
     mgr._redis_client = MagicMock()
 
     # `store["history"]` mirrors the EVERY-STEP source of truth (Redis): the real
-    # get_execution_task reads Redis to accumulate the next step, so aset writes it
-    # each call. `store["db_writes"]` counts the (now throttled) DB update_by_id
-    # calls, so a test can assert the thinking-delta write coalescing.
-    store = {"history": [], "db_writes": 0}
+    # get_execution_task reads Redis to accumulate the next step, so every cache
+    # write carries it. The cache write goes through `_fenced_cache_write` since
+    # the recovery-protocol work (it wraps a fenced pipeline, not a bare aset),
+    # so the stand-in intercepts that method. `store["db_writes"]` counts the
+    # (now throttled) DB update_by_id calls, so a test can assert the
+    # thinking-delta write coalescing; `store["cache_writes"]` counts the
+    # every-step Redis writes.
+    store = {"history": [], "db_writes": 0, "cache_writes": 0}
     task = LinsightExecuteTask(
         id="t1",
         session_version_id="svid",
@@ -48,11 +52,13 @@ def _make_manager(monkeypatch):
         history=[],
     )
 
-    async def fake_aset(key, value, expiration=None):
-        if isinstance(value, dict) and "history" in value:
-            store["history"] = value["history"]
+    async def fake_fenced_cache_write(values):
+        store["cache_writes"] += 1
+        for value in values.values():
+            if isinstance(value, dict) and "history" in value:
+                store["history"] = value["history"]
 
-    mgr._redis_client.aset = AsyncMock(side_effect=fake_aset)
+    mgr._fenced_cache_write = fake_fenced_cache_write
 
     async def fake_get(task_id):
         task.history = list(store["history"])
@@ -158,7 +164,7 @@ async def test_thinking_deltas_coalesce_db_writes(monkeypatch):
 
     # Redis (every-step truth) accumulated the full text...
     assert store["history"][0]["output"] == "Hello world"
-    assert mgr._redis_client.aset.await_count == 3
+    assert store["cache_writes"] == 3
     # ...but the DB was rewritten ONCE (the first, appended delta), not per token.
     assert store["db_writes"] == 1
 

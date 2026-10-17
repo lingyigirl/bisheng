@@ -2,6 +2,7 @@ import asyncio
 import pickle
 from enum import Enum
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -15,6 +16,7 @@ from bisheng.linsight.domain.models.linsight_execute_task import (
 )
 from bisheng.linsight.domain.models.linsight_session_version import LinsightSessionVersion, LinsightSessionVersionDao
 from bisheng.linsight.domain.schemas.linsight_schema import UserInputEventSchema
+from bisheng.linsight.domain.services.recovery_context import fenced_pipeline
 from bisheng.utils.util import retry_async
 from bisheng_langchain.linsight.event import BaseEvent
 
@@ -59,6 +61,7 @@ class MessageEventType(str, Enum):
 class MessageData(BaseModel):
     """Message Data Model"""
 
+    producer_event_id: str = Field(default_factory=lambda: uuid4().hex, exclude=True)
     event_type: MessageEventType
     data: dict[str, Any]
     timestamp: float | None = Field(default_factory=lambda: asyncio.get_event_loop().time())
@@ -93,6 +96,8 @@ class LinsightStateMessageManager:
             session_version_id: Session VersionID
         """
         self._session_version_id = session_version_id
+        self._replay_checked = False
+        self._replay = None
         self._redis_client = get_redis_client_sync()
         self._logger = logger
 
@@ -128,6 +133,12 @@ class LinsightStateMessageManager:
             self._logger.error(f"Redis operation failed: {e}")
             raise
 
+    async def _fenced_cache_write(self, values):
+        async with fenced_pipeline(self._redis_client) as pipe:
+            for key, value in values.items():
+                await pipe.set(key, pickle.dumps(value), ex=self.DEFAULT_EXPIRATION)
+            await pipe.execute()
+
     @retry_async(num_retries=DEFAULT_RETRY_ATTEMPTS, delay=DEFAULT_RETRY_DELAY)
     async def push_message(self, message: MessageData) -> None:
         """
@@ -138,7 +149,21 @@ class LinsightStateMessageManager:
         """
         self._logger.info(f"Pushing message: {message.event_type}")
 
-        await self._handle_redis_operation(self._redis_client.arpush, self._keys["messages"], message.model_dump())
+        if not self._replay_checked:
+            from bisheng.linsight.domain.services.event_replay import EventReplayService
+
+            version = await LinsightSessionVersionDao.get_by_id(self._session_version_id)
+            if (
+                version
+                and isinstance(getattr(version, "agent_config", None), dict)
+                and version.agent_config.get("event_protocol") == 2
+            ):
+                self._replay = EventReplayService(self._redis_client.async_connection, version.tenant_id, version.id)
+            self._replay_checked = True
+        if self._replay is not None:
+            await self._replay.append(message.model_dump(mode="json"), message.producer_event_id)
+        else:
+            await self._handle_redis_operation(self._redis_client.arpush, self._keys["messages"], message.model_dump())
         self._logger.info(f"Message pushed: {message.event_type}")
 
     @retry_async(num_retries=DEFAULT_RETRY_ATTEMPTS, delay=DEFAULT_RETRY_DELAY)
@@ -168,8 +193,14 @@ class LinsightStateMessageManager:
         Args:
             session_version_model: Session Version Model
         """
+        recovery = getattr(session_version_model, "recovery_state", None)
+        if isinstance(recovery, dict):
+            status = session_version_model.status.value
+            if status in {"completed", "terminated", "failed", "waiting_for_user_input"}:
+                phase = "blocked" if recovery.get("phase") == "blocked" else status
+                session_version_model.recovery_state = {**recovery, "phase": phase}
         # Using Transactions to Ensure Data Consistency
-        async with self._redis_client.async_pipeline() as pipe:
+        async with fenced_pipeline(self._redis_client) as pipe:
             try:
                 # Write database first
                 await LinsightSessionVersionDao.insert_one(session_version_model)
@@ -227,7 +258,7 @@ class LinsightStateMessageManager:
             # Batch WriteRedis
             tasks_mapping = {f"{self._keys['execution_tasks']}{task.id}": task.model_dump() for task in tasks}
 
-            await self._redis_client.amset(tasks_mapping, expiration=self.DEFAULT_EXPIRATION)
+            await self._fenced_cache_write(tasks_mapping)
 
         except Exception as e:
             self._logger.error(f"Failed to set execution tasks: {e}")
@@ -262,7 +293,7 @@ class LinsightStateMessageManager:
             task_key = f"{self._keys['execution_tasks']}{task_id}"
             task_data = task_model.model_dump()
 
-            await self._redis_client.aset(task_key, task_data, expiration=self.DEFAULT_EXPIRATION)
+            await self._fenced_cache_write({task_key: task_data})
 
             self._logger.info(f"Updated task {task_id} status to {status}")
             return task_data
@@ -323,7 +354,7 @@ class LinsightStateMessageManager:
             task_model.task_data = {**(task_model.task_data or {}), "clarify_answers": clarify_answers}
 
             # Using Transactions to Ensure Data Consistency
-            async with self._redis_client.async_pipeline() as pipe:
+            async with fenced_pipeline(self._redis_client) as pipe:
                 await pipe.set(task_key, pickle.dumps(task_model.model_dump()), ex=self.DEFAULT_EXPIRATION)
                 await pipe.execute()
 
@@ -384,7 +415,7 @@ class LinsightStateMessageManager:
                 return
 
             task_key = f"{self._keys['execution_tasks']}{task_id}"
-            await self._redis_client.aset(task_key, task_model.model_dump(), expiration=self.DEFAULT_EXPIRATION)
+            await self._fenced_cache_write({task_key: task_model.model_dump()})
             await LinsightExecuteTaskDao.update_by_id(task_id, history=task_model.history)
             self._logger.info(f"Re-stamped {answer_idx} clarify answer(s) onto task {task_id} history")
         except Exception as e:
@@ -479,7 +510,7 @@ class LinsightStateMessageManager:
             # Redis always carries the freshest history: get_execution_task reads
             # it back to accumulate the next step, and the live WS view derives from
             # push_message — so it is written every step (no -7120 risk on Redis).
-            await self._redis_client.aset(task_key, task_model.model_dump(), expiration=self.DEFAULT_EXPIRATION)
+            await self._fenced_cache_write({task_key: task_model.model_dump()})
 
             # DB write-amplification guard (DM8 -7120 incident, 2026-06): a thinking
             # segment streams as many token-delta frames that all merge into ONE
@@ -556,7 +587,9 @@ class LinsightStateMessageManager:
             keys = await self._redis_client.akeys(pattern)
 
             if keys:
-                await self._redis_client.adelete(*keys)
+                async with fenced_pipeline(self._redis_client) as pipe:
+                    await pipe.delete(*keys)
+                    await pipe.execute()
                 self._logger.info(f"Cleaned up {len(keys)} keys for session {self._session_version_id}")
 
         except Exception as e:

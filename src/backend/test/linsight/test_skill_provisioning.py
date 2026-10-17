@@ -115,6 +115,24 @@ def _copied_rel_paths(backend: _CacheBackend) -> set[str]:
 
 
 class TestGate:
+    async def test_member_sources_discover_only_their_selected_bundles(self, monkeypatch, store, backend):
+        from deepagents.backends.filesystem import FilesystemBackend
+        from deepagents.middleware.skills import SkillsMiddleware
+
+        _patch_enabled(monkeypatch, ENABLED)
+        await materialize_session_skills(
+            backend, TENANT, ["biao-shu-zhuan-xie"], store=store, workspace_dir="skills/agents/a"
+        )
+        await materialize_session_skills(
+            backend, TENANT, ["he-tong-shen-yue"], store=store, workspace_dir="skills/agents/b"
+        )
+        middleware = SkillsMiddleware(
+            backend=FilesystemBackend(root_dir=str(backend.file_dir), virtual_mode=True),
+            sources=[("/skills/agents/a/", "Skills")],
+        )
+        update = middleware.before_agent({}, MagicMock(), {"configurable": {}})
+        assert [entry["name"] for entry in update["skills_metadata"]] == ["biao-shu-zhuan-xie"]
+
     async def test_selected_subset_copies_only_those(self, monkeypatch, store, backend):
         _patch_enabled(monkeypatch, ENABLED)
         copied = await materialize_session_skills(backend, TENANT, ["biao-shu-zhuan-xie"], store=store)

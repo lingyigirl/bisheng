@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 
+from bisheng.linsight.domain.schemas.agent_config import AgentConfig
 from bisheng_langchain.linsight.event import NeedUserInput
 
 
@@ -33,6 +34,7 @@ class SubmitFileSchema(BaseModel):
 
 # Submit a problemSchema
 class LinsightQuestionSubmitSchema(BaseModel):
+    agent_config: AgentConfig | None = None
     question: str = Field(..., description="User Submitted Questions")
     org_knowledge_enabled: bool = Field(False, description="Whether to enable organization knowledge base")
     personal_knowledge_enabled: bool = Field(False, description="Whether or not to enable Personal Knowledge Base")

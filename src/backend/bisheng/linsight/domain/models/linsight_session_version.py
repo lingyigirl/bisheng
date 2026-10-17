@@ -45,6 +45,10 @@ class LinsightSessionVersionBase(SQLModelSerializable):
     Inspiration Conversation Version Model Base Class
     """
 
+    agent_config: dict | None = Field(default=None, sa_column=Column(JsonType, nullable=True))
+    recovery_epoch: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    recovery_state: dict | None = Field(default=None, sa_column=Column(JsonType, nullable=True))
+
     session_id: str = Field(
         ...,
         description="SessionsID",

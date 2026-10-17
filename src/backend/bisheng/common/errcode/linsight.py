@@ -133,6 +133,11 @@ class SkillGitHubRateLimitError(BaseErrorCode):
 # the uploaded payload itself, and a 7MB archive can still expand past this line, so
 # the two must not share one message ("file exceeds 10MB" on a 7MB file reads as a bug).
 # Numbered after the GitHub block to keep this file in ascending code order.
+class LinsightAgentConfigurationError(BaseErrorCode):
+    Code: int = 11071
+    Msg: str = "Collaborator configuration is invalid or unavailable"
+
+
 class SkillBundleTooLargeError(BaseErrorCode):
     Code: int = 11059
     Msg: str = "Skill bundle contents exceed the 100MB unpacked size limit"

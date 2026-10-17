@@ -60,6 +60,13 @@ class FakeMinioStorage:
         bucket = bucket_name or self.bucket
         return self.store.get((bucket, object_name))
 
+    def list_objects_sync(self, bucket_name=None, prefix=""):
+        # Mirrors MinioStorage.list_objects_sync (0d2c5ae66 wrapped the raw SDK
+        # call behind this method; the stand-in was not updated back then, which
+        # left every ls() test red with AttributeError).
+        bucket = bucket_name or self.bucket
+        return list(self.minio_client_sync.list_objects(bucket, prefix=prefix, recursive=True))
+
     async def object_exists(self, bucket_name=None, object_name=None):
         bucket = bucket_name or self.bucket
         return (bucket, object_name) in self.store

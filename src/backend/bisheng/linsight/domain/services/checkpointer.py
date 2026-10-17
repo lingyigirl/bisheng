@@ -38,6 +38,8 @@ import time
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
+from bisheng.linsight.domain.services.recovery_context import fenced_pipeline
+
 from langgraph.checkpoint.base import (
     WRITES_IDX_MAP,
     BaseCheckpointSaver,
@@ -262,7 +264,7 @@ class PlainRedisCheckpointer(BaseCheckpointSaver):
         meta_type, meta_data = self.serde.dumps_typed(metadata)
 
         client = await self._get_redis_client()
-        async with client.async_pipeline(transaction=True) as pipe:
+        async with fenced_pipeline(client, transaction=True) as pipe:
             await pipe.hset(
                 self._ckpt_key(thread_id, checkpoint_ns, checkpoint_id),
                 mapping={
@@ -302,7 +304,7 @@ class PlainRedisCheckpointer(BaseCheckpointSaver):
         checkpoint_id: str = configurable["checkpoint_id"]
 
         client = await self._get_redis_client()
-        async with client.async_pipeline(transaction=False) as pipe:
+        async with fenced_pipeline(client, transaction=False) as pipe:
             for idx, (channel, value) in enumerate(writes):
                 effective_idx = WRITES_IDX_MAP.get(channel, idx)
                 write_key = self._write_key(thread_id, checkpoint_ns, checkpoint_id, task_id, effective_idx)
