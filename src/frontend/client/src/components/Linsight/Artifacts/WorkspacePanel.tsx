@@ -69,7 +69,10 @@ export function WorkspacePanel({
             <NewTabHint file={file} />
             {/* Downloading a listed file no longer requires opening it first —
                 which HTML reports never allowed, since they leave for a new tab. */}
-            <SaveAsButton file={file} versionId={versionId} />
+            {/* `file.versionId` first: the list AGGREGATES every task turn, and a
+                file must download against its own session version (see
+                useWorkspaceArtifacts); the panel's versionId is the fallback. */}
+            <SaveAsButton file={file} versionId={file.versionId || versionId} />
         </div>
     );
 
@@ -98,7 +101,11 @@ export function WorkspacePanel({
                         {/* Same action as the file rows, so a markdown deliverable
                             offers md / PDF / Docx here too instead of only the raw
                             source — the two surfaces are one click apart. */}
-                        <SaveAsButton file={previewFile} versionId={versionId} variant="toolbar" />
+                        <SaveAsButton
+                            file={previewFile}
+                            versionId={previewFile.versionId || versionId}
+                            variant="toolbar"
+                        />
                         {!hideFullscreenToggle && (
                             <button
                                 type="button"

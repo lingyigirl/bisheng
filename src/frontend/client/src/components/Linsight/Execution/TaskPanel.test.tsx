@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom';
 /**
  * A finished run must not report a fake ratio.
  *

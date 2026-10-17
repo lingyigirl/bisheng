@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { getLinsightModelConfig } from '~/api/linsight';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '~/components/ui/Select';
+import { useLocalize } from '~/hooks';
 import { useGetBsConfig } from '~/hooks/queries/data-provider';
 
 interface ModelSelectorProps {
@@ -19,6 +20,7 @@ interface ModelSelectorProps {
 }
 
 export function ModelSelector({ value, disabled = false, onChange }: ModelSelectorProps) {
+    const localize = useLocalize();
     const { data: bsConfig } = useGetBsConfig();
     const { data: linsightModelCfg } = useQuery({
         queryKey: ['linsightModelConfig'],
@@ -70,7 +72,10 @@ export function ModelSelector({ value, disabled = false, onChange }: ModelSelect
 
     return (
         <Select value={String(value)} disabled={disabled} onValueChange={onChange}>
-            <SelectTrigger className="h-8 w-auto min-w-0 max-w-[min(40vw,220px)] max-md:max-w-[min(40vw,140px)] gap-1 overflow-hidden border-none bg-transparent px-2 text-text-2 shadow-none outline-none hover:bg-black/5 focus:ring-0">
+            <SelectTrigger
+                aria-label={localize('com_ui_select_model')}
+                className="h-8 w-auto min-w-0 max-w-[min(40vw,220px)] max-md:max-w-[min(40vw,140px)] gap-1 overflow-hidden border-none bg-transparent px-2 text-text-2 shadow-none outline-none hover:bg-black/5 focus:ring-0"
+            >
                 <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px] font-normal">
                     {label}
                 </span>

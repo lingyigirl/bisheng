@@ -5,6 +5,7 @@ import {
     isDeliverableLinkHref,
     isHtmlArtifact,
     matchArtifactByRelPath,
+    mergeWorkspaceArtifacts,
     openHtmlArtifactViewer,
     resolveDeliverableLink,
     stripEmptyHtmlPlaceholders,
@@ -353,5 +354,76 @@ describe('applyHtmlViewerTabIdentity', () => {
         applyHtmlViewerTabIdentity('<html><body><p>no head title</p></body></html>');
 
         expect(document.title).toBe('BISHENG');
+    });
+});
+
+describe('mergeWorkspaceArtifacts', () => {
+    const mkUpload = (name: string, over: Record<string, unknown> = {}) => ({
+        file_id: `u-${name}`,
+        file_name: name,
+        markdown_file_path: `linsight/uploads/${name}/index.md`,
+        valid: true,
+        ...over,
+    });
+
+    const mkGenerated = (name: string, url: string) =>
+        mkArtifact({ file_name: name, file_url: url });
+
+    it('keeps files that only exist in earlier rounds (inherited-not-redelivered case)', () => {
+        const merged = mergeWorkspaceArtifacts([
+            {
+                versionId: 'sv1',
+                uploaded: [mkUpload('statement.xlsx')],
+                generated: [mkGenerated('analysis.md', 'sv1/analysis.md'), mkGenerated('deck.pptx', 'sv1/deck.pptx')],
+            },
+            { versionId: 'sv2', generated: [mkGenerated('analysis.md', 'sv2/analysis.md')] },
+        ]);
+
+        // Uploads first, then deliverables; the pptx from round 1 survives.
+        expect(merged.map((f) => f.file_name)).toEqual(['statement.xlsx', 'deck.pptx', 'analysis.md']);
+        // ...and it stays stamped with the version that produced it.
+        expect(merged[1].versionId).toBe('sv1');
+    });
+
+    it('lets a later round overwrite a same-named earlier file and moves it to the later position', () => {
+        const merged = mergeWorkspaceArtifacts([
+            { versionId: 'sv1', generated: [mkGenerated('report.md', 'sv1/report.md'), mkGenerated('chart.png', 'sv1/chart.png')] },
+            { versionId: 'sv2', generated: [mkGenerated('report.md', 'sv2/report.md')] },
+        ]);
+
+        expect(merged.map((f) => f.file_name)).toEqual(['chart.png', 'report.md']);
+        // The surviving entry is the REWRITTEN one — its own version + url.
+        expect(merged[1].versionId).toBe('sv2');
+        expect(merged[1].file_url).toBe('sv2/report.md');
+    });
+
+    it('dedupes uploads by name across rounds (later round wins)', () => {
+        const merged = mergeWorkspaceArtifacts([
+            { versionId: 'sv1', uploaded: [mkUpload('data.xlsx')] },
+            {
+                versionId: 'sv2',
+                // Same logical upload, fresh file_id + path in the new version.
+                uploaded: [mkUpload('data.xlsx', { file_id: 'u2', markdown_file_path: 'sv2/data/index.md' })],
+            },
+        ]);
+
+        expect(merged).toHaveLength(1);
+        expect(merged[0].versionId).toBe('sv2');
+        expect(merged[0].file_url).toBe('sv2/data/index.md');
+    });
+
+    it('skips rounds without a versionId and tolerates empty / null file entries', () => {
+        const merged = mergeWorkspaceArtifacts([
+            { versionId: '', generated: [mkGenerated('x.md', 'x')] },
+            { versionId: 'sv1', generated: null, uploaded: null },
+            { versionId: 'sv2', generated: [null, undefined, mkGenerated('y.md', 'y')] },
+        ]);
+
+        expect(merged.map((f) => f.file_name)).toEqual(['y.md']);
+        expect(merged[0].versionId).toBe('sv2');
+    });
+
+    it('is safe on an empty round list', () => {
+        expect(mergeWorkspaceArtifacts([])).toEqual([]);
     });
 });

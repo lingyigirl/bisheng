@@ -1,10 +1,14 @@
 // @ts-strict-ignore
+import { getReplaySnapshot } from "~/api/harness";
+import { useLocalize } from "~/hooks";
+import { isNewerEvent } from "./replayCursor";
+import { appendRecoveryStep, keepCompletedBeforeRecovery } from "./recoveryProjection";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { getLinsightSessionVersionList, userInputLinsightEvent, userStopLinsightEvent } from "~/api/linsight";
 import { SopStatus } from "~/store/linsight";
 import { useToastContext } from "~/Providers";
 import { toggleNav } from "~/utils";
-import { useLinsightManager } from "../useLinsightManager";
+import { buildTaskTree, mapSessionVersionStatus, useLinsightManager } from "../useLinsightManager";
 import { MockWebSocket } from "./mock";
 const MOCK = false
 
@@ -14,15 +18,19 @@ const connections: Record<string, WebSocket> = {};
 export const useLinsightWebSocket = (versionId) => {
     const { getLinsight, updateLinsight } = useLinsightManager()
     const { showToast } = useToastContext();
-    const maxRetryCountRef = useRef(5);
+    const retryAttempt = useRef(0);
+    const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const cursors = useRef(new Map<string, string>());
+    const connecting = useRef(new Set<string>());
+    const localize = useLocalize();
 
     const linsight = getLinsight(versionId);
     const task = useMemo(() => {
         const linsight = getLinsight(versionId);
         return linsight
-            ? { versionId, running: linsight.status === SopStatus.Running }
-            : { versionId, running: false };
-    }, [linsight?.status, versionId]);
+            ? { versionId, running: linsight.status === SopStatus.Running, replay: Boolean(linsight.agent_config?.subagents?.length) }
+            : { versionId, running: false, replay: false };
+    }, [linsight?.status, linsight?.agent_config, versionId]);
 
     // 使用 ref 存储当前活跃版本 ID
     const activeVersionIdRef = useRef(versionId);
@@ -33,14 +41,53 @@ export const useLinsightWebSocket = (versionId) => {
     // 同步最新活跃版本 ID
     useEffect(() => {
         activeVersionIdRef.current = versionId;
+        return () => {
+            activeVersionIdRef.current = '';
+            if (retryTimer.current) clearTimeout(retryTimer.current);
+            retryTimer.current = null;
+            const socket = connections[versionId];
+            if (socket) {
+                delete connections[versionId];
+                socket.close();
+            }
+        };
     }, [versionId]);
 
     useEffect(() => {
         runningRef.current = task.running;
+        if (!task.running && retryTimer.current) {
+            clearTimeout(retryTimer.current);
+            retryTimer.current = null;
+        }
     }, [task.running]);
 
 
-    const connect = useCallback((id: string, msg: any) => {
+    const connect = useCallback(async (id: string, msg: any) => {
+        if (connecting.current.has(id)) return;
+        if (retryTimer.current) clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+        const scheduleRetry = () => {
+            if (activeVersionIdRef.current !== id || !runningRef.current) return;
+            if (retryTimer.current) clearTimeout(retryTimer.current);
+            const delay = Math.min(30000, 1000 * 2 ** Math.min(retryAttempt.current++, 5));
+            retryTimer.current = setTimeout(() => {
+                retryTimer.current = null;
+                if (activeVersionIdRef.current === id && runningRef.current) void connect(id, { type: 'relink' });
+            }, delay);
+        };
+        connecting.current.add(id);
+        let snapshot;
+        try {
+            if (!cursors.current.has(id)) snapshot = await getReplaySnapshot(id);
+        } catch (error) {
+            connecting.current.delete(id);
+            showToast({ message: localize('harness.loadError'), severity: 'error' });
+            console.error('Replay snapshot failed', error);
+            scheduleRetry();
+            return;
+        }
+        connecting.current.delete(id);
+        if (activeVersionIdRef.current !== id) return;
         // 清理可能存在的旧连接
         if (connections[id]) {
             connections[id].close();
@@ -68,24 +115,27 @@ export const useLinsightWebSocket = (versionId) => {
             return `${url}${normalizedPath}`;
         }
 
-        const websocket = MOCK ? new MockWebSocket(`xx`)
-            : new WebSocket(getWebSocketUrl(`${__APP_ENV__.BASE_URL}/api/v1/linsight/workbench/task-message-stream?session_version_id=${id}`));
-        connections[id] = websocket;
-
-        websocket.onopen = () => {
-            console.log("WebSocket connection established!");
-            // websocket.send(JSON.stringify(msg));
-        };
-
-        websocket.onmessage = (event) => {
-            const taskData = JSON.parse(event.data);
-            console.log('ws data :>> ', taskData);
+        let hydratingReplay = false;
+        const applyEvent = (taskData) => {
+            if (taskData.event_id && !isNewerEvent(taskData.event_id, cursors.current.get(id))) return;
             /**
              * 生成一级任务list
              * 生成当前一级任务下的二级任务list
              * 更新生成的任务信息
              */
             switch (taskData.event_type) {
+                case 'task_recovery':
+                    updateLinsight(id, prev => ({
+                        recoveryAttempt: taskData.data.attempt,
+                        sessionSteps: keepCompletedBeforeRecovery(prev.sessionSteps || []),
+                        tasks: prev.tasks.map(task => ({
+                            ...task, history: keepCompletedBeforeRecovery(task.history || []),
+                            children: (task.children || []).map(child => ({
+                                ...child, history: keepCompletedBeforeRecovery(child.history || []),
+                            })),
+                        })),
+                    }));
+                    break;
                 case 'task_generate':
                     // 生成一级任务
                     updateLinsight(id, (prev) => {
@@ -209,7 +259,11 @@ export const useLinsightWebSocket = (versionId) => {
                     // F035 Track H: stamp the answered clarify entries so the active
                     // ClarifyCard collapses into an intent-summary row (spec §2).
                     const completedId = taskData.data.id ?? taskData.data.task_id;
-                    const answer = (taskData.data.history || [])
+                    const completedHistory = taskData.data.history || [];
+                    const latestClarify = completedHistory
+                        .filter((h: { step_type?: string; is_completed?: boolean }) => h?.step_type === 'call_user_input' && h.is_completed)
+                        .at(-1);
+                    const answer = latestClarify?.user_input ?? completedHistory
                         .filter((h: any) => h?.role === 'user')
                         .map((h: any) => h?.content)
                         .join('\n');
@@ -276,6 +330,9 @@ export const useLinsightWebSocket = (versionId) => {
                     });
                     break;
                 case 'task_execute_step':
+                    if (taskData.execution_epoch !== undefined) {
+                        taskData = { ...taskData, data: { ...taskData.data, execution_epoch: taskData.execution_epoch } };
+                    }
                     updateLinsight(id, (prev) => {
                         let matched = false;
                         const newTasks = prev.tasks.map(task => {
@@ -283,7 +340,7 @@ export const useLinsightWebSocket = (versionId) => {
                                 matched = true;
                                 return {
                                     ...task,
-                                    history: [...(task.history || []), taskData.data]
+                                    history: appendRecoveryStep(task.history || [], taskData.data)
                                 };
                             } else {
                                 return {
@@ -293,7 +350,7 @@ export const useLinsightWebSocket = (versionId) => {
                                             matched = true;
                                             return {
                                                 ...child,
-                                                history: [...(child.history || []), taskData.data]
+                                                history: appendRecoveryStep(child.history || [], taskData.data)
                                             };
                                         }
                                         return child;
@@ -306,7 +363,7 @@ export const useLinsightWebSocket = (versionId) => {
                         // F035 Track H: session-level steps (task_id == session_version_id,
                         // e.g. planning-stage tool calls) live at flow level
                         return {
-                            sessionSteps: [...(prev.sessionSteps || []), taskData.data]
+                            sessionSteps: appendRecoveryStep(prev.sessionSteps || [], taskData.data)
                         };
                     });
                     break;
@@ -317,7 +374,7 @@ export const useLinsightWebSocket = (versionId) => {
                         file_list: taskData.data.output_result.final_files || [],
                         status: SopStatus.completed
                     })
-                    toggleNav(true)
+                    if (!hydratingReplay) toggleNav(true)
                     // Live only: the task answer is now a persisted category="task"
                     // ChatMessage. Pull its real id (+ liked verdict) into the store so
                     // like/dislike targets the right row the moment the result panel
@@ -328,7 +385,7 @@ export const useLinsightWebSocket = (versionId) => {
                     // history hydration seeds the store from the same endpoint.
                     {
                         const sessionId = getLinsight(id)?.session_id;
-                        if (sessionId) {
+                        if (sessionId && !hydratingReplay) {
                             getLinsightSessionVersionList(sessionId, '')
                                 .then((list: any[]) => {
                                     const v = (list || []).find((x) => String(x.id) === String(id));
@@ -363,25 +420,61 @@ export const useLinsightWebSocket = (versionId) => {
                         // showToast({ message: taskData.data.error, status: 'error' });
                     }
             }
+            if (taskData.event_id) cursors.current.set(id, taskData.event_id);
+        };
+        if (snapshot && !snapshot.legacy) {
+            if (snapshot.complete_history) {
+                updateLinsight(id, { tasks: [], sessionSteps: [], output_result: null, file_list: [] });
+                hydratingReplay = true;
+                for (const event of snapshot.snapshot.events) applyEvent(event);
+                hydratingReplay = false;
+            } else {
+                updateLinsight(id, { tasks: buildTaskTree(snapshot.execute_tasks || []), sessionSteps: [], output_result: snapshot.version.output_result });
+                showToast({ message: localize('harness.incomplete'), severity: 'warning' });
+            }
+            cursors.current.set(id, snapshot.last_event_id);
+            updateLinsight(id, { agent_config: snapshot.version.agent_config,
+                recoveryAttempt: snapshot.version.recovery_state?.attempts,
+                status: mapSessionVersionStatus(snapshot.version.status, snapshot.version.execute_feedback),
+            });
+            if (snapshot.terminal && snapshot.version.output_result) {
+                const result = snapshot.version.output_result;
+                updateLinsight(id, { output_result: result, file_list: result.final_files || [],
+                    ...(snapshot.version.status === 'failed' ? {
+                        taskError: result.error_message,
+                        taskErrorInfo: { error_type: result.error_type, detail: result.detail },
+                    } : {}),
+                });
+            }
+            if (snapshot.terminal) return;
+        }
+        const websocket = MOCK ? new MockWebSocket(`xx`)
+            : new WebSocket(getWebSocketUrl(`${__APP_ENV__.BASE_URL}/api/v1/linsight/workbench/task-message-stream?session_version_id=${id}${cursors.current.has(id) ? `&after=${encodeURIComponent(cursors.current.get(id)!)}` : ""}`));
+        connections[id] = websocket;
+
+        websocket.onopen = () => {
+            retryAttempt.current = 0;
+            console.log("WebSocket connection established!");
+            // websocket.send(JSON.stringify(msg));
         };
 
+
+        websocket.onmessage = (event) => {
+            const frame = JSON.parse(event.data);
+            if (frame.event_type === 'replay_reset') {
+                cursors.current.delete(id);
+                delete connections[id];
+                websocket.close();
+                void connect(id, { type: 'reset' });
+                return;
+            }
+            applyEvent(frame);
+        };
         websocket.onclose = () => {
             console.log(`WebSocket closed for session ${id}`);
             if (connections[id] === websocket) {
                 delete connections[id];
-                if (maxRetryCountRef.current > 0) {
-                    setTimeout(() => {
-                        // Guard against zombie reconnects: only relink if this
-                        // version is still the active one AND its task is still
-                        // running. A completed / parked / navigated-away session
-                        // must not be resurrected (the server closes it again,
-                        // which would just burn through the retry budget).
-                        if (activeVersionIdRef.current !== id || !runningRef.current) return;
-                        connect(id, { type: 'relink' })
-                        maxRetryCountRef.current--;
-                    }, 1000);
-                }
-            } else {
+                scheduleRetry();
             }
         };
 
@@ -392,15 +485,28 @@ export const useLinsightWebSocket = (versionId) => {
 
 
     useEffect(() => {
-        if (!task.running) return;
+        if (!task.versionId) return;
+        // Completed Harness turns also need the authoritative event history.
+        // A terminal snapshot returns before opening a WebSocket; hydrate once.
+        if (!task.running && (!task.replay || cursors.current.has(task.versionId))) return;
 
         // 当没有连接或连接已关闭时创建新连接
         if (!connections[task.versionId] ||
             connections[task.versionId].readyState !== WebSocket.OPEN) {
             connect(task.versionId, { type: 'init' });
-            maxRetryCountRef.current = 3;
         }
     }, [task])
+
+    useEffect(() => {
+        const handleOnline = () => {
+            if (runningRef.current && activeVersionIdRef.current) {
+                retryAttempt.current = 0;
+                void connect(activeVersionIdRef.current, { type: 'online' });
+            }
+        };
+        window.addEventListener('online', handleOnline);
+        return () => window.removeEventListener('online', handleOnline);
+    }, [connect]);
 
     const stop = useCallback(() => {
         if (MOCK) {

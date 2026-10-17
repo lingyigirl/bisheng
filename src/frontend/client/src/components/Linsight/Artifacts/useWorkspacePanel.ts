@@ -49,7 +49,10 @@ export function useWorkspacePanel(versionId: string) {
      *  (needs versionId to resolve the MinIO object key into a presigned link). */
     const openPreview = (file: ArtifactFile) => {
         if (isHtmlArtifact(file)) {
-            openHtmlArtifactViewer(file, versionId);
+            // The panel aggregates every task turn, so resolve against the
+            // file's OWN session version when it carries one (fallback: the
+            // panel's bound version).
+            openHtmlArtifactViewer(file, file.versionId || versionId);
             return;
         }
         setOpen(true);

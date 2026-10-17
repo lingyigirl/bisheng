@@ -1,3 +1,4 @@
+import { SubagentRunCard } from "./SubagentRunCard";
 /**
  * ExecutionTimeline — the single aggregation entry for task-mode execution flow
  * (Wave2 / F5). Replaces StepList's bare dispatch: it walks
@@ -54,6 +55,9 @@ export function ExecutionTimeline({ history }: ExecutionTimelineProps) {
                 // Inline answered clarify (时序内联): an "已经明确用户意图" summary row
                 // sitting between the pre-question thinking and the resumed thinking.
                 // Always collapsed (no `active`) — it is a record, not a live episode.
+                if (node.kind === 'subagent_group' && node.agents[0]?.step.extraInfo.agent_id) {
+                    return <SubagentRunCard key={String(node.agents[0].step.extraInfo.invocation_id)} group={node} />;
+                }
                 if (node.kind === 'intent') {
                     return <IntentRow key={`intent_${idx}`} data={node.data} />;
                 }

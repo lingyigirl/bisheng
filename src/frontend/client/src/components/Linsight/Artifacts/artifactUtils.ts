@@ -27,6 +27,15 @@ export interface ArtifactFile {
      * markdown. Absent on legacy entries → falls back to markdown.
      */
     previewAsImage?: boolean;
+    /**
+     * Session version (turn) this entry belongs to. The inline workspace panel
+     * AGGREGATES files from every task turn of a conversation (see
+     * mergeWorkspaceArtifacts), and each turn is its own session version — so a
+     * row must resolve preview/download against ITS OWN version, not whichever
+     * version the panel happens to be bound to. Absent on per-turn lists (the
+     * owning turn's `versionId` prop is then the right resolution key).
+     */
+    versionId?: string;
 }
 
 export type PreviewKind = 'markdown' | 'text' | 'image' | 'document' | 'unsupported';
@@ -114,6 +123,62 @@ export function toUploadedArtifacts(files: any[] | undefined): ArtifactFile[] {
                 previewAsImage,
             };
         });
+}
+
+/** One task round contributing files to the aggregated workspace panel. */
+export interface WorkspaceArtifactRound {
+    /** session_version id the round's files belong to (their resolution key). */
+    versionId: string;
+    /** store `LinsightInfo.files` — user-uploaded sources of that round. */
+    uploaded?: unknown[] | null;
+    /** store `LinsightInfo.file_list` — that round's deliverables. */
+    generated?: Array<ArtifactFile | null | undefined> | null;
+}
+
+/**
+ * Merge every task round of a conversation into ONE artifact list for the
+ * inline workspace panel.
+ *
+ * Why: each follow-up round is its own session version, and the backend
+ * deliberately stops re-delivering inherited-but-unchanged files — so the
+ * LATEST round's `file_list` only holds what that round itself produced or
+ * rewrote. Rendering it alone made earlier deliverables (the pptx / xlsx / md
+ * of previous rounds) vanish from the panel even though their own turn cards
+ * still offered them. The panel is a view of the conversation's workspace, not
+ * of the newest round, so it must show the union.
+ *
+ * Rules:
+ *  - uploaded sources first, then deliverables; each block in round order
+ *    (oldest → newest);
+ *  - a same-named file from a later round OVERWRITES the earlier entry and
+ *    moves to the later round's position — the list mirrors the workspace's
+ *    latest state (a rewritten report is the new report, not a second copy);
+ *  - every entry is stamped with its owning round's `versionId` so preview /
+ *    download resolve against the right session version.
+ */
+export function mergeWorkspaceArtifacts(rounds: WorkspaceArtifactRound[]): ArtifactFile[] {
+    const uploads = new Map<string, ArtifactFile>();
+    const outputs = new Map<string, ArtifactFile>();
+    for (const round of rounds || []) {
+        const versionId = round?.versionId;
+        if (!versionId) continue;
+        for (const file of toUploadedArtifacts(round.uploaded ?? undefined)) {
+            // Key by NAME: the same logical upload may carry a fresh file_id in
+            // each round's version, so the id alone would duplicate it.
+            const key = file.file_name || file.file_id;
+            if (!key) continue;
+            uploads.delete(key);
+            uploads.set(key, { ...file, versionId });
+        }
+        for (const file of round.generated || []) {
+            if (!file) continue;
+            const key = file.file_name || file.file_url;
+            if (!key) continue;
+            outputs.delete(key);
+            outputs.set(key, { ...file, versionId });
+        }
+    }
+    return [...uploads.values(), ...outputs.values()];
 }
 
 /**

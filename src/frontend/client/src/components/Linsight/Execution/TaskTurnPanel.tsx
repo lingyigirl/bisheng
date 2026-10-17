@@ -26,17 +26,22 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getLinsightSessionVersionList, getLinsightTaskList } from '~/api/linsight';
 import { ResultSection } from '~/components/Linsight/Artifacts/ResultSection';
+import { SubagentPicker } from '~/components/Linsight/Input/SubagentPicker';
+import { useGetBsConfig } from '~/hooks/queries/data-provider';
+import type { HarnessOptions } from '~/types/harness';
 import type { ArtifactFile } from '~/components/Linsight/Artifacts/artifactUtils';
 import { useLocalize } from '~/hooks';
 import { useAutoScroll } from '~/hooks/useAutoScroll';
+import { useLinsightContextUsage } from '~/hooks/useLinsightContextUsage';
 import { useLinsightManager } from '~/hooks/useLinsightManager';
 import { useLinsightWebSocket } from '~/hooks/Websocket';
 import { useLinsightQueuePolling } from '~/hooks/useLinsightQueuePolling';
 import { SopStatus } from '~/store/linsight';
 import { BreathingRow } from './BreathingRow';
 import { ClarifyCard } from './ClarifyCard';
+import { ContextUsageRow } from './ContextUsageRow';
 import { QueueCard } from './QueueCard';
-import { ExecutionLiveContext } from './executionLive';
+import { ExecutionLiveContext, ExecutionTurnLiveContext } from './executionLive';
 import { ExecutionTimeline } from './ExecutionTimeline';
 import { ResultPanel } from './ResultPanel';
 import { ChatErrorCard } from '~/components/ChatErrorCard';
@@ -64,10 +69,12 @@ interface TaskTurnPanelProps {
 
 export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversationId, answer, readOnly = false, onPreviewFile }: TaskTurnPanelProps) {
     const localize = useLocalize();
+    const { data: bsConfig } = useGetBsConfig();
     const { getLinsight, switchAndUpdateLinsight, updateLinsight } = useLinsightManager();
-    // WS pump — self-guards on status===Running, so mounting it for a completed
-    // historical turn is a no-op (no connection opened).
-    const { sendInput, stop } = useLinsightWebSocket(versionId);
+    const { token: shareToken } = useParams<{ token?: string }>();
+    const isReadOnly = readOnly || Boolean(shareToken);
+    // Share routes never subscribe to the owner's private event stream.
+    const { sendInput, stop } = useLinsightWebSocket(isReadOnly ? "" : versionId);
 
     const linsight = getLinsight(versionId);
     const [loadFailed, setLoadFailed] = useState(false);
@@ -75,7 +82,6 @@ export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversa
     // workbench list/detail endpoints, which 403 a non-owner unless the share-token
     // header is sent. Pull it from the route so the backend's header_share_token_parser
     // authorizes the recipient (empty on normal chat routes → no header, as before).
-    const { token: shareToken } = useParams<{ token?: string }>();
 
     // HISTORY hydration: no store entry yet → lazy-load this SV's detail.
     const loadedRef = useRef(false);
@@ -122,11 +128,15 @@ export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversa
     // the badge clears the moment the worker picks us up (index → 0) or any
     // execution output arrives over the WS.
     const noProgressYet = !tasks.length && !sessionSteps.length;
-    useLinsightQueuePolling(versionId, running && noProgressYet);
+    useLinsightQueuePolling(versionId, !isReadOnly && running && noProgressYet);
     // Gate on noProgressYet too: once steps/tasks arrive polling stops and the
     // last-polled queueCount may stay stale >0, so this prevents the queue card
     // from lingering next to real task rows.
     const queueing = running && noProgressYet && (linsight?.queueCount || 0) > 0;
+
+    // F086 context display: live token snapshot (polled while running, one
+    // fetch for completed/history turns). Hook sits before the early return.
+    const contextUsage = useLinsightContextUsage(versionId, !isReadOnly && running);
 
     // Does the session timeline already have content to render? Once deep-thinking
     // starts streaming, ExecutionTimeline owns the "working" signal (+ live-tail
@@ -192,10 +202,19 @@ export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversa
         // started yet (!tasks.length). Once the first task appears the planning is
         // done, so the planning thinking must collapse to "已深度思考" instead of
         // lingering as a pulsing "正在深度思考" concurrent with the running task.
+        <ExecutionTurnLiveContext.Provider value={running && !pendingInput}>
         <ExecutionLiveContext.Provider value={running && !pendingInput && !tasks.length}>
         <div ref={rootRef} className="w-full">
+            {!!linsight.recoveryAttempt && (
+                <div role="status" className="text-caption text-text-3 py-2">
+                    {localize('harness.recoveryAttempt', { count: linsight.recoveryAttempt })}
+                </div>
+            )}
+            {!isReadOnly && !!linsight.agent_config?.subagents.length && (
+                <SubagentPicker value={linsight.agent_config} options={(bsConfig || {}) as HarnessOptions} disabled variant="summary" />
+            )}
             {/* queueing card (auto-disappears when the worker picks us up) */}
-            {queueing && <QueueCard position={linsight!.queueCount} onCancel={stop} />}
+            {queueing && !isReadOnly && <QueueCard position={linsight!.queueCount} onCancel={stop} />}
 
             {/* session-level steps (planning-stage tools etc.); an answered clarify
                 renders as an inline IntentRow at its chronological position here
@@ -213,7 +232,7 @@ export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversa
 
             {/* active clarify card (HITL stays on linsight WS) */}
             {pendingInput && (
-                <ClarifyCard data={pendingInput} disabled={readOnly} onSubmit={handleClarifySubmit} />
+                <ClarifyCard data={pendingInput} disabled={isReadOnly} onSubmit={handleClarifySubmit} />
             )}
 
             {/* error / terminated banners */}
@@ -257,18 +276,26 @@ export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversa
                 <ResultPanel
                     messageId={linsight?.message_id ?? undefined}
                     liked={linsight?.liked ?? liked}
-                    allowFeedback={allowFeedback && !readOnly}
+                    allowFeedback={allowFeedback && !isReadOnly}
                     onLikedChange={(l) => updateLinsight(versionId, { liked: l })}
                 >
                     <ResultSection
                         answer={linsight.output_result?.answer}
                         files={fileList}
                         versionId={versionId}
-                        onPreview={(file) => onPreviewFile?.(file)}
+                        // Stamp the file with THIS turn's session version: the
+                        // preview panel aggregates all turns and resolves each
+                        // file against its own version, and a doc link clicked
+                        // in an older turn must not resolve against the newest.
+                        onPreview={(file) => onPreviewFile?.({ ...file, versionId })}
                     />
                 </ResultPanel>
             )}
+
+            {/* F086: token row (hidden until the run made its first call) */}
+            {!isReadOnly && <ContextUsageRow usage={contextUsage} />}
         </div>
         </ExecutionLiveContext.Provider>
+        </ExecutionTurnLiveContext.Provider>
     );
 }

@@ -29,7 +29,13 @@ jest.mock("~/hooks/queries/data-provider", () => ({
 // The shared AgentCard is covered by its own consumers; the plaza page test
 // stubs it so the assertions stay focused on the page-level contract.
 jest.mock("../components/AgentCard", () => ({
-  AgentCard: ({ agent, onStartChat }: any) => (
+  AgentCard: ({
+    agent,
+    onStartChat,
+  }: {
+    agent: { name: string };
+    onStartChat: (agent: unknown) => void;
+  }) => (
     <button type="button" data-testid="agent-card" onClick={() => onStartChat(agent)}>
       {agent.name}
     </button>
@@ -41,7 +47,8 @@ class MockIntersectionObserver {
   unobserve() {}
   disconnect() {}
 }
-(global as any).IntersectionObserver = MockIntersectionObserver;
+(global as unknown as { IntersectionObserver: typeof MockIntersectionObserver }).IntersectionObserver =
+  MockIntersectionObserver;
 
 jest.mock("react-router-dom", () => ({
   useNavigate: () => jest.fn(),
@@ -65,7 +72,7 @@ describe("ExplorePlaza (F047)", () => {
     jest.clearAllMocks();
     mockGetFavoritesApi.mockResolvedValue({ data: { list: [], total: 0 } });
     mockGetFrequently.mockResolvedValue({ data: { list: [], total: 0 } });
-    mockGetHomeLabelApi.mockResolvedValue({ data: [{ id: 1, name: "金融" }] });
+    mockGetHomeLabelApi.mockResolvedValue({ data: [{ id: 1, name: "Finance" }] });
   });
 
   it("renders plaza cards with name and 7d-visit badge", async () => {

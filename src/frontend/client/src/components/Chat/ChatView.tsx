@@ -1,3 +1,4 @@
+import type { AgentConfig } from "~/types/harness";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -11,7 +12,7 @@ import AiChatMessages from '~/components/Chat/AiChatMessages';
 import { PinnedTaskPanel } from '~/components/Linsight/Execution/PinnedTaskPanel';
 import { WorkspacePanel } from '~/components/Linsight/Artifacts/WorkspacePanel';
 import { useWorkspacePanel } from '~/components/Linsight/Artifacts/useWorkspacePanel';
-import { type ArtifactFile, toUploadedArtifacts } from '~/components/Linsight/Artifacts/artifactUtils';
+import { useWorkspaceArtifacts } from '~/components/Linsight/Artifacts/useWorkspaceArtifacts';
 import { useLinsightManager } from '~/hooks/useLinsightManager';
 import { userStopLinsightEvent } from '~/api/linsight';
 import { SopStatus, taskModeState } from '~/store/linsight';
@@ -354,7 +355,7 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
     return Array.isArray(plugins) ? plugins.includes('linsight_task_mode') : true;
   }, [user]);
 
-  const handleSend = useCallback((text: string, files?: any[] | null) => {
+  const handleSend = useCallback((text: string, files?: any[] | null, agentConfig?: AgentConfig) => {
     // F035 Track J (TJ-6): both modes go through the SAME unified entry now.
     // Task mode is just a per-turn flag — no /linsight navigation, no separate
     // submission pipeline. The turn stays in this daily conversation; the
@@ -367,7 +368,7 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
     if (taskMode && canUseTaskMode) {
       const trimmed = text.trim();
       if (!trimmed && !(files || []).length) return;
-      sendMessage(trimmed, files, { taskMode: true });
+      sendMessage(trimmed, files, { taskMode: true, agentConfig });
       setInputText('');
       return;
     }
@@ -533,11 +534,37 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
   });
 
   const taskLinsight = latestTaskVersionId ? getLinsight(latestTaskVersionId) : null;
-  const taskWorkspaceFiles = useMemo(() => {
-    const uploaded = toUploadedArtifacts(taskLinsight?.files as any[]);
-    const generated = (taskLinsight?.file_list as ArtifactFile[]) || [];
-    return [...uploaded, ...generated];
-  }, [taskLinsight?.files, taskLinsight?.file_list]);
+
+  // F035: every task turn of THIS conversation, oldest → newest. The workspace
+  // panel aggregates all of them (useWorkspaceArtifacts): a follow-up round is
+  // a new session version that only carries its own newly produced files
+  // (inherited-but-unchanged files are not re-delivered), so binding the panel
+  // to the latest turn alone dropped every earlier deliverable from the file
+  // list. Guard on the message's own conversationId — same rationale as
+  // isTaskConversation — so the stale previous-conversation message list that
+  // lingers for one commit during navigation cannot leak files into it.
+  const taskVersionIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const m of messages as any[]) {
+      const vid = m?.linsightSessionVersionId as string | undefined;
+      if (
+        m?.category === 'task' &&
+        vid &&
+        m?.conversationId === conversationId &&
+        !ids.includes(vid)
+      ) {
+        ids.push(vid);
+      }
+    }
+    return ids;
+  }, [messages, conversationId]);
+
+  const taskWorkspaceFiles = useWorkspaceArtifacts(
+    conversationId,
+    taskVersionIds,
+    taskArtifacts.open,
+    shareToken,
+  );
 
   // F035: while the latest task round is in a non-terminal state (generating /
   // running / queued), the input stays editable but the send button is disabled
@@ -688,7 +715,8 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
                             {latestTaskVersionId && <PinnedTaskPanel versionId={latestTaskVersionId} />}
                             <AiChatInput
                               disabled={!bsConfig?.models?.length || !!shareToken}
-                              sendDisabled={taskRunning}
+                              sendDisabled={taskRunning} agentConfig={taskLinsight?.agent_config}
+                              memberDraftScope={conversationId}
                               isStreaming={isStreaming}
                               // Parked awaiting the user → not "running": drop the Stop
                               // button (sendDisabled still blocks a new round until the
@@ -864,7 +892,8 @@ const ChatView = ({ id = '', index = 0, shareToken = '' }: { id?: string, index?
                           <AiChatInput
                             elevated
                             disabled={!bsConfig?.models?.length || !!shareToken}
-                            sendDisabled={taskRunning}
+                            sendDisabled={taskRunning} agentConfig={taskLinsight?.agent_config}
+                              memberDraftScope={conversationId}
                             isStreaming={isStreaming}
                             features={{ taskModeEntry: canUseTaskMode, taskMode: taskMode && canUseTaskMode }}
                             onToggleTaskMode={() => setTaskMode((v) => !v)}

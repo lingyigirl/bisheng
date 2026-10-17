@@ -1,3 +1,6 @@
+import { useLocalize } from "~/hooks";
+import type { AgentConfig, HarnessOptions } from "~/types/harness";
+import { SubagentPicker } from "~/components/Linsight/Input/SubagentPicker";
 /**
  * Simplified chat input with configurable toolbar.
  * Features: file upload (InputFiles + drag/paste), voice input (STT),
@@ -14,7 +17,10 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { useRecoilValue, useRecoilState } from "recoil";
+import { useQuery } from "@tanstack/react-query";
+import { listSavedMembers } from "~/api/linsight";
 import { File_Accept } from "~/common";
+import { useMemberDraft } from "~/components/Linsight/Input/useMemberDraft";
 import { SkillSelector } from "~/components/Linsight/Input/SkillSelector";
 import { taskModeSkillsState } from "~/store/linsight";
 import AgentToolSelector from "~/components/Chat/Input/AgentToolSelector";
@@ -56,6 +62,8 @@ export interface AiChatInputFeatures {
 }
 
 interface AiChatInputProps {
+    agentConfig?: AgentConfig | null;
+    memberDraftScope?: string;
     size?: '' | 'mini';
     features?: AiChatInputFeatures;
     disabled?: boolean;
@@ -86,7 +94,7 @@ interface AiChatInputProps {
     onModelChange?: (val: string) => void;
     placeholder?: string;
     /** files: uploaded file list [{path, name}], null means still uploading */
-    onSend: (text: string, files?: any[] | null) => void;
+    onSend: (text: string, files?: any[] | null, agentConfig?: AgentConfig) => void;
     onStop: () => void;
     onScrollToBottom: () => void;
     /** Optional controlled value — for filling in preset questions */
@@ -119,6 +127,8 @@ interface AiChatInputProps {
 
 const AiChatInput = memo(
     ({
+        agentConfig,
+        memberDraftScope = 'new',
         size = '',
         features,
         disabled = false,
@@ -145,6 +155,7 @@ const AiChatInput = memo(
         onSelectionPresenceChange,
         onToggleTaskMode,
     }: AiChatInputProps) => {
+        const localize = useLocalize();
         const {
             modelSelect = true,
             knowledgeBase = true,
@@ -156,6 +167,16 @@ const AiChatInput = memo(
             taskModeEntry = false,
             taskMode = false,
         } = features ?? {};
+
+        const { data: savedMemberRows } = useQuery({
+            queryKey: ['linsight', 'savedMembers'],
+            queryFn: listSavedMembers,
+            enabled: taskMode,
+            staleTime: 30_000,
+        });
+        const [memberDraft, setMemberDraft] = useMemberDraft(
+            memberDraftScope, agentConfig, taskMode, savedMemberRows,
+        );
 
         // Upload size limit comes from /api/v1/env (Recoil bishengConfState),
         // not /api/v1/workstation/config. bsConfig does not carry this field,
@@ -285,7 +306,7 @@ const AiChatInput = memo(
             const trimmed = text.trim();
             if ((!trimmed && !chatFiles?.length) || disabled || sendDisabled || isStreaming || fileUploading) return;
             // Pass files through to parent
-            onSend(trimmed, chatFiles);
+            onSend(trimmed, chatFiles, taskMode ? memberDraft : undefined);
             setText("");
             setChatFiles(null);
             setUploadingFiles([]);
@@ -300,7 +321,7 @@ const AiChatInput = memo(
                 window.clearTimeout(textareaScrollHideTimerRef.current);
                 textareaScrollHideTimerRef.current = null;
             }
-        }, [text, disabled, sendDisabled, isStreaming, fileUploading, onSend, chatFiles, setText]);
+        }, [text, disabled, sendDisabled, isStreaming, fileUploading, onSend, chatFiles, setText, taskMode, memberDraft]);
 
         const handleKeyDown = useCallback(
             (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -364,6 +385,11 @@ const AiChatInput = memo(
 
         return (
             <div className="px-4 sm:px-0 pb-1 touch-mobile:px-0 touch-mobile:pb-1 shrink-0 relative">
+                {taskMode && <div className="mb-2 flex items-center gap-2">
+                    <SubagentPicker value={memberDraft} options={(bsConfig || {}) as HarnessOptions}
+                        disabled={taskRunning || sendDisabled} onChange={setMemberDraft} />
+                    <span className="truncate text-caption text-text-3">{memberDraft.subagents.map((member) => member.name).join(' · ')}</span>
+                </div>}
                 {/* Drag-drop overlay */}
                 {isDragging && <DragDropOverlay />}
 
@@ -375,7 +401,7 @@ const AiChatInput = memo(
                             onClick={onScrollToBottom}
                         >
                             <ArrowDown className="size-4" />
-                            <span className="text-sm">回到底部</span>
+                            <span className="text-sm">{localize('harness.bottom')}</span>
                         </Button>
                     </div>
                 </div>}

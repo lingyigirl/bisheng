@@ -218,7 +218,33 @@ export function mergeAdjacentThinking(steps: MergedStep[]): MergedStep[] {
  *   delegation burst so the NEXT distinct ns starts a fresh group. The main graph
  *   is blocked while subagents run, so top-level steps only fall between rounds.
  */
+function buildConfiguredFlowNodes(steps: MergedStep[]): FlowNode[] {
+    const nodes: FlowNode[] = [];
+    const groups = new Map<string, SubagentGroup>();
+    for (const step of steps) {
+        const invocation = step.extraInfo.invocation_id;
+        if (typeof invocation !== 'string') {
+            nodes.push({ kind: 'step', step });
+            continue;
+        }
+        let group = groups.get(invocation);
+        if (!group) {
+            group = { kind: 'subagent_group', name: String(step.extraInfo.agent_name || step.name), agents: [], goals: [String(step.extraInfo.delegate_goal || '')] };
+            groups.set(invocation, group);
+            nodes.push(group);
+        }
+        if (!group.agents.length) group.agents.push({ step, children: [] });
+        else if (step.callId === invocation) {
+            if (group.agents[0].step.callId !== invocation) group.agents[0].children.unshift(group.agents[0].step);
+            group.agents[0].step = step;
+        } else group.agents[0].children.push(step);
+    }
+    return nodes;
+}
+
 export function buildFlowNodes(steps: MergedStep[]): FlowNode[] {
+    if (steps.some((step) => typeof step.extraInfo.invocation_id === 'string')) return buildConfiguredFlowNodes(steps);
+
     const merged = mergeAdjacentThinking(steps);
     const nodes: FlowNode[] = [];
     // ns -> agent bucket; persists for the whole task so a subagent's later steps
@@ -440,6 +466,7 @@ export function hasRenderableTimeline(history: ExecStepEventData[] | null | unde
 export function isTimelineNodeRunning(node: TimelineNode): boolean {
     if (node.kind === 'subagent_group') return node.agents.some((a) => a.step.running);
     if (node.kind === 'deep_step_group') return node.running;
+    if (node.kind === 'intent') return false;
     return node.step.running;
 }
 
