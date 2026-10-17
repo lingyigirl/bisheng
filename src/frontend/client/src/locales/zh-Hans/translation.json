@@ -2134,7 +2134,8 @@
     "collaboratorHint": "勾选后在本轮任务生效；带星标的成员会在新会话自动勾选",
     "autoSaveHint": "保存即写入常用成员；勾选后在本轮任务生效。",
     "defaultHint": "新会话默认携带",
-    "save": "保存"
+    "save": "保存",
+    "unavailableCapability": "{{kind}} #{{id}}（当前不可用）"
   },
   "com_linsight_error_title_recovery_blocked": "自动续跑已停止",
   "com_linsight_error_desc_recovery_blocked": "无法确认上次工具调用的结果，或所需执行状态已无法恢复。",

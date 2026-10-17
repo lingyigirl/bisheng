@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getSelectableSkills } from '~/api/linsight';
+import { getMemberToolCatalog } from '~/api/harness';
 import { Checkbox } from '~/components/ui/Checkbox';
 import { Input } from '~/components/ui/Input';
 import { Textarea } from '~/components/ui/Textarea';
@@ -21,6 +22,13 @@ function toggle<T>(items: T[], value: T): T[] {
 export function SubagentEditor({ member, options, disabled, onChange }: SubagentEditorProps) {
     const t = useLocalize();
     const skills = useQuery({ queryKey: ['linsight', 'selectableSkills'], queryFn: getSelectableSkills });
+    const catalog = useQuery({ queryKey: ['linsight', 'memberToolCatalog'], queryFn: getMemberToolCatalog, staleTime: 60_000 });
+    const tools = catalog.data || options.tools || [];
+    const missingCapabilities = (['tool_refs', 'connector_refs'] as const).flatMap((field) =>
+        member[field].filter((id) => !tools.some((group) =>
+            (group.is_preset === 1 ? 'tool_refs' : 'connector_refs') === field && group.children?.some((tool) => Number(tool.id) === id),
+        )).map((id) => ({ field, id })),
+    );
     const models = [...new Map((options.models || []).filter((model) => /^\d+$/.test(String(model.id))).map((model) => [String(model.id), model])).values()];
     const patch = (value: Partial<SubagentConfig>) => onChange({ ...member, ...value });
     return (
@@ -58,7 +66,9 @@ export function SubagentEditor({ member, options, disabled, onChange }: Subagent
             </div>
             <div className="space-y-3">
                 <p>{t('harness.capabilities')}</p>
-                {(options.tools || []).map((group) => {
+                {catalog.isLoading && <p className="text-text-3">{t('harness.loading')}</p>}
+                {catalog.isError && <p className="text-danger">{t('harness.loadError')}</p>}
+                {tools.map((group) => {
                     const field = group.is_preset === 1 ? 'tool_refs' : 'connector_refs';
                     return (
                         <div key={group.id} className="rounded-lg border border-border-base p-3">
@@ -72,6 +82,12 @@ export function SubagentEditor({ member, options, disabled, onChange }: Subagent
                         </div>
                     );
                 })}
+                {missingCapabilities.map(({ field, id }) => (
+                    <label key={`${field}-${id}`} className="flex items-center gap-2 py-1">
+                        <Checkbox disabled={disabled} checked onCheckedChange={() => patch({ [field]: toggle(member[field], id) })} />
+                        {t('harness.unavailableCapability', { kind: t(field === 'tool_refs' ? 'harness.tools' : 'harness.connectors'), id })}
+                    </label>
+                ))}
             </div>
             <details>
                 <summary className="cursor-pointer text-text-2">{t('harness.prompt')}</summary>

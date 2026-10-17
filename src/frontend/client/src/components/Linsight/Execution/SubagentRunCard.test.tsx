@@ -3,6 +3,7 @@ import { act, render, screen } from '@testing-library/react';
 import type { SubagentGroup } from './execTypes';
 import { ExecutionTurnLiveContext } from './executionLive';
 import { SubagentRunCard } from './SubagentRunCard';
+import { mergeStepFrames } from './stepTree';
 
 jest.mock('~/hooks', () => ({ useLocalize: () => (key: string) => key }));
 
@@ -87,4 +88,21 @@ test('the subagent result is collapsed behind a summary by default', () => {
     expect(details).not.toBeNull();
     expect(details).not.toHaveAttribute('open');
     expect(details).toHaveTextContent('# long report body');
+});
+
+test('replayed background completion shows the final report and actual duration', () => {
+    const [step] = mergeStepFrames([
+        { call_id: 'child', step_type: 'subagent', status: 'start', timestamp: 100, extra_info: { agent_name: 'Verifier' } },
+        { call_id: 'child', step_type: 'subagent', status: 'end', timestamp: 195, output: 'Verified total: 400', extra_info: { job_status: 'completed', outcome: 'success' } },
+    ]);
+    const group = makeGroup({ ...step });
+    renderWithTurnLive(false, group);
+    expect(screen.getByRole('status')).toHaveTextContent('harness.completed · 95s');
+    expect(screen.getByText('Verified total: 400')).toBeInTheDocument();
+});
+
+test('a cancelled background child is stopped rather than failed', () => {
+    renderWithTurnLive(false, makeGroup({ running: false, extraInfo: { job_status: 'killed', outcome: 'error' } }));
+    expect(screen.getByRole('status')).toHaveTextContent('harness.stopped');
+    expect(screen.getByRole('status')).not.toHaveTextContent('harness.failed');
 });

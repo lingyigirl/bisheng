@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "~/components/ui/Button";
 import { SystemMaintenanceIllustration } from "~/components/illustrations";
 import { useLocalize } from "~/hooks";
+import { isServiceAvailable } from "~/api/serviceHealth";
 
 /**
  * Window event that surfaces the full-screen maintenance overlay. The axios
@@ -13,7 +14,8 @@ export const SERVICE_MAINTENANCE_EVENT = "bs:service-maintenance";
 /**
  * Full-screen "system under maintenance" overlay shown when the backend service
  * is down (gateway returns HTTP 500). Mounted once at the app root; it stays
- * hidden until a 500 fires the event, then covers the app until a reload.
+ * hidden until a 500 fires the event. A single, bounded probe loop clears it
+ * after recovery without reloading an in-progress conversation.
  */
 export function SystemMaintenanceOverlay() {
     const localize = useLocalize();
@@ -24,6 +26,28 @@ export function SystemMaintenanceOverlay() {
         window.addEventListener(SERVICE_MAINTENANCE_EVENT, show);
         return () => window.removeEventListener(SERVICE_MAINTENANCE_EVENT, show);
     }, []);
+
+    useEffect(() => {
+        if (!visible) return;
+        let disposed = false;
+        let timer: ReturnType<typeof setTimeout>;
+        const check = async () => {
+            try {
+                if (await isServiceAvailable()) {
+                    if (!disposed) setVisible(false);
+                    return;
+                }
+            } catch {
+                // An outage is expected here; keep the existing recovery UI.
+            }
+            if (!disposed) timer = setTimeout(check, 5000);
+        };
+        timer = setTimeout(check, 5000);
+        return () => {
+            disposed = true;
+            clearTimeout(timer);
+        };
+    }, [visible]);
 
     if (!visible) return null;
 

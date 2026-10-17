@@ -28,7 +28,8 @@ export function SubagentRunCard({ group }: SubagentRunCardProps) {
     );
     if (!agent || !step) return null;
     const failed = step.extraInfo.outcome === 'error';
-    const status = running ? 'harness.running' : failed ? 'harness.failed' : step.running ? 'harness.stopped' : 'harness.completed';
+    const stopped = step.extraInfo.job_status === 'killed' || step.running;
+    const status = running ? 'harness.running' : stopped ? 'harness.stopped' : failed ? 'harness.failed' : 'harness.completed';
     const elapsed = Math.round(elapsedMs / 1000);
     return (
         <section className="rounded-xl border border-border-base bg-fill-1 p-4">

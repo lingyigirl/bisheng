@@ -2128,7 +2128,8 @@
     "collaboratorHint": "チェックしたメンバーは今回のタスクで有効。スター付きは新しい会話で自動選択されます",
     "autoSaveHint": "保存するとメンバーライブラリに書き込まれます。チェックすると今回のタスクで有効になります。",
     "defaultHint": "新しい会話で既定として選択",
-    "save": "保存"
+    "save": "保存",
+    "unavailableCapability": "{{kind}} #{{id}}（現在利用不可）"
   },
   "com_linsight_error_title_recovery_blocked": "自動再開を停止しました",
   "com_linsight_error_desc_recovery_blocked": "前回のツール実行結果が不明、または必要な実行状態を復元できません。",
