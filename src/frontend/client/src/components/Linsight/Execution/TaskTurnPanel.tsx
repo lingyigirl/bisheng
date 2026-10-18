@@ -205,7 +205,7 @@ export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversa
         <ExecutionTurnLiveContext.Provider value={running && !pendingInput}>
         <ExecutionLiveContext.Provider value={running && !pendingInput && !tasks.length}>
         <div ref={rootRef} className="w-full">
-            {!!linsight.recoveryAttempt && (
+            {!!linsight.recoveryAttempt && linsight.taskErrorInfo?.error_type !== 'recovery_blocked' && (
                 <div role="status" className="text-caption text-text-3 py-2">
                     {localize('harness.recoveryAttempt', { count: linsight.recoveryAttempt })}
                 </div>

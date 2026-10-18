@@ -5,6 +5,8 @@ import { useLinsightQueuePolling } from '~/hooks/useLinsightQueuePolling';
 import { TaskTurnPanel } from './TaskTurnPanel';
 
 let mockParams: { token?: string } = {};
+let mockRecoveryAttempt = 0;
+let mockRecoveryBlocked = false;
 jest.mock('react-router-dom', () => ({ useParams: () => mockParams }));
 jest.mock('~/hooks', () => ({ useLocalize: () => (key: string) => key }));
 jest.mock('~/hooks/queries/data-provider', () => ({ useGetBsConfig: () => ({ data: {} }) }));
@@ -19,7 +21,7 @@ jest.mock('~/api/linsight', () => ({
 }));
 jest.mock('~/store/linsight', () => ({ SopStatus: { Running: 'running', completed: 'completed', Stoped: 'stopped' } }));
 jest.mock('~/hooks/useLinsightManager', () => ({ useLinsightManager: () => ({
-    getLinsight: () => ({ status: 'running', queueCount: 2, tasks: [], sessionSteps: [], agent_config: { subagents: [{ id: 'member' }] } }),
+    getLinsight: () => ({ status: 'running', queueCount: 2, tasks: [], sessionSteps: [], agent_config: { subagents: [{ id: 'member' }] }, recoveryAttempt: mockRecoveryAttempt, taskErrorInfo: mockRecoveryBlocked ? { error_type: 'recovery_blocked' } : undefined }),
     switchAndUpdateLinsight: jest.fn(), updateLinsight: jest.fn(),
 }) }));
 jest.mock('~/components/Linsight/Input/SubagentPicker', () => ({ SubagentPicker: () => <button>Inspect configuration</button> }));
@@ -32,7 +34,16 @@ jest.mock('./ResultPanel', () => ({ ResultPanel: () => null }));
 jest.mock('./TaskStepRow', () => ({ TaskStepRow: () => null }));
 jest.mock('./QueueCard', () => ({ QueueCard: () => <button>Cancel queued task</button> }));
 
-beforeEach(() => { jest.clearAllMocks(); mockParams = {}; });
+beforeEach(() => { jest.clearAllMocks(); mockParams = {}; mockRecoveryAttempt = 0; mockRecoveryBlocked = false; });
+
+test('blocked recovery never claims that automatic continuation succeeded', () => {
+    mockRecoveryAttempt = 1;
+    const { rerender } = render(<TaskTurnPanel versionId="task" conversationId="conversation" />);
+    expect(screen.getByText('harness.recoveryAttempt')).toBeInTheDocument();
+    mockRecoveryBlocked = true;
+    rerender(<TaskTurnPanel versionId="task" conversationId="conversation" />);
+    expect(screen.queryByText('harness.recoveryAttempt')).not.toBeInTheDocument();
+});
 
 test('share route is read-only even when the parent omits the readOnly prop', () => {
     mockParams = { token: 'test-share' };

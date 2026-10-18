@@ -77,7 +77,9 @@ async def materialize_session_skills(
     # Governance gate, scoped to the current tenant (LinsightSkillDao.list_enabled
     # uses strict_tenant_filter); the worker has already restored tenant context.
     rows = {skill.name: skill for skill in await LinsightSkillDao.list_enabled()}
-    wanted = sorted(set(selected) & rows.keys())
+    wanted = sorted(set(selected))
+    if not set(wanted).issubset(rows):
+        raise LinsightAgentConfigurationError(msg="Selected Skill is unavailable")
     # The agent is only assembled after all uploads succeed; keep one bundle in memory.
     for name in wanted:
         try:

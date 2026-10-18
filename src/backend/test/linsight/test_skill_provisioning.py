@@ -157,15 +157,19 @@ class TestGate:
 
     async def test_db_disabled_skill_never_copied_even_if_selected(self, monkeypatch, store, backend):
         _patch_enabled(monkeypatch, ENABLED)
-        copied = await materialize_session_skills(
-            backend, TENANT, ["ting-yong-ji-neng", "biao-shu-zhuan-xie"], store=store
-        )
-        assert copied == ["biao-shu-zhuan-xie"]
+        from bisheng.common.errcode.linsight import LinsightAgentConfigurationError
 
-    async def test_unknown_selected_name_ignored(self, monkeypatch, store, backend):
+        with pytest.raises(LinsightAgentConfigurationError):
+            await materialize_session_skills(backend, TENANT, ["ting-yong-ji-neng", "biao-shu-zhuan-xie"], store=store)
+        assert backend.uploaded == []
+
+    async def test_unknown_selected_name_rejected(self, monkeypatch, store, backend):
         _patch_enabled(monkeypatch, ENABLED)
-        copied = await materialize_session_skills(backend, TENANT, ["does-not-exist"], store=store)
-        assert copied == []
+        from bisheng.common.errcode.linsight import LinsightAgentConfigurationError
+
+        with pytest.raises(LinsightAgentConfigurationError):
+            await materialize_session_skills(backend, TENANT, ["does-not-exist"], store=store)
+        assert backend.uploaded == []
 
 
 class TestByteFidelity:

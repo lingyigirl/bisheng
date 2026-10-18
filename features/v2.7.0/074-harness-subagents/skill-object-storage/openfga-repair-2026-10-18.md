@@ -14,7 +14,7 @@
 
 旧模型 01M4BBVZFK17265KMWRX6N3S59；新模型 01M56QABV7KRCXT2NVDPZNPS5X。原模型保留，未覆盖现有其他类型或关系。首次发布的读回校验因服务端补充 computedUserset.object="" 报错，记录新模型 id 后停止；修正默认字段比较并完整比对通过，复用同一个模型，没有重复发布。
 
-本机 API 和专用 Linsight Worker 均已重启，启动日志确认采用新模型。其他远端 API/Celery/Worker 进程未由本次操作重启；已有进程缓存模型 id，需要运维协调重启，固定 model_id 的部署还需更新配置。没有推送 Git 远端或部署远端应用代码。
+本机 API 和专用 Linsight Worker 均已重启，启动日志确认采用新模型。按用户确认，云端没有 FastAPI 实例；不应把一般部署建议当作现有待重启清单。若其他部署存在使用旧模型的后端进程，需另行核实并协调重启；固定 model_id 的部署还需更新配置。没有推送 Git 远端或部署远端应用代码。
 
 补偿前 11 条 Skill owner 记录均为 dead；校验后恢复 9 条（Skill id 3–11），状态 succeeded。2 条对应已不存在的 Skill id 1、2，保留 dead 并报告跳过，没有创建悬空授权。重跑仅见这 2 条跳过，不重复授权。
 
