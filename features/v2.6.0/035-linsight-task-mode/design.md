@@ -561,6 +561,8 @@ Linsight 独立 Worker 多进程，**子进程不继承 API 进程的租户上�
 
 ## 7. Skill 存储与中间件
 
+> **v2.7.0 存储契约更新**：自定义 Skill 已改为 MinIO 不可变版本包与本机可重建缓存，旧 skills_root 仅供只读兼容及显式迁移。下列磁盘布局/共享卷要求为旧版背景，不能作为新版部署指引；当前权威设计、升级与回退见 [对象存储设计](../../v2.7.0/074-harness-subagents/skill-object-storage/design.md) 与 [运维手册](../../v2.7.0/074-harness-subagents/skill-object-storage/runbook.md)。运行时仍保留按选择白名单复制 Skill 到工作区的步骤，不直接用对象列表替代目录发现。
+
 > ⚠️ **现状更新（2026-06-24）**：Skill 运行时注入于 2026-06-16 临时禁用（交付物管道优先）；§7.2 的「双中间件」已演进为单 subclass `TenantSkillsMiddleware`（deviation D8）。当年「shadow 阻塞」在 deepagents 0.6.8 下已不成立，恢复无架构级阻塞。完整脉络（原设计 → 演进 → 禁用 → 再核查）、遗留缺口与恢复方案见《[灵思任务模式 Skill 能力恢复方案](../../../docs/PRD/2.6%20灵思%20deepagents%20迁移%20PRD/灵思任务模式%20Skill%20能力恢复方案.md)》。**✅ 2026-06-24 已按 Fork X（复制时过滤）恢复（代码+单测，端到端待跑）**：任务启动把命中技能复制进工作区 `/skills/`，`SkillsMiddleware` 经指向缓存的 `FilesystemBackend` 枚举；`TenantSkillsMiddleware` 单 subclass 转休眠，白名单语义迁至 `skill_provisioning`。详见恢复方案「实现状态」。
 
 ### 7.1 目录结构

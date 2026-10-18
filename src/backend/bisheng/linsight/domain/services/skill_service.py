@@ -1,7 +1,7 @@
 """Tenant custom skill management service (F035 Track D, design §7.4/§7.5).
 
 Validation chain (design §7.4): size gate → unpack/parse → frontmatter +
-name/display_name checks → duplicate checks → disk bundle write → DB metadata
+name/display_name checks → duplicate checks → object bundle publication → DB metadata
 → best-effort owner tuple via PermissionService.authorize.
 
 built-in skills never pass through here: any name that does not exist in the
@@ -11,8 +11,7 @@ existence is not leaked (design §7.5).
 
 from __future__ import annotations
 
-import io
-import zipfile
+import asyncio
 from typing import NamedTuple
 
 from loguru import logger
@@ -30,6 +29,7 @@ from bisheng.linsight.domain.models.linsight_skill import (
     LinsightSkill,
     LinsightSkillDao,
 )
+from bisheng.linsight.domain.repositories.skill_repository import SkillRepository
 from bisheng.linsight.domain.schemas.skill_schema import (
     SkillBrief,
     SkillCreateForm,
@@ -39,6 +39,7 @@ from bisheng.linsight.domain.schemas.skill_schema import (
     SkillSelectable,
 )
 from bisheng.linsight.domain.services.github_skill_fetcher import fetch_skill_files, parse_github_url
+from bisheng.linsight.domain.services.skill_bundle_cache import BundleTooLargeError, safe_path, validate_files
 from bisheng.linsight.domain.services.skill_store import (
     DISPLAY_NAME_META_KEY,
     MAX_BUNDLE_SIZE,
@@ -48,6 +49,7 @@ from bisheng.linsight.domain.services.skill_store import (
     SKILL_MD,
     SkillStore,
     compose_skill_md,
+    pack_bundle_zip,
     parse_skill_md,
     render_skill_md,
     slugify_pinyin,
@@ -83,20 +85,19 @@ class SkillService:
     isolation on every read/write (no Root→child sharing), so a tenant only
     ever sees and mutates its own skills."""
 
-    def __init__(self, store: SkillStore | None = None):
+    def __init__(self, store: SkillStore | None = None, repository=None):
         self.store = store or SkillStore()
+        self.repository = repository or SkillRepository(dao=LinsightSkillDao)
 
     # ------------------------------------------------------------- queries --
     async def get_page(
         self, keyword: str | None, enabled: bool | None, page: int, page_size: int
     ) -> PageData[SkillBrief]:
-        skills, total = await LinsightSkillDao.get_page(
-            keyword=keyword, enabled=enabled, page=page, page_size=page_size
-        )
+        skills, total = await self.repository.get_page(keyword=keyword, enabled=enabled, page=page, page_size=page_size)
         return PageData(data=[SkillBrief.from_model(s) for s in skills], total=total)
 
     async def get_selectable(self) -> list[SkillSelectable]:
-        skills = await LinsightSkillDao.list_enabled()
+        skills = await self.repository.enabled()
         return [
             SkillSelectable(name=s.name, display_name=s.display_name or s.name, description=s.description)
             for s in skills
@@ -104,29 +105,26 @@ class SkillService:
 
     async def get_detail(self, tenant_id: int, name: str) -> SkillDetail:
         skill = await self._get_or_404(name)
-        try:
-            source_text = self.store.read_text(tenant_id, name)
-            _, body = parse_skill_md(source_text)
-        except (FileNotFoundError, ValueError) as exc:
-            # Disk drifted from DB (shared-volume misconfig etc.) — surface, don't hide.
-            logger.warning("skill disk read failed for {}: {}", name, exc)
-            source_text, body = "", ""
+        files = await self._load_existing_bundle(tenant_id, name, skill)
+        source_text = files[SKILL_MD].decode("utf-8", errors="replace")
+        _, body = parse_skill_md(source_text)
         detail = SkillDetail(
             **SkillBrief.from_model(skill).model_dump(),
             preview=body.strip(),
             source_text=source_text,
-            files=[SkillFileEntry(**e) for e in self.store.list_files(tenant_id, name)],
+            files=[SkillFileEntry(path=p, size=len(files[p])) for p in sorted(files, key=lambda p: (p != SKILL_MD, p))],
         )
         return detail
 
     async def read_bundle_file(self, tenant_id: int, name: str, path: str) -> SkillFileContent:
-        await self._get_or_404(name)
+        files = await self._load_existing_bundle(tenant_id, name)
         try:
-            content = self.store.read_text(tenant_id, name, path)
-        except ValueError:
-            raise SkillValidationError(msg=f"illegal file path: {path}")
-        except FileNotFoundError:
-            raise SkillNotFoundError(msg=f"file not found in skill bundle: {path}")
+            key = str(safe_path(path))
+        except ValueError as exc:
+            raise SkillValidationError() from exc
+        if key not in files:
+            raise SkillNotFoundError()
+        content = files[key].decode("utf-8", errors="replace")
         return SkillFileContent(path=path, content=content)
 
     # ----------------------------------------------------------- mutations --
@@ -142,7 +140,7 @@ class SkillService:
         return await self._create(tenant_id, user_id, form.name, form.display_name, form.description, files)
 
     async def create_from_upload(self, tenant_id: int, user_id: int, filename: str, data: bytes) -> SkillDetail:
-        meta, files = self._parse_upload(filename, data)
+        meta, files = await asyncio.to_thread(self._parse_upload, filename, data)
         detail = await self._create(tenant_id, user_id, meta.name, meta.display_name, meta.description, files)
         detail.normalized_from = meta.normalized_from
         return detail
@@ -170,40 +168,35 @@ class SkillService:
         new_md = compose_skill_md(
             name=form.name, description=form.description, body=form.content, display_name=form.display_name
         ).encode("utf-8")
-        files = self._load_existing_bundle(tenant_id, name)
+        files = await self._load_existing_bundle(tenant_id, name, skill)
         files[SKILL_MD] = new_md
-        size = self.store.write_bundle(tenant_id, name, files)
-        skill.display_name, skill.description, skill.size = form.display_name, form.description, size
-        await LinsightSkillDao.update(skill)
+        await self._publish(skill, files, form.display_name, form.description)
         return await self.get_detail(tenant_id, name)
 
     async def update_from_upload(self, tenant_id: int, name: str, filename: str, data: bytes) -> SkillDetail:
         """Whole-bundle replacement; frontmatter name (after normalization) must equal the path name."""
         skill = await self._get_or_404(name)
-        meta, files = self._parse_upload(filename, data)
+        meta, files = await asyncio.to_thread(self._parse_upload, filename, data)
         if meta.name != name:
             raise SkillValidationError(msg=f"frontmatter name '{meta.name}' must equal skill ID '{name}'")
         await self._check_duplicate(name, meta.display_name, exclude_id=skill.id)
-        size = self.store.write_bundle(tenant_id, name, files)
-        skill.display_name, skill.description, skill.size = meta.display_name, meta.description, size
-        await LinsightSkillDao.update(skill)
+        await self._publish(skill, files, meta.display_name, meta.description)
         detail = await self.get_detail(tenant_id, name)
         detail.normalized_from = meta.normalized_from
         return detail
 
     async def set_status(self, name: str, enabled: bool) -> None:
-        if not await LinsightSkillDao.set_enabled(name, enabled):
+        if not await self.repository.set_enabled(name, enabled):
             raise SkillNotFoundError()
 
     async def delete(self, tenant_id: int, name: str) -> None:
         skill = await self._get_or_404(name)
-        await LinsightSkillDao.delete_by_name(name)
-        if not self.store.delete(tenant_id, name):
-            logger.warning("skill dir missing on delete: tenant={} name={}", tenant_id, skill.name)
+        await self.repository.delete(name)
+        logger.info("skill access revoked: tenant={} skill_id={}", tenant_id, skill.id)
 
     # ----------------------------------------------------------- internals --
     async def _get_or_404(self, name: str) -> LinsightSkill:
-        skill = await LinsightSkillDao.get_by_name(name)
+        skill = await self.repository.get(name)
         if not skill:
             # built-in names also land here: 404 without leaking existence (design §7.5).
             raise SkillNotFoundError()
@@ -216,6 +209,8 @@ class SkillService:
         if lower.endswith(_ARCHIVE_SUFFIXES):
             try:
                 files = unpack_zip_bytes(data)
+            except BundleTooLargeError as exc:
+                raise SkillBundleTooLargeError() from exc
             except ValueError as exc:
                 raise SkillValidationError(msg=str(exc))
             if sum(len(c) for c in files.values()) > MAX_UNPACKED_SIZE:
@@ -238,6 +233,10 @@ class SkillService:
         """
         if SKILL_MD not in files:
             raise SkillValidationError(msg="SKILL.md not found")
+        try:
+            validate_files(files)
+        except ValueError as exc:
+            raise SkillValidationError(msg="Invalid skill bundle") from exc
         try:
             meta, body = parse_skill_md(files[SKILL_MD].decode("utf-8", errors="replace"))
         except ValueError as exc:
@@ -271,19 +270,42 @@ class SkillService:
             raise SkillValidationError(msg=f"description is required and must be <= {MAX_DESCRIPTION_LEN} chars")
 
     async def _check_duplicate(self, name: str, display_name: str, exclude_id: int | None = None) -> None:
-        existing = await LinsightSkillDao.get_by_name(name)
+        existing = await self.repository.get(name)
         if existing and existing.id != exclude_id:
             raise SkillNameDuplicateError()
-        existing = await LinsightSkillDao.get_by_display_name(display_name)
+        existing = await self.repository.by_display_name(display_name)
         if existing and existing.id != exclude_id:
             raise SkillNameDuplicateError()
 
-    def _load_existing_bundle(self, tenant_id: int, name: str) -> dict[str, bytes]:
-        base = self.store.skill_dir(tenant_id, name)
-        files: dict[str, bytes] = {}
-        for entry in self.store.list_files(tenant_id, name):
-            files[entry["path"]] = (base / entry["path"]).read_bytes()
-        return files
+    async def _load_existing_bundle(self, tenant_id, name, skill=None):
+        skill = skill or await self._get_or_404(name)
+        if skill.tenant_id != tenant_id:
+            raise SkillNotFoundError()
+        expected = (
+            self.store.object_key(tenant_id, name, skill.content_hash)
+            if skill.content_hash
+            else self.store.object_path(tenant_id, name)
+        )
+        if skill.object_path != expected:
+            raise SkillValidationError(msg="Invalid skill storage reference")
+        try:
+            return await asyncio.to_thread(self.store.load_bundle, tenant_id, name, skill.content_hash)
+        except FileNotFoundError as exc:
+            raise SkillNotFoundError(msg="Skill bundle is missing") from exc
+        except ValueError as exc:
+            raise SkillValidationError(msg="Skill bundle integrity or format check failed") from exc
+
+    async def _publish(self, skill, files, display_name, description):
+        ref = await asyncio.to_thread(self.store.write_bundle, skill.tenant_id, skill.name, files)
+        values = {
+            "content_hash": ref.content_hash,
+            "object_path": ref.object_key,
+            "size": ref.size,
+            "display_name": display_name,
+            "description": description,
+        }
+        if not await self.repository.publish(skill, values):
+            raise SkillValidationError(msg="Skill changed concurrently; reload before updating")
 
     async def export_bundle(self, tenant_id: int, name: str) -> tuple[bytes, str]:
         """Pack the whole skill bundle as a zip (SKILL.md at the archive root).
@@ -292,13 +314,8 @@ class SkillService:
         wrapper directory is not added, so an exported archive re-imports
         as the same skill without path normalization.
         """
-        await self._get_or_404(name)
-        files = self._load_existing_bundle(tenant_id, name)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for rel in sorted(files):
-                zf.writestr(rel, files[rel])
-        return buf.getvalue(), f"{name}.skill.zip"
+        files = await self._load_existing_bundle(tenant_id, name)
+        return await asyncio.to_thread(pack_bundle_zip, files), f"{name}.skill.zip"
 
     async def _create(
         self,
@@ -311,7 +328,7 @@ class SkillService:
     ) -> SkillDetail:
         self._validate_fields(name, display_name, description)
         await self._check_duplicate(name, display_name)
-        size = self.store.write_bundle(tenant_id, name, files)
+        ref = await asyncio.to_thread(self.store.write_bundle, tenant_id, name, files)
         skill = LinsightSkill(
             tenant_id=tenant_id,
             name=name,
@@ -319,11 +336,12 @@ class SkillService:
             description=description,
             enabled=True,
             source=SKILL_SOURCE_MANUAL,
-            object_path=self.store.object_path(tenant_id, name),
-            size=size,
+            object_path=ref.object_key,
+            content_hash=ref.content_hash,
+            size=ref.size,
             created_by=user_id,
         )
-        skill = await LinsightSkillDao.create(skill)
+        skill = await self.repository.create(skill)
         try:
             # Owner tuple is best-effort: PermissionService compensates failed
             # writes via failed_tuples; the resource itself is never rolled back

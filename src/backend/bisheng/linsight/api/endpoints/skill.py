@@ -29,7 +29,7 @@ def _current_tenant_id() -> int:
 
 
 async def _read_upload(file: UploadFile) -> bytes:
-    data = await file.read()
+    data = await file.read(MAX_BUNDLE_SIZE + 1)
     if len(data) > MAX_BUNDLE_SIZE:
         raise SkillFileTooLargeError()
     return data

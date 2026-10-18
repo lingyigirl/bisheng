@@ -187,8 +187,10 @@ class TestCrossTenant:
         # the name were "enabled", the on-disk source path is keyed by tenant_id, so a
         # different tenant resolves an empty bundle and copies nothing.
         _patch_enabled(monkeypatch, {"biao-shu-zhuan-xie"})
-        copied = await materialize_session_skills(backend, OTHER_TENANT, ["biao-shu-zhuan-xie"], store=store)
-        assert copied == []
+        from bisheng.common.errcode.linsight import LinsightAgentConfigurationError
+
+        with pytest.raises(LinsightAgentConfigurationError):
+            await materialize_session_skills(backend, OTHER_TENANT, ["biao-shu-zhuan-xie"], store=store)
         assert backend.uploaded == []
 
 

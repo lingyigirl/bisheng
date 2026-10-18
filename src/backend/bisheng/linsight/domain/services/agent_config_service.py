@@ -12,16 +12,17 @@ from bisheng.permission.domain.services.tool_permission_service import ToolPermi
 from bisheng.tool.domain.const import ToolPresetType
 
 
-def skill_digest(store: SkillStore, tenant_id: int, name: str) -> str:
+def skill_digest(store: SkillStore, tenant_id: int, name: str, version=None) -> str:
+    # Preserve F074 historical digests: object-storage hashes use another format.
+    try:
+        files = store.load_bundle(tenant_id, name, version)
+    except (FileNotFoundError, ValueError) as exc:
+        raise LinsightAgentConfigurationError(msg="Skill bundle is missing or invalid") from exc
     digest = hashlib.sha256()
-    entries = store.list_files(tenant_id, name)
-    if not any(entry["path"] == "SKILL.md" for entry in entries):
-        raise LinsightAgentConfigurationError(msg="Skill bundle is missing")
-    for entry in sorted(entries, key=lambda value: value["path"]):
-        path = entry["path"]
+    for path in sorted(files):
         digest.update(path.encode())
         digest.update(b"\0")
-        digest.update(store.read_bytes(tenant_id, name, path))
+        digest.update(files[path])
     return digest.hexdigest()
 
 
@@ -71,12 +72,13 @@ class AgentConfigService:
         if not default:
             raise LinsightAgentConfigurationError(msg="No task model is configured")
         enabled = (
-            {skill.name for skill in await self.repository.enabled_skills()}
+            {skill.name: skill for skill in await self.repository.enabled_skills()}
             if any(member.skill_names for member in config.subagents)
-            else set()
+            else {}
         )
         snapshot = config.model_dump()
         digests = {}
+        computed = {}
         for member in snapshot["subagents"]:
             member["model_id"] = str(member["model_id"] or default)
             model = await LLMService.get_model_for_call(int(member["model_id"]))
@@ -99,9 +101,17 @@ class AgentConfigService:
                         raise LinsightAgentConfigurationError(msg="Selected tool is not authorized")
             if not set(member["skill_names"]).issubset(enabled):
                 raise LinsightAgentConfigurationError(msg="Selected skill is unavailable")
+            for name in member["skill_names"] if include_skill_digests else []:
+                if name not in computed:
+                    computed[name] = await asyncio.to_thread(
+                        skill_digest,
+                        self.store or SkillStore(),
+                        tenant_id,
+                        name,
+                        getattr(enabled[name], "content_hash", None),
+                    )
             digests[member["id"]] = {
-                name: await asyncio.to_thread(skill_digest, self.store or SkillStore(), tenant_id, name)
-                for name in (member["skill_names"] if include_skill_digests else [])
+                name: computed[name] for name in (member["skill_names"] if include_skill_digests else [])
             }
         snapshot.update(event_protocol=2, recovery_protocol=1, main_model_id=str(default), skill_digests=digests)
         return snapshot

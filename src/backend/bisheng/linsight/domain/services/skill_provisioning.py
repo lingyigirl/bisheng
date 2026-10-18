@@ -7,7 +7,7 @@ deepagents' ``SkillsMiddleware`` discovers a skill from the *directory* entries 
   * the session ``WorkspaceBackend`` lists MinIO recursively and returns only
     *file* entries (``is_dir=False``) — deepagents' native ``skills=`` param
     pointed at it would discover zero skills;
-  * skill bundles live in a separate ``SKILLS_ROOT`` the workspace ``read_file``
+  * skill bundles live in object storage with a separate local cache the workspace ``read_file``
     cannot reach.
 
 So at task startup we copy the bundles this run is allowed to use into the
@@ -29,6 +29,7 @@ import asyncio
 
 from loguru import logger
 
+from bisheng.common.errcode.linsight import LinsightAgentConfigurationError
 from bisheng.linsight.domain.models.linsight_skill import LinsightSkillDao
 from bisheng.linsight.domain.services.skill_store import SkillStore
 
@@ -36,14 +37,9 @@ WORKSPACE_SKILLS_DIR = "skills"
 """Workspace subtree the copied bundles live under (``/skills/<name>/...``)."""
 
 
-def _collect_bundle_pairs(
-    store: SkillStore, tenant_id: int, name: str, workspace_dir: str = WORKSPACE_SKILLS_DIR
-) -> list[tuple[str, bytes]]:
-    """Read a bundle's files as ``(workspace_path, bytes)`` upload pairs (sync disk I/O)."""
-    return [
-        (f"/{workspace_dir}/{name}/{entry['path']}", store.read_bytes(tenant_id, name, entry["path"]))
-        for entry in store.list_files(tenant_id, name)
-    ]
+def _collect_bundle_pairs(store, tenant_id, name, workspace_dir=WORKSPACE_SKILLS_DIR, version=None):
+    files = store.load_bundle(tenant_id, name, version)
+    return [(f"/{workspace_dir}/{name}/{path}", data) for path, data in sorted(files.items())]
 
 
 async def materialize_session_skills(
@@ -63,7 +59,7 @@ async def materialize_session_skills(
             UI explicitly cleared the picker) mean "no skills this run": copy
             nothing. Only an explicit non-empty list opts in, and each name is
             still intersected with the tenant's governance-enabled set.
-        store: skill disk store (injectable for tests).
+        store: versioned skill store (injectable for tests).
 
     Returns:
         The skill names actually materialized. Empty when nothing matched — the
@@ -80,38 +76,25 @@ async def materialize_session_skills(
     store = store or SkillStore()
     # Governance gate, scoped to the current tenant (LinsightSkillDao.list_enabled
     # uses strict_tenant_filter); the worker has already restored tenant context.
-    enabled = {skill.name for skill in await LinsightSkillDao.list_enabled()}
-    wanted = {name for name in selected if name in enabled}
-    if not wanted:
-        return []
-
-    copied: list[str] = []
-    for name in sorted(wanted):
+    rows = {skill.name: skill for skill in await LinsightSkillDao.list_enabled()}
+    wanted = sorted(set(selected) & rows.keys())
+    # The agent is only assembled after all uploads succeed; keep one bundle in memory.
+    for name in wanted:
         try:
-            # Bundle reads (rglob + per-file read_bytes) are sync disk I/O — run them
-            # off the worker's event loop so concurrent tasks aren't stalled.
-            pairs = await asyncio.to_thread(_collect_bundle_pairs, store, tenant_id, name, workspace_dir)
-            if not pairs:
-                logger.warning("linsight skill {!r} (tenant {}) has no files on disk; skipping", name, tenant_id)
-                continue
-            responses = await backend.aupload_files(pairs)
-            failed = [r for r in responses if getattr(r, "error", None)]
-            if failed:
-                logger.warning("linsight skill {!r} copy had failures, not advertising: {}", name, failed)
-                continue
-            copied.append(name)
-        except Exception:
-            # Best-effort: one malformed/unreadable bundle must never abort the task.
-            logger.exception("failed to materialize linsight skill {!r} (tenant {})", name, tenant_id)
-    # loguru formats with str.format, NOT printf — printf placeholders print
-    # literally and silently drop every arg (this line used to log a useless
-    # "tenant=%s selected=%r ... -> materialized %s", hiding exactly the fact a
-    # skill-provisioning investigation needs).
+            pairs = await asyncio.to_thread(
+                _collect_bundle_pairs, store, tenant_id, name, workspace_dir, getattr(rows[name], "content_hash", None)
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            logger.warning("skill unavailable: tenant={} name={} category={}", tenant_id, name, type(exc).__name__)
+            raise LinsightAgentConfigurationError(msg="Selected Skill bundle is missing or invalid") from exc
+        responses = await backend.aupload_files(pairs)
+        if any(getattr(response, "error", None) for response in responses):
+            raise LinsightAgentConfigurationError(msg="Selected Skill could not be copied to the workspace")
     logger.info(
-        "linsight skill provisioning: tenant={} selected={!r} enabled={} -> materialized {}",
+        "skill provisioning complete: tenant={} selected={} enabled={} -> materialized {}",
         tenant_id,
         selected,
-        sorted(enabled),
-        copied,
+        sorted(rows),
+        wanted,
     )
-    return copied
+    return wanted

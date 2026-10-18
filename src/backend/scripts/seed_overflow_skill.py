@@ -126,13 +126,15 @@ async def _run(apply: bool, remove: bool, tenant_id: int) -> int:
             print("[dry-run] 未写入 · 加 --apply 正式创建")
             return 0
 
-        size = store.write_bundle(tenant_id, name, files)
-        object_path = store.object_path(tenant_id, name)
+        ref = await asyncio.to_thread(store.write_bundle, tenant_id, name, files)
+        size = ref.size
+        object_path = ref.object_key
         if existing:
             existing.display_name = display_name
             existing.description = description
             existing.enabled = True
             existing.object_path = object_path
+            existing.content_hash = ref.content_hash
             existing.size = size
             await LinsightSkillDao.update(existing)
             print(f"[apply] updated existing skill row id={existing.id}")
@@ -146,6 +148,7 @@ async def _run(apply: bool, remove: bool, tenant_id: int) -> int:
                     enabled=True,
                     source=SKILL_SOURCE_MANUAL,
                     object_path=object_path,
+                    content_hash=ref.content_hash,
                     size=size,
                     created_by=1,
                 )

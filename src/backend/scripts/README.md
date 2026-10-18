@@ -2,6 +2,21 @@
 
 This directory contains manual maintenance and migration scripts for the backend.
 
+## Skill object-storage migration
+
+`migrate_skill_bundles.py` previews or explicitly migrates one tenant's legacy
+Skill bundles to MinIO. It preserves legacy files, verifies object contents before
+publishing references, detects concurrent changes and can restore legacy files
+before a coordinated application rollback. Preview is the default; reports must
+use a new protected output path on every invocation. Missing sources are reported,
+never replaced with placeholders. See the [runbook](../../../features/v2.7.0/074-harness-subagents/skill-object-storage/runbook.md).
+
+```bash
+cd src/backend
+python scripts/migrate_skill_bundles.py --tenant-id 1 --legacy-root /old/skills --report /protected/skills-preview.jsonl
+python scripts/migrate_skill_bundles.py --tenant-id 1 --legacy-root /old/skills --report /protected/skills-apply.jsonl --apply
+```
+
 ## Verification / Acceptance Scripts
 
 ### `f076_acceptance_probe.py`

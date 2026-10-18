@@ -478,10 +478,10 @@ class LinsightConf(BaseModel):
     )
     skills_root: str = Field(
         default="data/linsight_skills",
-        description="Root directory of Linsight skills on disk (F035). Layout: built-in/<name>/SKILL.md for "
-        "kernel built-in skills; data/skills/{tenant_id}/<name>/ for tenant custom skill bundles. "
-        "Multi-node deployments must mount this path on a shared volume (design §7.1).",
+        description="Legacy on-disk Skill root, retained for migration and read-only compatibility. "
+        "New custom bundles are persisted in object storage, not in this directory.",
     )
+    skills_cache_dir: str = Field(default="", description="Disposable local Skill bundle cache; not a shared volume")
     queue_namespace: str = Field(
         default="linsight",
         description="Redis namespace of the Linsight task queue (the key is '<namespace>:queue'). The API "

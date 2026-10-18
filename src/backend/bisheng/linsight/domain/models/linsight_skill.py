@@ -21,8 +21,8 @@ SKILL_SOURCE_SOP_MIGRATED = "sop_migrated"
 class LinsightSkillBase(SQLModelSerializable):
     """Tenant-scoped custom skill metadata (F035).
 
-    The skill body lives on disk under ``SKILLS_ROOT/data/skills/{tenant_id}/<name>/SKILL.md``
-    (see design §7.1); this table only owns the metadata. Built-in skills are
+    The skill bundle lives in object storage; a null content_hash identifies a
+    legacy bundle awaiting migration. This table only owns metadata. Built-in skills are
     never persisted here and never exposed through the ``/skill`` API.
     """
 
@@ -59,12 +59,13 @@ class LinsightSkillBase(SQLModelSerializable):
     )
     object_path: str = Field(
         ...,
-        description="Relative disk path under SKILLS_ROOT",
-        sa_column=Column(String(512), nullable=False, comment="SKILL.md relative path"),
+        description="Object key, or legacy relative disk path before migration",
+        sa_column=Column(String(512), nullable=False, comment="Bundle object key or legacy relative path"),
     )
+    content_hash: str | None = Field(default=None, sa_column=Column(String(64), nullable=True))
     size: int | None = Field(
         default=0,
-        description="SKILL.md file size in bytes",
+        description="Uncompressed Skill bundle size in bytes",
         sa_column=Column(Integer, nullable=False, server_default=text("0"), comment="File size in bytes"),
     )
     created_by: int | None = Field(
