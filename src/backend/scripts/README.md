@@ -4,6 +4,27 @@ This directory contains manual maintenance and migration scripts for the backend
 
 ## Skill object-storage migration
 
+`migrate_fga_skill_permissions.py` repairs the missing `linsight_skill` OpenFGA
+type. It adds only that definition to the live model, preserving other deployed
+types/conditions. Default is preview; `--apply --expected-model-id <preview id>`
+publishes an immutable model and reports the old id for rollback. Restart all
+API/Celery/Linsight processes (update pinned `openfga.model_id` if configured).
+Then preview/apply `--repair-owners --tenant-id <id>` to restore matching failed
+owner writes, including dead records. It checks current metadata and actual
+tuples before marking compensation succeeded; stale/deleted resources are skipped.
+Each invocation requires a fresh protected report path.
+
+```bash
+python scripts/migrate_fga_skill_permissions.py --report /protected/fga-skill-plan.json
+python scripts/migrate_fga_skill_permissions.py --apply --expected-model-id OLD_ID --report /protected/fga-skill-apply.json
+# Restart processes before repairing owner tuples; omit --apply to preview.
+python scripts/migrate_fga_skill_permissions.py --repair-owners --tenant-id 1 --apply --report /protected/fga-skill-owners.json
+```
+
+Model publication does not deploy application code or change existing tuples.
+Rollback pins the reported old model id and restarts processes; Skill grants then
+remain stored but cannot be evaluated until a model with the type is selected.
+
 `migrate_skill_bundles.py` previews or explicitly migrates one tenant's legacy
 Skill bundles to MinIO. It preserves legacy files, verifies object contents before
 publishing references, detects concurrent changes and can restore legacy files
