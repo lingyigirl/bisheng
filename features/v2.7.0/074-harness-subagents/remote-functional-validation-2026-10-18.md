@@ -1,5 +1,14 @@
 # 云端中间件功能验证（2026-10-18）
 
+## 配置补齐后的复测更新
+
+用户补齐沙箱与搜索配置后，同日重新创建两项真实任务，均已完成。下文“三项尚未可用”为首次测试时的历史状态；其中 E2B 和搜索两项现已通过本次复测，Skills 文件缺失尚未解决或重新验收。
+
+- **沙箱**：任务 `afcc9488bf0a48bb95fbb78812c20f13`，chat `ebe8be8149674aec843e138f177898b7`。数据库工具类型已为 e2b。真实 bisheng_code_interpreter 返回 Python 3.13.16 / Linux 环境、平方和 338350、stderr=[]、error=null，并生成 `output/remote-sandbox-check.txt`。最终文件从云端 MinIO 读回，内容含 `REMOTE-SANDBOX-OK 338350`，25 字节且 MD5 一致。浏览器显示代码执行回执、完成状态与交付文件。
+- **搜索**：任务 `ef5fd51393164f3f8865bfcb561bf315`，chat `17c11015f5d84367be69b38e6a3b3896`。真实调用 web_search 一次，返回 Python 官方 pathlib 文档和 Real Python 等网页结果，主 Agent 引用结果链接并完成；浏览器显示“联网搜索 1 次”和实际输出，没有此前的未配置错误。
+- 本轮只验证这两项配置后的执行链路，没有重复注入沙箱崩溃或外部工具副作用恢复，也未据此扩大其他验收范围。没有修改用户刚保存的工具配置或凭据。
+- 新证据仍在 `src/backend/.venv/f074-evidence/`：`review-1018-remote-{sandbox,search}-reconfigured-{task,final}.json`、`remote-config-retest-proof.json`、`remote-config-retest-{sandbox,search}.jpg`。探针和日志保持忽略；仅更新本文档。
+
 ## 结论与环境
 
 主流程通过真实模型、API、浏览器与云端存储验证，但当前环境不能视为全部功能可用：E2B 代码沙箱未配置、远端 Skill 元数据对应的本机文件缺失、联网搜索服务未配置。没有把配置失败算作成功，也没有回退到宿主机执行代码。
