@@ -42,16 +42,23 @@ class RecoveryRepository:
             await session.commit()
             return True
 
-    async def candidates(self):
+    async def candidates(self, *, after_id=None, limit=256):
         # The scheduler has no user context; each candidate restores its own tenant.
         with bypass_tenant_filter():
             async with get_async_db_session() as session:
-                result = await session.execute(
-                    select(LinsightSessionVersion).where(
-                        LinsightSessionVersion.status == SessionVersionStatusEnum.IN_PROGRESS
-                    )
+                statement = select(
+                    LinsightSessionVersion.id,
+                    LinsightSessionVersion.tenant_id,
+                    LinsightSessionVersion.recovery_state,
+                ).where(
+                    LinsightSessionVersion.status == SessionVersionStatusEnum.IN_PROGRESS,
+                    # Only protocol-enabled executions receive a fenced epoch.
+                    LinsightSessionVersion.recovery_epoch > 0,
                 )
-                return [row for row in result.scalars() if (row.agent_config or {}).get("recovery_protocol") == 1]
+                if after_id is not None:
+                    statement = statement.where(LinsightSessionVersion.id > after_id)
+                result = await session.execute(statement.order_by(LinsightSessionVersion.id).limit(limit))
+                return result.all()
 
     async def claim(self, task_id, *, recovering=False):
         with bypass_tenant_filter():

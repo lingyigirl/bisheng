@@ -32,6 +32,7 @@ class RecoveryService:
     LEASE_TTL = 30
     SCAN_INTERVAL = 5
     MAX_ATTEMPTS = 3
+    SCAN_BATCH = 256
 
     async def prepare_continue(self, task_id, question):
         return await RecoveryRepository().prepare_continue(task_id, question)
@@ -132,14 +133,25 @@ class RecoveryService:
     async def scan(self, queue):
         client = await get_redis_client()
         redis = client.async_connection
-        for task in await RecoveryRepository().candidates():
-            prefix = f"linsight:replay:{{{task.tenant_id}:{task.id}}}"
-            if await redis.exists(prefix + ":lease"):
-                continue
-            if (task.recovery_state or {}).get("retry_after", 0) > time.time():
-                continue
-            if await redis.set(prefix + ":scheduled", "1", nx=True, ex=30):
-                await queue.put_head({"session_version_id": task.id, "recover": True})
+        after_id = None
+        repository = RecoveryRepository()
+        while True:
+            tasks = await repository.candidates(after_id=after_id, limit=self.SCAN_BATCH)
+            if not tasks:
+                return
+            eligible = [task for task in tasks if (task.recovery_state or {}).get("retry_after", 0) <= time.time()]
+            async with redis.pipeline(transaction=False) as pipeline:
+                for task in eligible:
+                    pipeline.exists(f"linsight:replay:{{{task.tenant_id}:{task.id}}}:lease")
+                leases = await pipeline.execute()
+            for task, leased in zip(eligible, leases, strict=True):
+                if not leased and await redis.set(
+                    f"linsight:replay:{{{task.tenant_id}:{task.id}}}:scheduled", "1", nx=True, ex=30
+                ):
+                    await queue.put_head({"session_version_id": task.id, "recover": True})
+            if len(tasks) < self.SCAN_BATCH:
+                return
+            after_id = tasks[-1].id
 
     async def monitor(self, queue):
         while True:
