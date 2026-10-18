@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from langchain_core.messages import ToolMessage
 from pydantic import BaseModel, Field
 
@@ -98,6 +99,36 @@ async def test_background_start_returns_job_id_and_output_collects_result():
     assert "产物: scratch/a.xlsx" in out
     listing = await _call_tool(mw, "job_list", {})
     assert "job_1" in listing and "completed" in listing
+
+
+@pytest.mark.parametrize("background", [True, False])
+async def test_unknown_subagent_rejected_before_handler_or_background_job(background):
+    mw = BackgroundSubagentMiddleware(allowed_subagents={"member-lib-11", "general-purpose"})
+    req = _bg_call()
+    req.tool_call["args"].update(subagent_type="member-lib-11: Slow member", run_in_background=background)
+
+    async def handler(_request):
+        pytest.fail("Invalid delegation must never invoke the upstream text-only error path")
+
+    result = await mw.awrap_tool_call(req, handler)
+    assert result.status == "error"
+    assert "member-lib-11" in result.content
+    assert not mw._jobs
+    assert mw._seq == 0
+
+
+async def test_valid_configured_member_runs_with_the_same_registry():
+    mw = BackgroundSubagentMiddleware(allowed_subagents={"member-lib-11"})
+    req = _bg_call()
+    req.tool_call["args"]["subagent_type"] = "member-lib-11"
+
+    async def handler(_request):
+        return ToolMessage(content="ok", tool_call_id="tc1")
+
+    await mw.awrap_tool_call(req, handler)
+    await asyncio.sleep(0)
+    output = await _call_tool(mw, "job_output", {"job_id": "job_1"})
+    assert "ok" in output
 
 
 async def test_foreground_call_strips_the_flag_before_the_real_tool():

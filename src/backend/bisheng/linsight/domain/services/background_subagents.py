@@ -149,8 +149,11 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
     like dsh ties background children to their owning agent's cleanup.
     """
 
-    def __init__(self, *, max_background_jobs: int = DEFAULT_MAX_BACKGROUND_JOBS) -> None:
+    def __init__(
+        self, *, max_background_jobs: int = DEFAULT_MAX_BACKGROUND_JOBS, allowed_subagents: set[str] | None = None
+    ) -> None:
         super().__init__()
+        self._allowed_subagents = frozenset(allowed_subagents) if allowed_subagents is not None else None
         self._max_jobs = max(1, max_background_jobs)
         self._jobs: dict[str, _Job] = {}
         self._seq = 0
@@ -339,6 +342,15 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
             return await handler(request)
         args = dict(tool_call.get("args") or {})
         wants_background = bool(args.pop(BACKGROUND_FLAG, False))
+        # Deepagents returns unknown names as a successful text result. Reject
+        # against the graph's actual registry before starting any child or job.
+        if self._allowed_subagents is not None and args.get("subagent_type") not in self._allowed_subagents:
+            return ToolMessage(
+                content=f"Unknown subagent_type. Use one of: {', '.join(sorted(self._allowed_subagents))}",
+                name=TASK_TOOL,
+                tool_call_id=tool_call.get("id"),
+                status="error",
+            )
         if not wants_background:
             # Strip the (false / absent) flag so the real task tool never sees it.
             if BACKGROUND_FLAG in (tool_call.get("args") or {}):

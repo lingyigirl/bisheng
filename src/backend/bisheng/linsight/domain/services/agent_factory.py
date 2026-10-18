@@ -863,7 +863,6 @@ async def create_linsight_agent(
         ),
         build_tool_loop_breaker_middleware(linsight_conf, is_subagent=False),
         *build_binary_guards(has_code_interpreter),
-        BackgroundSubagentMiddleware(),
     ]
 
     # F035 Track D — skills (RE-ENABLED 2026-06-24, Fork X). The run's allowed skill
@@ -994,6 +993,8 @@ async def create_linsight_agent(
             existing_names=[spec["name"] for spec in subagents],
         ),
     ]
+
+    middlewares.insert(3, BackgroundSubagentMiddleware(allowed_subagents={spec["name"] for spec in subagents}))
 
     # Advertise search_knowledge_base in the system prompt IFF it is actually in
     # `tools` (init_linsight_tools injects it only when the user selected a KB /
