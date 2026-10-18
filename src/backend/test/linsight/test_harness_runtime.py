@@ -1,15 +1,114 @@
 """Real graph execution with deterministic models; no provider or sandbox calls."""
 
-from deepagents import create_deep_agent
-from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import fakeredis.aioredis
+import pytest
+from deepagents import create_deep_agent
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from bisheng.linsight.domain.services.checkpointer import PlainRedisCheckpointer
 from bisheng.linsight.domain.services.subagent_context import DelegationMiddleware, SubagentIdentityMiddleware
 
 
 class ToolModel(FakeMessagesListChatModel):
     def bind_tools(self, tools, **kwargs):
         return self
+
+
+@pytest.mark.parametrize("interrupt_before_merge", [False, True])
+async def test_plain_redis_rebuild_preserves_both_completed_child_answers(monkeypatch, interrupt_before_merge):
+    """Exercise the actual deepagents message channel, not a scalar state graph."""
+    redis = fakeredis.aioredis.FakeRedis()
+    saver = PlainRedisCheckpointer()
+    monkeypatch.setattr(
+        saver,
+        "_get_redis_client",
+        AsyncMock(
+            return_value=SimpleNamespace(async_connection=redis, async_pipeline=lambda **kw: redis.pipeline(**kw))
+        ),
+    )
+    entered = asyncio.Event()
+
+    class BeforeMerge(AgentMiddleware):
+        async def awrap_model_call(self, request, handler):
+            if any(isinstance(message, ToolMessage) and message.name == "task" for message in request.messages):
+                entered.set()
+                await asyncio.Event().wait()
+            return await handler(request)
+
+    class CountingChild(ToolModel):
+        calls: int = 0
+
+        async def _agenerate(self, *args, **kwargs):
+            self.calls += 1
+            return await super()._agenerate(*args, **kwargs)
+
+    def assemble(responses, child, middleware):
+        return create_deep_agent(
+            model=ToolModel(responses=responses),
+            checkpointer=saver,
+            middleware=middleware,
+            subagents=[
+                {
+                    "name": "general-purpose",
+                    "description": "Research",
+                    "system_prompt": "Research",
+                    "model": child,
+                    "tools": [],
+                }
+            ],
+        )
+
+    child = CountingChild(responses=[AIMessage(content="CHILD-DURABLE")])
+    calls = [
+        {
+            "id": f"child-{i}",
+            "name": "task",
+            "args": {"description": f"research-{i}", "subagent_type": "general-purpose"},
+        }
+        for i in range(2)
+    ]
+    config = {"configurable": {"thread_id": "parallel-checkpoint"}}
+    first = assemble(
+        [AIMessage(content="", tool_calls=calls), AIMessage(content="COMBINED-DURABLE")],
+        child,
+        [BeforeMerge()] if interrupt_before_merge else [],
+    )
+    run = asyncio.create_task(first.ainvoke({"messages": [HumanMessage(content="Research")]}, config))
+    try:
+        if interrupt_before_merge:
+            await asyncio.wait_for(entered.wait(), 10)
+            run.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await run
+        else:
+            await run
+        assert child.calls == 2
+        unused_child = CountingChild(responses=[AIMessage(content="MUST-NOT-RERUN")])
+        rebuilt = assemble([AIMessage(content="COMBINED-DURABLE")], unused_child, [])
+        saved = await rebuilt.aget_state(config, subgraphs=True)
+        assert bool(saved.next) is interrupt_before_merge
+        if interrupt_before_merge:
+            result = await rebuilt.ainvoke(None, config)
+        else:
+            result = saved.values
+        assert result["messages"][-1].content == "COMBINED-DURABLE"
+        answers = [
+            message for message in result["messages"] if isinstance(message, ToolMessage) and message.name == "task"
+        ]
+        assert len(answers) == 2
+        assert all(message.content == "CHILD-DURABLE" for message in answers)
+        assert unused_child.calls == 0
+    finally:
+        if not run.done():
+            run.cancel()
+            await asyncio.gather(run, return_exceptions=True)
+        await redis.aclose()
 
 
 async def test_parallel_delegations_keep_actual_invocation_identity():
