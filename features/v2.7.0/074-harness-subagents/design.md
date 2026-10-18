@@ -211,3 +211,14 @@
 ## 第二轮网页复测收口（2026-10-18）
 
 终止事件是未结束调用的全局结束边界：投影保留原始开始时间与完成证据，以事件的持久化墙钟时间关闭剩余步骤，禁止使用进程单调时钟或刷新时的当前时间计时。停止 API 确认后取一次快照，不增加轮询。委派入口允许名单直接来自传给 deepagents 的 subagents registry，对无效名称返回结构化工具错误，不建立后台任务。表格解析在 FileProcessBase 的一基行号进入零基 Loader 前统一适配，避免改变直接调用转换器的语义。实现与真实浏览器证据见 `browser-retest-fixes-2026-10-18.md`。
+
+
+## 2026-10-18 性能修复
+
+- `replay-snapshot?compact=true` 为客户端选择的兼容扩展；省略时保留原始逐事件格式。Lua 仅原子获取首尾 ID，每次 XRANGE 最多 512 条，固定末尾游标；检查首尾存续，裁剪时 `complete_history=false`。仅连续的同 call_id、同 epoch 思考增量合并；保留尾事件 ID、全部输出、首帧 `started_at` 和末帧 `timestamp`，工具/恢复/终止等事件不合并。WebSocket 原始增量协议不变。
+- 客户端在独立快照 draft 内应用历史，只提交一次历史状态；思考增量使用 call_id 索引合并，带 epoch 的重算替换旧尝试；实时更新保持不可变，draft 允许原地追加。步骤树使用 `started_at` 保留耗时。
+- 恢复扫描只投影 id/tenant_id/recovery_state，按 status、`recovery_epoch>0` 和 id 游标每批 256 条。epoch 由协议启用的执行领取；实际执行入口仍重验协议。每批 pipeline 检查租约，保留 scheduled NX、任务租约和 DB fencing。全局调度查询显式 bypass 后逐任务恢复租户，未增设共享权限缓存。
+- 新迁移 `f074_recovery_scan_index` 挂在实测单 head `f088_agent_member_default`，与 metadata 同建 `(status,id)` 索引。使用双数据库反射 helper 防止重复建索引，提供 downgrade。
+- 运行期成员校验并行读取模型、选定工具及类型的最小联表投影、选定且启用的严格租户 Skills 名称。非预置工具按组去重，调用现有批量 ToolPermissionService；单次调用内聚合，跨步骤不缓存，权限/删除/禁用校验不跳过。提交时 bundle digest 校验继续沿用原流程。
+
+指标、真实恢复和兼容性验证见 `performance-fix-validation-2026-10-18.md`。这四项优化不等于生产容量测试：完整文本仍须传输，扫描仍随运行任务数线性增长，权限服务仍需新鲜查询。
