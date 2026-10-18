@@ -29,7 +29,7 @@ export const useLinsightWebSocket = (versionId) => {
     const task = useMemo(() => {
         const linsight = getLinsight(versionId);
         return linsight
-            ? { versionId, running: linsight.status === SopStatus.Running, replay: Boolean(linsight.agent_config?.subagents?.length) }
+            ? { versionId, running: linsight.status === SopStatus.Running, replay: linsight.agent_config?.event_protocol === 2 }
             : { versionId, running: false, replay: false };
     }, [linsight?.status, linsight?.agent_config, versionId]);
 

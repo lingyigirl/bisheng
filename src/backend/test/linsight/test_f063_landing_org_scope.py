@@ -48,6 +48,14 @@ def patch_submit_io(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ChatMessageDao, "ainsert_one", classmethod(_fake_insert_message))
     monkeypatch.setattr(LinsightWorkbenchImpl, "_process_submitted_files", AsyncMock(return_value=None))
     monkeypatch.setattr(workbench_impl.telemetry_service, "log_event", AsyncMock(return_value=None))
+    monkeypatch.setattr(workbench_impl, "get_redis_client", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.agent_config_service.LLMService.get_workbench_llm",
+        AsyncMock(return_value=MagicMock(linsight_default_model_id="3")),
+    )
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.event_replay.EventReplayService.append", AsyncMock(return_value="1-0")
+    )
 
     return captured
 

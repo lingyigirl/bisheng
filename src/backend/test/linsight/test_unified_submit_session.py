@@ -48,8 +48,31 @@ def patch_submit_io(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(ChatMessageDao, "ainsert_one", classmethod(_fake_insert_message))
     monkeypatch.setattr(LinsightWorkbenchImpl, "_process_submitted_files", AsyncMock(return_value=None))
     monkeypatch.setattr(workbench_impl.telemetry_service, "log_event", AsyncMock(return_value=None))
+    monkeypatch.setattr(workbench_impl, "get_redis_client", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.agent_config_service.LLMService.get_workbench_llm",
+        AsyncMock(return_value=MagicMock(linsight_default_model_id="3")),
+    )
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.event_replay.EventReplayService.append", AsyncMock(return_value="1-0")
+    )
 
     return captured
+
+
+async def test_explicit_empty_members_do_not_inherit_previous_members(patch_submit_io, monkeypatch):
+    from bisheng.linsight.domain.schemas.agent_config import AgentConfig
+
+    user = MagicMock(user_id=1)
+    session = MessageSession(chat_id="chat1", name="Test", flow_type=FlowType.WORKSTATION.value, user_id=1)
+    monkeypatch.setattr(MessageSessionDao, "async_get_one", AsyncMock(return_value=session))
+    previous = AsyncMock()
+    monkeypatch.setattr(LinsightSessionVersionDao, "get_session_versions_by_session_id", previous)
+    submit = LinsightQuestionSubmitSchema(question="No collaborators", session_id="chat1", agent_config=AgentConfig())
+    _, version = await LinsightWorkbenchImpl.submit_user_question(submit, user)
+    assert version.agent_config["subagents"] == []
+    assert version.agent_config["recovery_protocol"] == 1
+    previous.assert_not_awaited()
 
 
 async def test_submit_without_session_id_creates_workstation_session(patch_submit_io):
@@ -108,8 +131,8 @@ async def test_submit_persists_display_files_on_user_turn(patch_submit_io):
 
 
 async def test_follow_up_inherits_previous_agent_config(patch_submit_io, monkeypatch):
-    """F035 follow-up continuity: a continuation that arrives with an empty member
-    draft re-resolves the previous version's collaborator snapshot, so the user
+    """F035 follow-up continuity: a continuation that omits member configuration
+    re-resolves the previous version's collaborator snapshot, so the user
     does not have to re-add every collaborator between rounds."""
     from types import SimpleNamespace
 
@@ -119,9 +142,11 @@ async def test_follow_up_inherits_previous_agent_config(patch_submit_io, monkeyp
     captured_resolve: dict = {}
 
     async def _fake_resolve(_self, config, user, tenant_id, main_model, **kwargs):
-        if config is None or not config.subagents:
-            return None
-        captured_resolve["config"] = config
+        from bisheng.linsight.domain.schemas.agent_config import AgentConfig
+
+        config = config or AgentConfig()
+        if config.subagents:
+            captured_resolve["config"] = config
         snapshot = config.model_dump()
         snapshot.update(event_protocol=2, recovery_protocol=1, main_model_id=str(main_model), skill_digests={})
         return snapshot

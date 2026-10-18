@@ -33,6 +33,31 @@ async def test_missing_tool_is_rejected_instead_of_silently_filtered(service):
         await service.resolve(config(tool_refs=[42]), SimpleNamespace(user_id=1), 1, "7")
 
 
+@pytest.mark.parametrize("empty", [None, AgentConfig()])
+async def test_new_task_without_members_still_freezes_harness_protocol(service, empty):
+    snapshot = await service.resolve(empty, SimpleNamespace(user_id=1), 1, "7")
+    assert snapshot == {
+        "schema_version": 1,
+        "subagents": [],
+        "main_model_id": "7",
+        "event_protocol": 2,
+        "recovery_protocol": 1,
+        "skill_digests": {},
+    }
+    await service.revalidate(snapshot, SimpleNamespace(user_id=1), 1)
+    service.repository.enabled_skills.assert_not_awaited()
+    service.repository.tools.assert_not_awaited()
+    service.repository.tool_types.assert_not_awaited()
+
+
+async def test_no_member_task_uses_tenant_default_model(service, monkeypatch):
+    default = AsyncMock(return_value=SimpleNamespace(linsight_default_model_id="9"))
+    monkeypatch.setattr("bisheng.linsight.domain.services.agent_config_service.LLMService.get_workbench_llm", default)
+    snapshot = await service.resolve(None, SimpleNamespace(user_id=1), 1, None)
+    assert snapshot["main_model_id"] == "9"
+    default.assert_awaited_once_with(tenant_id=1)
+
+
 async def test_default_model_is_frozen_and_revalidation_detects_skill_drift(service):
     snapshot = await service.resolve(config(), SimpleNamespace(user_id=1), 1, "7")
     assert snapshot["subagents"][0]["model_id"] == "7"

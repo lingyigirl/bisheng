@@ -39,12 +39,17 @@ class AgentConfigService:
         *,
         include_skill_digests: bool = True,
     ):
-        if config is None or not config.subagents:
-            return None
+        # Harness is the execution protocol for every NEW task, independent of
+        # optional collaborators. Historical rows are never resolved implicitly.
+        config = config or AgentConfig()
         default = main_model or (await LLMService.get_workbench_llm(tenant_id=tenant_id)).linsight_default_model_id
         if not default:
             raise LinsightAgentConfigurationError(msg="No task model is configured")
-        enabled = {skill.name for skill in await self.repository.enabled_skills()}
+        enabled = (
+            {skill.name for skill in await self.repository.enabled_skills()}
+            if any(member.skill_names for member in config.subagents)
+            else set()
+        )
         snapshot = config.model_dump()
         digests = {}
         for member in snapshot["subagents"]:

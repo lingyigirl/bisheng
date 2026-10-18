@@ -12,6 +12,9 @@ export type SubagentConfig = {
 export type AgentConfig = {
     schema_version: 1;
     subagents: SubagentConfig[];
+    /** Server snapshot metadata; member count does not select the protocol. */
+    event_protocol?: 2;
+    recovery_protocol?: 1;
 };
 
 export type HarnessOptions = {

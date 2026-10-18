@@ -16,7 +16,7 @@ type TestState = {
     status: string;
     tasks: unknown[];
     sessionSteps: Record<string, unknown>[];
-    agent_config?: { subagents: { id: string }[] };
+    agent_config?: { event_protocol?: number; subagents: { id: string }[] };
     output_result?: { answer: string };
 };
 let mockState: TestState;
@@ -34,8 +34,8 @@ beforeEach(() => {
     mockState = { status: 'completed', tasks: [], sessionSteps: [{ output: 'truncated' }] };
 });
 
-test('completed Harness turn rebuilds full history once without opening a socket', async () => {
-    mockState.agent_config = { subagents: [{ id: 'member' }] };
+test.each([0, 1])('completed Harness turn with %i members rebuilds history once without a socket', async (count) => {
+    mockState.agent_config = { event_protocol: 2, subagents: Array.from({ length: count }, () => ({ id: 'member' })) };
     const socket = jest.spyOn(window, 'WebSocket');
     jest.mocked(getReplaySnapshot).mockResolvedValue({
         legacy: false, terminal: true, complete_history: true, last_event_id: '2-0',
@@ -50,15 +50,21 @@ test('completed Harness turn rebuilds full history once without opening a socket
     socket.mockRestore();
 });
 
+test('member presence does not upgrade a historical task without the replay protocol', () => {
+    mockState.agent_config = { subagents: [{ id: 'old-member' }] };
+    renderHook(() => useLinsightWebSocket('historical'));
+    expect(getReplaySnapshot).not.toHaveBeenCalled();
+});
+
 test('legacy completed turns and shared turns do not request private replay', () => {
     renderHook(() => useLinsightWebSocket('legacy'));
-    mockState.agent_config = { subagents: [{ id: 'member' }] };
+    mockState.agent_config = { event_protocol: 2, subagents: [{ id: 'member' }] };
     renderHook(() => useLinsightWebSocket(''));
     expect(getReplaySnapshot).not.toHaveBeenCalled();
 });
 
 test('uses committed result when worker died before publishing the final frame', async () => {
-    mockState.agent_config = { subagents: [{ id: 'member' }] };
+    mockState.agent_config = { event_protocol: 2, subagents: [{ id: 'member' }] };
     jest.mocked(getReplaySnapshot).mockResolvedValue({
         legacy: false, terminal: true, complete_history: true, last_event_id: '1-0',
         snapshot: { events: [] },
@@ -69,7 +75,7 @@ test('uses committed result when worker died before publishing the final frame',
 });
 
 test('reloading a recovered task removes old partial output before replaying the new attempt', async () => {
-    mockState.agent_config = { subagents: [{ id: 'member' }] };
+    mockState.agent_config = { event_protocol: 2, subagents: [{ id: 'member' }] };
     jest.mocked(getReplaySnapshot).mockResolvedValue({
         legacy: false, terminal: true, complete_history: true, last_event_id: '3-0',
         snapshot: { events: [
@@ -88,7 +94,7 @@ test('reloading a recovered task removes old partial output before replaying the
 });
 
 test('another subscriber and a refreshed page recover the persisted clarify answer', async () => {
-    mockState.agent_config = { subagents: [{ id: 'member' }] };
+    mockState.agent_config = { event_protocol: 2, subagents: [{ id: 'member' }] };
     const question = { task_id: 'task', step_type: 'call_user_input', params: {} };
     jest.mocked(getReplaySnapshot).mockResolvedValue({
         legacy: false, terminal: true, complete_history: true, last_event_id: '2-0',
@@ -110,7 +116,7 @@ test('another subscriber and a refreshed page recover the persisted clarify answ
 test('a running task keeps retrying after a long outage and cancels retries on unmount', async () => {
     jest.useFakeTimers();
     mockState.status = 'running';
-    mockState.agent_config = { subagents: [{ id: 'member' }] };
+    mockState.agent_config = { event_protocol: 2, subagents: [{ id: 'member' }] };
     jest.mocked(getReplaySnapshot).mockResolvedValue({
         legacy: false, terminal: false, complete_history: true, last_event_id: '1-0',
         snapshot: { events: [] }, version: { status: 'running', agent_config: mockState.agent_config },

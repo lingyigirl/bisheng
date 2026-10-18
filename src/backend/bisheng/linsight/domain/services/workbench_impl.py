@@ -241,14 +241,11 @@ class LinsightWorkbenchImpl:
             # Process files (if present) — after chat_id is finalized
             processed_files = await cls._process_submitted_files(submit_obj.files, svid, login_user.user_id)
 
-            # F035 follow-up continuity: a continuation must keep collaborating
-            # with the same members ("本轮配置已锁定，继续任务时沿用此配置"). The
-            # composer's member draft can arrive empty (the picker was only
-            # populated while the previous round ran — 2026-10-14 report), so
-            # fall back to the immediately-previous version's snapshot.
+            # Omitted configuration inherits the previous turn's collaborators;
+            # an explicit empty list clears them while retaining Harness.
             # Re-resolve (not a raw copy) so a since-revoked tool/skill fails
             # closed — degrade to no collaborators instead of blocking the turn.
-            if agent_config is None and continuing:
+            if submit_obj.agent_config is None and continuing:
                 from bisheng.linsight.domain.schemas.agent_config import AgentConfig
 
                 try:
@@ -273,7 +270,6 @@ class LinsightWorkbenchImpl:
                                 f"({len(agent_config['subagents'])} member(s))"
                             )
                 except Exception as e:
-                    agent_config = None
                     logger.warning(f"agent_config inherit from previous turn skipped (non-fatal): {e}")
 
             if not continuing:

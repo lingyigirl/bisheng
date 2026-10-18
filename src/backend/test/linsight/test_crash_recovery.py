@@ -122,6 +122,30 @@ async def test_stateful_code_blocks_recovery_even_after_result(fence):
         await validate_receipts(fence)
 
 
+async def test_completed_connector_result_is_reused_without_resending(fence):
+    handler = AsyncMock(return_value=ToolMessage(content="remote receipt 42", tool_call_id="call-1"))
+    middleware = RecoveryMiddleware()
+    first = await middleware.awrap_tool_call(request("external_action", external=True), handler)
+    await validate_receipts(fence)
+    second = await middleware.awrap_tool_call(request("external_action", external=True), handler)
+    assert second.content == first.content
+    handler.assert_awaited_once()
+
+
+@pytest.mark.parametrize("name", ["write_file", "edit_file", "bisheng_code_interpreter", "job_output"])
+async def test_unknown_write_sandbox_or_ephemeral_job_is_never_replayed(fence, name):
+    handler = AsyncMock(side_effect=RuntimeError("worker interrupted"))
+    middleware = RecoveryMiddleware()
+    call = request(name, external=name in {"bisheng_code_interpreter", "job_output"})
+    with pytest.raises(RuntimeError):
+        await middleware.awrap_tool_call(call, handler)
+    with pytest.raises(RecoveryBlocked):
+        await validate_receipts(fence)
+    with pytest.raises(RecoveryBlocked):
+        await middleware.awrap_tool_call(call, handler)
+    handler.assert_awaited_once()
+
+
 async def test_missing_receipt_hash_is_not_treated_as_no_previous_tools(fence):
     await RecoveryMiddleware().awrap_tool_call(request(), AsyncMock(return_value="durable"))
     await fence.redis.delete(fence.prefix + ":receipts")
