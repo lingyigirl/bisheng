@@ -50,3 +50,6 @@
 原始/修改后性能证据：忽略目录 `src/backend/.venv/f074-evidence/performance-*.json` 与 `performance-after-*.json`；探针位于 `.venv/f074-tools/f074-performance-*`。真实恢复和成员任务证据为 `review-1018-performance-*`，截图 `performance-long-replay.jpg`、`performance-member-browser.jpg`，日志 `.venv/f074-logs/performance-*`。
 
 压缩为可选参数，可先回退客户端；后端仍支持原始回放。恢复扫描、资源校验可独立回退；索引提供 downgrade，代码回退可保留无害索引。未放宽沙箱进程状态、外部未知副作用、超次数、缺失回执等恢复阻断规则。未做数小时、多租户高并发和沙箱冷启动专项压测。
+
+
+后续：原文提到的 84 秒沙箱路径已专项优化，真实复测首次约 9.8 秒、第二次约 8.8 秒；见 [E2B 专项验收](e2b-performance-validation-2026-10-18.md)。

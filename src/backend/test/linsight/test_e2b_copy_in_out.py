@@ -156,6 +156,79 @@ def make_executor(monkeypatch, workspace=None):
     return exe
 
 
+def test_small_skill_files_are_batched_once_and_unchanged_inputs_are_not_downloaded(monkeypatch, tmp_path):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(E2bCodeExecutor, "init_sandbox", lambda self: None)
+    skills = {f"skills/test/file-{i}.txt": b"identical content" for i in range(54)}
+    for path, data in skills.items():
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    workspace = RecordingWorkspace(skills)
+    exe = make_executor(monkeypatch, workspace)
+    exe.local_sync_path = str(tmp_path)
+    read = Mock(wraps=exe.sandbox.files.read)
+    write = Mock(wraps=exe.sandbox.files.write)
+    listing = Mock(wraps=exe.sandbox.files.list)
+    exe.sandbox.files.read = read
+    exe.sandbox.files.write = write
+    exe.sandbox.files.list = listing
+    result = exe.run("print(1)")
+    uploads = [call.args[0] for call in write.call_args_list if isinstance(call.args[0], list)]
+    assert [len(batch) for batch in uploads] == [32, 22]
+    assert len({item["path"] for batch in uploads for item in batch}) == 54
+    assert read.call_count == 2
+    assert listing.call_count == 2
+    assert len(result["new_files"]) == 2
+    assert (tmp_path / "output/result.csv").read_bytes() == b"a,b\n1,2\n"
+    assert workspace.writes["output/result.csv"] == b"a,b\n1,2\n"
+    write.reset_mock()
+    exe._prepare_run([])
+    write.assert_not_called()
+
+
+def test_upload_batches_obey_byte_limit(monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(E2bCodeExecutor, "init_sandbox", lambda self: None)
+    exe = make_executor(monkeypatch)
+    exe.sandbox.files.write = Mock()
+    exe._write_batches([{"path": f"{i}.bin", "data": b"x" * SIZE_AUTOPUSH} for i in range(2)])
+    assert [len(call.args[0]) for call in exe.sandbox.files.write.call_args_list] == [1, 1]
+
+
+def test_recreated_sandbox_does_not_reuse_upload_acknowledgements(monkeypatch):
+    monkeypatch.setattr(
+        "bisheng_langchain.gpts.tools.code_interpreter.e2b_executor.Sandbox", lambda **kwargs: FakeSandbox()
+    )
+    exe = E2bCodeExecutor(minio={}, api_key="k", keep_sandbox=False)
+    exe.init_sandbox()
+    exe._pushed_md5["skills/test/SKILL.md"] = "old-sandbox-only"
+    exe.close()
+    exe.init_sandbox()
+    assert exe._pushed_md5 == {}
+    assert not exe._skills_staged
+
+
+def test_failed_skill_batch_retries_every_path_and_never_marks_staging_complete(monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(E2bCodeExecutor, "init_sandbox", lambda self: None)
+    workspace = RecordingWorkspace({f"skills/s/{i}.txt": b"same" for i in range(54)})
+    exe = make_executor(monkeypatch, workspace)
+    original = exe.sandbox.files.write
+    exe.sandbox.files.write = Mock(side_effect=[None, RuntimeError("second batch failed")])
+    with pytest.raises(RuntimeError, match="second batch failed"):
+        exe._copy_in([])
+    assert not exe._skills_staged
+    assert not exe._pushed_md5
+    exe.sandbox.files.write = original
+    exe._copy_in([])
+    assert len(exe.sandbox.files.store) == 54
+    assert exe._skills_staged
+
+
 # ---------------------------------------------------------------------------
 # copy-out: new_files enumerated + products written to workspace
 # ---------------------------------------------------------------------------

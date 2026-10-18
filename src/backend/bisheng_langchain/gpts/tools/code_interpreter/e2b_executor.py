@@ -2,6 +2,7 @@ import base64
 import hashlib
 import os
 import tempfile
+import time
 import uuid
 
 from e2b.sandbox.filesystem.filesystem import EntryInfo, FileType, WriteEntry
@@ -23,6 +24,8 @@ from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
 #    products are pointer-tracked (manifest) by the workspace backend.
 SIZE_AUTOPUSH = 5 * 1024 * 1024  # 5 MB
 SIZE_INLINE = 1 * 1024 * 1024  # 1 MB
+UPLOAD_BATCH_FILES = 32
+UPLOAD_BATCH_BYTES = 8 * 1024 * 1024
 
 _SANDBOX_ROOT = "/home/user/"
 
@@ -67,7 +70,7 @@ class E2bCodeExecutor(BaseExecutor):
         # the linsight worker; ``_pushed_md5`` tracks content already copied into
         # the sandbox so identical files are not re-pushed across runs.
         self.workspace_backend = kwargs.get("workspace_backend")
-        self._pushed_md5: set[str] = set()
+        self._pushed_md5: dict[str, str] = {}
         # Workspace skills are staged lazily on the first run (see
         # ``_materialize_working_set``); once-per-sandbox, so the flag is reset
         # whenever a sandbox is (re)created.
@@ -134,6 +137,7 @@ class E2bCodeExecutor(BaseExecutor):
             )
             # A fresh sandbox needs the workspace skills re-staged.
             self._skills_staged = False
+            self._pushed_md5.clear()
             # …and the workspace delta re-pushed (the new sandbox only received
             # the build-time file_list, nothing written since it was built).
             self._ws_synced.clear()
@@ -191,11 +195,21 @@ class E2bCodeExecutor(BaseExecutor):
             self.init_sandbox()
             copy_in_hint, pre_paths = self._prepare_run(required_files)
 
+        prepared_at = time.perf_counter()
         execution = self.sandbox.run_code(code)
-        results, file_list = self.parse_results(execution.results)
+        executed_at = time.perf_counter()
+        # Copy-out below handles local and durable copies together. The legacy
+        # parser's own tree walk would download the same files a second time.
+        results, file_list = self.parse_results(execution.results, sync_local=False)
 
         # copy-out: enumerate new files vs the pre-run snapshot
         new_files = self._copy_out(pre_paths)
+        logger.info(
+            "E2B run phases: execute={:.3f}s collect={:.3f}s products={}",
+            executed_at - prepared_at,
+            time.perf_counter() - executed_at,
+            len(new_files),
+        )
 
         result = {
             "results": results,
@@ -210,10 +224,13 @@ class E2bCodeExecutor(BaseExecutor):
         return result
 
     def _prepare_run(self, required_files: list[str]):
+        started = time.perf_counter()
         self._keep_alive()
         self._sync_workspace_to_sandbox()
         copy_in_hint = self._copy_in(required_files)
-        return copy_in_hint, self._snapshot_paths()
+        snapshot = self._snapshot_paths()
+        logger.info("E2B run phases: prepare={:.3f}s", time.perf_counter() - started)
+        return copy_in_hint, snapshot
 
     # ------------------------------------------------------------------
     # Sandbox lifetime: keep-alive + recreate-on-gone
@@ -341,23 +358,45 @@ class E2bCodeExecutor(BaseExecutor):
         large file was present but not declared in ``required_files``."""
         working_set = self._materialize_working_set()
         undeclared_large: list[str] = []
+        planned = {}
+        uploads = []
         for path, content in working_set.items():
             if not isinstance(content, bytes):
                 content = content.encode("utf-8")
             md5 = hashlib.md5(content).hexdigest()
-            if md5 in self._pushed_md5:
+            if self._pushed_md5.get(path) == md5:
                 continue  # delta push: identical content already in the sandbox
             if len(content) > SIZE_AUTOPUSH and path not in required_files:
                 undeclared_large.append(path)
                 continue
-            self.sandbox.files.write(self._sandbox_path(path), content)
-            self._pushed_md5.add(md5)
+            uploads.append({"path": self._sandbox_path(path), "data": content})
+            planned[path] = md5
+        try:
+            self._write_batches(uploads)
+        except Exception:
+            self._skills_staged = False
+            raise
+        self._pushed_md5.update(planned)
         if undeclared_large:
+            self._skills_staged = False
             return (
                 "Some files exceed the auto-push size limit and were not staged. "
                 f"Declare them in required_files to use them: {undeclared_large}"
             )
         return None
+
+    def _write_batches(self, entries):
+        """Bound multipart payloads without issuing one request per small file."""
+        batch, size = [], 0
+        for entry in entries:
+            length = len(entry["data"])
+            if batch and (len(batch) >= UPLOAD_BATCH_FILES or size + length > UPLOAD_BATCH_BYTES):
+                self.sandbox.files.write(batch)
+                batch, size = [], 0
+            batch.append(entry)
+            size += length
+        if batch:
+            self.sandbox.files.write(batch)
 
     # ------------------------------------------------------------------
     # F074: workspace → sandbox delta sync ("the sandbox is disposable, the
@@ -439,8 +478,7 @@ class E2bCodeExecutor(BaseExecutor):
         previous_state = dict(self._ws_synced)
         previous_after = self._sandbox_after
         try:
-            for rel, data in contents.items():
-                self.sandbox.files.write(self._sandbox_abs(rel), data)
+            self._write_batches([{"path": self._sandbox_abs(rel), "data": data} for rel, data in contents.items()])
         except Exception as exc:
             self._ws_synced = previous_state
             self._sandbox_after = previous_after
@@ -456,6 +494,11 @@ class E2bCodeExecutor(BaseExecutor):
                 continue
             self._ws_synced.pop(rel, None)
         self._ws_synced.update(planned)
+        # The same Skills may also be visible through the backend. Record them
+        # only after all batches succeeded, preventing duplicate staging.
+        self._pushed_md5.update({rel: hashlib.md5(data).hexdigest() for rel, data in contents.items()})
+        for rel in to_delete:
+            self._pushed_md5.pop(rel, None)
         logger.info(f"workspace sync: pushed {len(planned)} file(s), removed {len(to_delete)} in the sandbox")
 
     def _snapshot_paths(self) -> dict:
@@ -496,6 +539,13 @@ class E2bCodeExecutor(BaseExecutor):
             if self.workspace_backend is not None:
                 # Large products are pointer-tracked by the backend; small ones inlined.
                 self.workspace_backend.write(rel_path, content)
+            if self.local_sync_path and os.path.isdir(self.local_sync_path):
+                self._write_local_file(entry, content)
+                if len(content) <= SIZE_AUTOPUSH:
+                    stat = os.stat(os.path.join(self.local_sync_path, rel_path))
+                    self._ws_synced[rel_path] = (stat.st_mtime_ns, stat.st_size)
+                    self._pushed_md5[rel_path] = hashlib.md5(content).hexdigest()
+            self.sandbox_file_cache[entry.path] = entry
         return new_files
 
     def _walk_sandbox(self) -> list[EntryInfo]:
@@ -543,7 +593,7 @@ class E2bCodeExecutor(BaseExecutor):
             "file_list": file_list,
         }
 
-    def parse_results(self, results: list[Result]):
+    def parse_results(self, results: list[Result], *, sync_local=True):
         """
         Parse the results from the E2B Code Interpreter.
         :param results: The results from the code execution.
@@ -576,7 +626,7 @@ class E2bCodeExecutor(BaseExecutor):
                 parsed_results.append({"json": result.json})
             if result.data:
                 parsed_results.append({"data": result.data})
-        if self.local_sync_path and os.path.exists(self.local_sync_path) and self.sandbox:
+        if sync_local and self.local_sync_path and os.path.exists(self.local_sync_path) and self.sandbox:
             # 将沙盒中的文件同步到本地目录
             files_info = self.sandbox.files.list("./")
             self.sync_files_to_local(files_info)
@@ -609,11 +659,14 @@ class E2bCodeExecutor(BaseExecutor):
                 self.sync_files_to_local(new_files_info)
 
     def download_file(self, file_info: EntryInfo):
-        relative_path = file_info.path.replace("/home/user/", "")
-        local_path = os.path.join(self.local_sync_path, relative_path)
         data = self.sandbox.files.read(file_info.path, format="bytes")
         if not isinstance(data, bytes):
             data = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+        self._write_local_file(file_info, data)
+
+    def _write_local_file(self, file_info: EntryInfo, data: bytes):
+        relative_path = file_info.path.replace("/home/user/", "")
+        local_path = os.path.join(self.local_sync_path, relative_path)
         # Content-equal files are NOT rewritten: the rewrite bumps the local
         # mtime, which the workspace→sandbox sync (correctly) reads as "this file
         # changed" and pushes back — an endless upload/download ping-pong.
