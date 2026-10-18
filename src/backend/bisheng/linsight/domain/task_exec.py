@@ -4,7 +4,7 @@ import os
 import shutil
 import traceback
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from contextvars import Token
 from datetime import datetime
 
@@ -40,6 +40,7 @@ from bisheng.linsight.domain.services.state_message_manager import (
     MessageData,
     MessageEventType,
 )
+from bisheng.linsight.domain.services.stream_event_buffer import coalesce_stream_events
 from bisheng.linsight.domain.services.stream_event_mapper import StreamEventMapper
 from bisheng.linsight.domain.services.tool_loop_middleware import LinsightToolLoopError
 from bisheng.linsight.domain.services.workbench_impl import LinsightWorkbenchImpl
@@ -451,17 +452,13 @@ class LinsightWorkflowTask:
             "recursion_limit": _resolve_recursion_limit(linsight_conf),
         }
         try:
-            async for chunk in agent.astream(
+            await self._consume_agent_stream(
+                agent,
                 None if getattr(self, "_crash_recovery", False) else Command(resume=user_input),
-                config=config,
-                stream_mode=["updates", "messages", "values", "custom"],
-                subgraphs=True,
-            ):
-                mode, raw, namespace = self._unpack_stream_chunk(chunk)
-                if mode == "values" and not namespace and isinstance(raw, dict):
-                    self._capture_values_snapshot(raw)
-                for event in mapper.normalize(mode, raw, namespace=namespace):
-                    await self._handle_event(agent, event, session_model)
+                config,
+                mapper,
+                session_model,
+            )
         except (LinsightToolLoopError, GraphRecursionError) as e:
             # L3/L4 on the resume path: stash the salvage; the caller's
             # _handle_task_completion renders it as a partial result.
@@ -612,17 +609,7 @@ class LinsightWorkflowTask:
                     return
                 agent_input = None
         try:
-            async for chunk in agent.astream(
-                agent_input,
-                config=config,
-                stream_mode=["updates", "messages", "values", "custom"],
-                subgraphs=True,
-            ):
-                mode, raw, namespace = self._unpack_stream_chunk(chunk)
-                if mode == "values" and not namespace and isinstance(raw, dict):
-                    self._capture_values_snapshot(raw)
-                for event in mapper.normalize(mode, raw, namespace=namespace):
-                    await self._handle_event(agent, event, session_model)
+            await self._consume_agent_stream(agent, agent_input, config, mapper, session_model)
         except (LinsightToolLoopError, GraphRecursionError) as e:
             # L3/L4 on the continue path: stash the salvage; the caller's
             # _handle_task_completion renders it as a partial result.
@@ -1261,21 +1248,7 @@ class LinsightWorkflowTask:
             # subagent and no longer strips `task`, so subgraph events ARE emitted
             # with a non-empty namespace. The mapper drops namespaced todos (the main
             # plan stays clean) and tags namespaced tool steps step_type="subagent".
-            async for chunk in agent.astream(
-                task_input,
-                config=config,
-                stream_mode=["updates", "messages", "values", "custom"],
-                subgraphs=True,
-            ):
-                mode, raw, namespace = self._unpack_stream_chunk(chunk)
-                # Capture the agent's latest top-level reply as a fallback
-                # answer for the no-TaskEnd case (e.g. a greeting the planner
-                # answers directly without spawning sub-tasks), plus whether it
-                # left tool calls pending (drives the abort classification).
-                if mode == "values" and not namespace and isinstance(raw, dict):
-                    self._capture_values_snapshot(raw)
-                for event in mapper.normalize(mode, raw, namespace=namespace):
-                    await self._handle_event(agent, event, session_model)
+            await self._consume_agent_stream(agent, task_input, config, mapper, session_model)
             return True
 
         async def termination_monitor():
@@ -1447,6 +1420,29 @@ class LinsightWorkflowTask:
         except Exception as e:
             logger.warning(f"Failed to resolve allowed knowledge ids: {e}")
         return allowed
+
+    async def _consume_agent_stream(self, agent, agent_input, config, mapper, session_model):
+        """Drain token bursts before slow storage; preserve every semantic barrier."""
+
+        async def events():
+            async with aclosing(
+                agent.astream(
+                    agent_input,
+                    config=config,
+                    stream_mode=["updates", "messages", "values", "custom"],
+                    subgraphs=True,
+                )
+            ) as stream:
+                async for chunk in stream:
+                    mode, raw, namespace = self._unpack_stream_chunk(chunk)
+                    if mode == "values" and not namespace and isinstance(raw, dict):
+                        self._capture_values_snapshot(raw)
+                    for event in mapper.normalize(mode, raw, namespace=namespace):
+                        yield event
+
+        async with aclosing(coalesce_stream_events(events())) as stream:
+            async for event in stream:
+                await self._handle_event(agent, event, session_model)
 
     @staticmethod
     def _unpack_stream_chunk(chunk):
