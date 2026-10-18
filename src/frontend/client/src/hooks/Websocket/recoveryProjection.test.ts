@@ -25,3 +25,21 @@ test('keeps completed child tools even if their enclosing delegation was interru
         completedChild,
     ])).toEqual([completedFirst, completedChild]);
 });
+
+test('compacts thinking deltas losslessly without mutating committed history', () => {
+    const original = [{ call_id: 'model', execution_epoch: 1, step_type: 'thinking', output: 'same', timestamp: 10 }];
+    const merged = appendRecoveryStep(original, { ...original[0], output: 'same', timestamp: 15 });
+    expect(original[0].output).toBe('same');
+    expect(merged).toEqual([{ ...original[0], output: 'samesame', timestamp: 15, started_at: 10 }]);
+    expect(appendRecoveryStep(merged, { ...original[0], execution_epoch: 2, output: 'fresh' }))
+        .toEqual([{ ...original[0], execution_epoch: 2, output: 'fresh' }]);
+});
+
+test('a large local snapshot draft retains every chunk with bounded thinking rows', () => {
+    let steps: { call_id: string; step_type: string; output: string }[] = [];
+    for (let i = 0; i < 20000; i++) {
+        steps = appendRecoveryStep(steps, { call_id: 'model', step_type: 'thinking', output: 'x' }, true);
+    }
+    expect(steps).toHaveLength(1);
+    expect(steps[0].output).toBe('x'.repeat(20000));
+});

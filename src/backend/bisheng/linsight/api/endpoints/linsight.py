@@ -847,7 +847,11 @@ async def get_sop_showcase_result(
 
 
 @router.get("/workbench/replay-snapshot")
-async def replay_snapshot(session_version_id: str, login_user: UserPayload = Depends(UserPayload.get_login_user)):
+async def replay_snapshot(
+    session_version_id: str,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    compact: bool = False,
+):
     from bisheng.linsight.domain.services.agent_config_service import AgentConfigService
     from bisheng.linsight.domain.services.event_replay import EventReplayService
 
@@ -855,7 +859,7 @@ async def replay_snapshot(session_version_id: str, login_user: UserPayload = Dep
     if not version.agent_config:
         return resp_200({"legacy": True})
     redis = await get_redis_client()
-    result = await EventReplayService(redis.async_connection, version.tenant_id, version.id).snapshot()
+    result = await EventReplayService(redis.async_connection, version.tenant_id, version.id).snapshot(compact=compact)
     result["version"] = version.model_dump()
     result["terminal"] = version.status in {
         SessionVersionStatusEnum.COMPLETED,

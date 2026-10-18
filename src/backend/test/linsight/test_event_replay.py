@@ -45,3 +45,76 @@ async def test_scope_and_future_cursor():
         assert not (await two.snapshot())["complete_history"]
         assert not await one.valid_cursor("999999999999999999-0")
         assert not await one.valid_cursor("../key")
+
+
+async def test_batched_compaction_keeps_text_timestamps_epochs_and_tail_cursor():
+    async with fakeredis.FakeRedis() as redis:
+        replay = EventReplayService(redis, 1, "compact")
+        replay.SNAPSHOT_BATCH = 2
+        await replay.append({"event_type": "replay_init", "data": {}})
+        for epoch, text, timestamp in [(1, "same", 10), (1, "same", 20), (2, "new", 30)]:
+            await replay.append(
+                {
+                    "event_type": "task_execute_step",
+                    "execution_epoch": epoch,
+                    "data": {
+                        "call_id": "model",
+                        "step_type": "thinking",
+                        "output": text,
+                        "timestamp": timestamp,
+                    },
+                }
+            )
+        final = await replay.append({"event_type": "final_result", "data": {"answer": "done"}})
+        raw = await replay.snapshot()
+        compact = await replay.snapshot(compact=True)
+        assert len(raw["snapshot"]["events"]) == 5
+        events = compact["snapshot"]["events"]
+        assert len(events) == 4
+        assert events[1]["data"]["output"] == "samesame"
+        assert events[1]["data"]["started_at"] == 10
+        assert events[1]["data"]["timestamp"] == 20
+        assert events[1]["event_id"] == raw["snapshot"]["events"][2]["event_id"]
+        assert events[2]["data"]["output"] == "new"
+        assert compact["last_event_id"] == final
+        assert compact["terminal"] and compact["complete_history"]
+
+
+async def test_appends_during_paging_are_delivered_after_fixed_snapshot_boundary(monkeypatch):
+    async with fakeredis.FakeRedis() as redis:
+        replay = EventReplayService(redis, 1, "paging")
+        replay.SNAPSHOT_BATCH = 1
+        first = await replay.append({"event_type": "replay_init", "data": {}})
+        boundary = await replay.append({"event_type": "task_execute_step", "data": {}})
+        original = redis.xrange
+        added = None
+
+        async def xrange(*args, **kwargs):
+            nonlocal added
+            if kwargs.get("count") == 1 and kwargs.get("min") == "-" and added is None:
+                added = await replay.append({"event_type": "final_result", "data": {}})
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(redis, "xrange", xrange)
+        snapshot = await replay.snapshot(compact=True)
+        assert [e["event_id"] for e in snapshot["snapshot"]["events"]] == [first, boundary]
+        assert snapshot["last_event_id"] == boundary
+        assert snapshot["complete_history"] and not snapshot["terminal"]
+        assert [e["event_id"] for e in await replay.read_after(boundary)] == [added]
+
+
+async def test_trim_during_paging_never_claims_complete_history(monkeypatch):
+    async with fakeredis.FakeRedis() as redis:
+        replay = EventReplayService(redis, 1, "trimming")
+        replay.SNAPSHOT_BATCH = 1
+        await replay.append({"event_type": "replay_init", "data": {}})
+        await replay.append({"event_type": "task_execute_step", "data": {}})
+        original = redis.xrange
+
+        async def xrange(*args, **kwargs):
+            if kwargs.get("min", "").startswith("("):
+                await redis.xtrim(replay.key, maxlen=1, approximate=False)
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(redis, "xrange", xrange)
+        assert not (await replay.snapshot())["complete_history"]

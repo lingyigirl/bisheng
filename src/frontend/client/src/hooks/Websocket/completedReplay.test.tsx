@@ -56,6 +56,25 @@ test('member presence does not upgrade a historical task without the replay prot
     expect(getReplaySnapshot).not.toHaveBeenCalled();
 });
 
+test('large snapshot commits projected history once rather than updating state per token', async () => {
+    mockState.agent_config = { event_protocol: 2, subagents: [] };
+    jest.mocked(getReplaySnapshot).mockResolvedValue({
+        legacy: false, terminal: true, complete_history: true, last_event_id: '20000-0',
+        snapshot: { events: Array.from({ length: 20000 }, (_, i) => ({
+            event_id: `${i + 1}-0`, event_type: 'task_execute_step', data: {
+                task_id: 'task', call_id: 'model', step_type: 'thinking', output: 'x',
+            },
+        })) },
+        version: { status: 'completed', agent_config: mockState.agent_config },
+    });
+    renderHook(() => useLinsightWebSocket('task'));
+    await waitFor(() => expect(mockState.sessionSteps[0]?.output).toBe('x'.repeat(20000)));
+    expect(mockState.sessionSteps).toHaveLength(1);
+    expect(mockUpdate.mock.calls.filter(([, update]) => typeof update !== 'function' && 'sessionSteps' in update))
+        .toHaveLength(1);
+    expect(mockUpdate.mock.calls.length).toBeLessThan(6);
+});
+
 test('legacy completed turns and shared turns do not request private replay', () => {
     renderHook(() => useLinsightWebSocket('legacy'));
     mockState.agent_config = { event_protocol: 2, subagents: [{ id: 'member' }] };

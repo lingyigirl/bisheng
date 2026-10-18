@@ -117,6 +117,13 @@ export const useLinsightWebSocket = (versionId) => {
         }
 
         let hydratingReplay = false;
+        type ReplayState = NonNullable<ReturnType<typeof getLinsight>>;
+        let replayState: ReplayState | null = null;
+        const updateView = (version: string, update: Partial<ReplayState> | ((current: ReplayState) => Partial<ReplayState>)) => {
+            if (hydratingReplay && replayState) {
+                replayState = { ...replayState, ...(typeof update === 'function' ? update(replayState) : update) };
+            } else updateLinsight(version, update);
+        };
         const applyEvent = (taskData) => {
             if (taskData.event_id && !isNewerEvent(taskData.event_id, cursors.current.get(id))) return;
             /**
@@ -126,7 +133,7 @@ export const useLinsightWebSocket = (versionId) => {
              */
             switch (taskData.event_type) {
                 case 'task_recovery':
-                    updateLinsight(id, prev => ({
+                    updateView(id, prev => ({
                         recoveryAttempt: taskData.data.attempt,
                         sessionSteps: keepCompletedBeforeRecovery(prev.sessionSteps || []),
                         tasks: prev.tasks.map(task => ({
@@ -139,7 +146,7 @@ export const useLinsightWebSocket = (versionId) => {
                     break;
                 case 'task_generate':
                     // 生成一级任务
-                    updateLinsight(id, (prev) => {
+                    updateView(id, (prev) => {
                         // 创建顶级任务的浅拷贝
                         const updatedTasks = [...prev.tasks];
 
@@ -207,7 +214,7 @@ export const useLinsightWebSocket = (versionId) => {
                     break;
                 case 'user_input': {
                     const { task_id, call_reason, params } = taskData.data;
-                    updateLinsight(id, (prev) => {
+                    updateView(id, (prev) => {
                         let matched = false;
                         const newTasks = prev.tasks.map(task => {
                             if (task.id === task_id) {
@@ -273,7 +280,7 @@ export const useLinsightWebSocket = (versionId) => {
                             ? { ...h, is_completed: true, user_input: h.user_input || answer }
                             : h
                     );
-                    updateLinsight(id, (prev) => ({
+                    updateView(id, (prev) => ({
                         tasks: prev.tasks.map(task =>
                             task.id === completedId
                                 ? { ...task, history: markHistory(task.history || []) }
@@ -297,7 +304,7 @@ export const useLinsightWebSocket = (versionId) => {
                 // eslint-disable-next-line no-fallthrough
                 case 'task_start':
                 case 'task_end':
-                    updateLinsight(id, (prev) => {
+                    updateView(id, (prev) => {
                         const newStatus = taskData.data.status
                         const errorMsg = taskData.data.result?.answer
                         if (!taskData.data.parent_task_id) {
@@ -334,14 +341,14 @@ export const useLinsightWebSocket = (versionId) => {
                     if (taskData.execution_epoch !== undefined) {
                         taskData = { ...taskData, data: { ...taskData.data, execution_epoch: taskData.execution_epoch } };
                     }
-                    updateLinsight(id, (prev) => {
+                    updateView(id, (prev) => {
                         let matched = false;
                         const newTasks = prev.tasks.map(task => {
                             if (task.id === taskData.data.task_id) {
                                 matched = true;
                                 return {
                                     ...task,
-                                    history: appendRecoveryStep(task.history || [], taskData.data)
+                                    history: appendRecoveryStep(task.history || [], taskData.data, hydratingReplay)
                                 };
                             } else {
                                 return {
@@ -351,7 +358,7 @@ export const useLinsightWebSocket = (versionId) => {
                                             matched = true;
                                             return {
                                                 ...child,
-                                                history: appendRecoveryStep(child.history || [], taskData.data)
+                                                history: appendRecoveryStep(child.history || [], taskData.data, hydratingReplay)
                                             };
                                         }
                                         return child;
@@ -364,12 +371,12 @@ export const useLinsightWebSocket = (versionId) => {
                         // F035 Track H: session-level steps (task_id == session_version_id,
                         // e.g. planning-stage tool calls) live at flow level
                         return {
-                            sessionSteps: appendRecoveryStep(prev.sessionSteps || [], taskData.data)
+                            sessionSteps: appendRecoveryStep(prev.sessionSteps || [], taskData.data, hydratingReplay)
                         };
                     });
                     break;
                 case 'final_result':
-                    updateLinsight(id, {
+                    updateView(id, {
                         output_result: taskData.data.output_result,
                         // summary: taskData.data.output_result.answer,
                         file_list: taskData.data.output_result.final_files || [],
@@ -391,7 +398,7 @@ export const useLinsightWebSocket = (versionId) => {
                                 .then((list: any[]) => {
                                     const v = (list || []).find((x) => String(x.id) === String(id));
                                     if (v?.message_id != null) {
-                                        updateLinsight(id, { message_id: v.message_id, liked: v.liked });
+                                        updateView(id, { message_id: v.message_id, liked: v.liked });
                                     }
                                 })
                                 .catch(() => { /* best-effort: a reload seeds it from the same endpoint */ });
@@ -400,7 +407,7 @@ export const useLinsightWebSocket = (versionId) => {
                     break;
                 case 'task_terminated':
 
-                    updateLinsight(id, prev => {
+                    updateView(id, prev => {
                         const stoppedAt = terminationTime(taskData.data.terminated_at, taskData.event_id);
                         return {
                             status: SopStatus.Stoped,
@@ -412,7 +419,7 @@ export const useLinsightWebSocket = (versionId) => {
                 case 'error_message':
                     console.error(taskData.data.error, id, activeVersionIdRef.current)
                     if (id === activeVersionIdRef.current) {
-                        updateLinsight(id, {
+                        updateView(id, {
                             taskError: taskData.data.error,
                             // 灵思LLM容错: structured classification drives the friendly
                             // error card; absent on older backends (card falls back).
@@ -430,22 +437,30 @@ export const useLinsightWebSocket = (versionId) => {
         };
         if (snapshot && !snapshot.legacy) {
             if (snapshot.complete_history) {
-                updateLinsight(id, { tasks: [], sessionSteps: [], output_result: null, file_list: [] });
+                replayState = { ...getLinsight(id)!, tasks: [], sessionSteps: [], output_result: null, file_list: [] };
                 hydratingReplay = true;
-                for (const event of snapshot.snapshot.events) applyEvent(event);
-                hydratingReplay = false;
+                try {
+                    for (const event of snapshot.snapshot.events) applyEvent(event);
+                    updateLinsight(id, replayState);
+                } catch (error) {
+                    cursors.current.delete(id);
+                    throw error;
+                } finally {
+                    hydratingReplay = false;
+                    replayState = null;
+                }
             } else {
-                updateLinsight(id, { tasks: buildTaskTree(snapshot.execute_tasks || []), sessionSteps: [], output_result: snapshot.version.output_result });
+                updateView(id, { tasks: buildTaskTree(snapshot.execute_tasks || []), sessionSteps: [], output_result: snapshot.version.output_result });
                 showToast({ message: localize('harness.incomplete'), severity: 'warning' });
             }
             cursors.current.set(id, snapshot.last_event_id);
-            updateLinsight(id, { agent_config: snapshot.version.agent_config,
+            updateView(id, { agent_config: snapshot.version.agent_config,
                 recoveryAttempt: snapshot.version.recovery_state?.attempts,
                 status: mapSessionVersionStatus(snapshot.version.status, snapshot.version.execute_feedback),
             });
             if (snapshot.terminal && snapshot.version.output_result) {
                 const result = snapshot.version.output_result;
-                updateLinsight(id, { output_result: result, file_list: result.final_files || [],
+                updateView(id, { output_result: result, file_list: result.final_files || [],
                     ...(snapshot.version.status === 'failed' ? {
                         taskError: result.error_message,
                         taskErrorInfo: { error_type: result.error_type, detail: result.detail },

@@ -100,7 +100,7 @@ export function mergeStepFrames(history: ExecStepEventData[] | null | undefined)
                 extraInfo: frame.extra_info || {},
                 // first-seen frame timestamp starts the clock; end/later frames
                 // extend endedAt below
-                startedAt: ts,
+                startedAt: typeof frame.started_at === 'number' ? frame.started_at : ts,
                 endedAt: ts,
                 raw: frame,
             });
