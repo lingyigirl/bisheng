@@ -138,9 +138,9 @@ export function mergeStepFrames(history: ExecStepEventData[] | null | undefined)
  * so the comparators must work on values, not identity — yet two reference checks
  * are sound: `params` traces back to the stable raw history frame (same object for
  * an unchanged step), and streaming `output` only ever grows so its length is a
- * reliable change signal. `extraInfo` is intentionally NOT compared — mergeStepFrames
- * spreads a new object each rebuild (always unequal) and nothing in the render path
- * reads it.
+ * reliable change signal. Compare only the rendered job status from `extraInfo`:
+ * mergeStepFrames spreads a new metadata object on each rebuild. The terminal
+ * timestamp also participates so a corrected replay cannot retain a stale clock.
  */
 export function mergedStepRenderEqual(a: MergedStep, b: MergedStep): boolean {
     return (
@@ -150,6 +150,8 @@ export function mergedStepRenderEqual(a: MergedStep, b: MergedStep): boolean {
         a.stepType === b.stepType &&
         a.output.length === b.output.length &&
         a.params === b.params &&
+        a.extraInfo.job_status === b.extraInfo.job_status &&
+        a.endedAt === b.endedAt &&
         a.callReason === b.callReason
     );
 }

@@ -2135,7 +2135,14 @@
     "autoSaveHint": "保存即写入常用成员；勾选后在本轮任务生效。",
     "defaultHint": "新会话默认携带",
     "save": "保存",
-    "unavailableCapability": "{{kind}} #{{id}}（当前不可用）"
+    "unavailableCapability": "{{kind}} #{{id}}（当前不可用）",
+    "toolSearchedWeb": "已联网搜索",
+    "toolSearchedKnowledge": "已检索知识",
+    "toolWroteFile": "已写入文件",
+    "toolUpdatedTodos": "已更新任务清单",
+    "toolRunning": "正在调用 {{name}}",
+    "toolStopped": "已停止 {{name}}",
+    "toolUsed": "已使用 {{name}}"
   },
   "com_linsight_error_title_recovery_blocked": "自动续跑已停止",
   "com_linsight_error_desc_recovery_blocked": "无法确认上次工具调用的结果，或所需执行状态已无法恢复。",

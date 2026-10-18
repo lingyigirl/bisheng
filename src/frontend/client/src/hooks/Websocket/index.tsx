@@ -3,6 +3,7 @@ import { getReplaySnapshot } from "~/api/harness";
 import { useLocalize } from "~/hooks";
 import { isNewerEvent } from "./replayCursor";
 import { appendRecoveryStep, keepCompletedBeforeRecovery } from "./recoveryProjection";
+import { closeTerminatedSteps, closeTerminatedTasks, terminationTime } from "./terminationProjection";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { getLinsightSessionVersionList, userInputLinsightEvent, userStopLinsightEvent } from "~/api/linsight";
 import { SopStatus } from "~/store/linsight";
@@ -399,8 +400,13 @@ export const useLinsightWebSocket = (versionId) => {
                     break;
                 case 'task_terminated':
 
-                    updateLinsight(id, {
-                        status: SopStatus.Stoped
+                    updateLinsight(id, prev => {
+                        const stoppedAt = terminationTime(taskData.data.terminated_at, taskData.event_id);
+                        return {
+                            status: SopStatus.Stoped,
+                            sessionSteps: closeTerminatedSteps(prev.sessionSteps || [], stoppedAt),
+                            tasks: closeTerminatedTasks(prev.tasks, stoppedAt),
+                        };
                     })
                     break;
                 case 'error_message':
@@ -508,28 +514,23 @@ export const useLinsightWebSocket = (versionId) => {
         return () => window.removeEventListener('online', handleOnline);
     }, [connect]);
 
-    const stop = useCallback(() => {
+    const stop = useCallback(async () => {
         if (MOCK) {
             const ws = connections[versionId];
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ action: 'stop' }));
             }
         } else {
-            userStopLinsightEvent(versionId)
-            updateLinsight(versionId, (prev) => ({
-                ...prev,
-                status: SopStatus.Stoped,
-                tasks: prev.tasks.map(task => ({
-                    ...task,
-                    status: task.status === "in_progress" ? "terminated" : task.status,
-                    children: task.children
-                        ? task.children.map(child => ({
-                            ...child,
-                            status: child.status === "in_progress" ? "terminated" : child.status,
-                        }))
-                        : [],
-                })),
-            }));
+            try {
+                await userStopLinsightEvent(versionId);
+                // Fetch the authoritative terminal event even if the socket was
+                // disconnected when stop was pressed. Never invent a stop time.
+                cursors.current.delete(versionId);
+                await connect(versionId, { type: 'stopped' });
+            } catch (error) {
+                console.error('Task stop failed', error);
+                showToast({ message: localize('harness.loadError'), severity: 'error' });
+            }
         }
         toggleNav(true)
     }, [versionId])

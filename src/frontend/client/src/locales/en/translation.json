@@ -2206,7 +2206,14 @@
     "autoSaveHint": "Saving writes to your member library; check it to use it in this task.",
     "defaultHint": "Carry by default in new conversations",
     "save": "Save",
-    "unavailableCapability": "{{kind}} #{{id}} (unavailable)"
+    "unavailableCapability": "{{kind}} #{{id}} (unavailable)",
+    "toolSearchedWeb": "Searched the web",
+    "toolSearchedKnowledge": "Searched knowledge",
+    "toolWroteFile": "Wrote file",
+    "toolUpdatedTodos": "Updated task list",
+    "toolRunning": "Calling {{name}}",
+    "toolStopped": "Stopped {{name}}",
+    "toolUsed": "Used {{name}}"
   },
   "com_linsight_error_title_recovery_blocked": "Automatic recovery stopped",
   "com_linsight_error_desc_recovery_blocked": "The previous tool outcome is uncertain, or required execution state cannot be restored.",

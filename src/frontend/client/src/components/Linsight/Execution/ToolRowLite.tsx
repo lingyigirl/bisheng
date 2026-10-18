@@ -30,11 +30,11 @@ export interface ToolRowLiteProps {
  * both `search_knowledge_base` and `search_knowledge_bases` resolve.
  */
 const TOOL_VERB_I18N: Record<string, string> = {
-    web_search: '已联网搜索',
-    search_knowledge_base: '已检索知识',
-    search_knowledge_bases: '已检索知识',
-    write_file: '已写入文件',
-    write_todos: '已更新任务清单',
+    web_search: 'harness.toolSearchedWeb',
+    search_knowledge_base: 'harness.toolSearchedKnowledge',
+    search_knowledge_bases: 'harness.toolSearchedKnowledge',
+    write_file: 'harness.toolWroteFile',
+    write_todos: 'harness.toolUpdatedTodos',
 };
 
 /** Detail text class (color applied via the Body token at the call site). */
@@ -55,11 +55,14 @@ function resolveTitle(step: MergedStep, localize: ReturnType<typeof useLocalize>
     if (step.running) {
         // Mirror ToolCallDisplay inflight phrasing; verb maps are past-tense, so
         // running steps use the generic "正在调用 X" form against the raw name.
-        return `正在调用 ${step.name || localize('com_tools_generic_fallback')}`;
+        return localize('harness.toolRunning', { name: step.name || localize('com_tools_generic_fallback') });
     }
-    if (verb) return verb;
+    if (step.extraInfo.job_status === 'killed') {
+        return localize('harness.toolStopped', { name: step.name || localize('com_tools_generic_fallback') });
+    }
+    if (verb) return localize(verb);
     // Fallback: "已使用 {name}" (North Star generic-tool phrasing).
-    return `已使用 ${step.name || localize('com_tools_generic_fallback')}`;
+    return localize('harness.toolUsed', { name: step.name || localize('com_tools_generic_fallback') });
 }
 
 const ToolRowLiteBase: FC<ToolRowLiteProps> = ({ step }) => {
