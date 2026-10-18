@@ -20,6 +20,8 @@ def service(monkeypatch):
         enabled_skills=AsyncMock(return_value=[]),
         tools=AsyncMock(return_value=[]),
         tool_types=AsyncMock(return_value=[]),
+        runtime_tools=AsyncMock(return_value=[]),
+        enabled_skill_names=AsyncMock(return_value=set()),
     )
     monkeypatch.setattr(
         "bisheng.linsight.domain.services.agent_config_service.LLMService.get_model_for_call",
@@ -96,3 +98,50 @@ async def test_runtime_revocation_prevents_tool_execution(service):
     with pytest.raises(LinsightAgentConfigurationError):
         await guard.awrap_tool_call(object(), handler)
     handler.assert_not_awaited()
+
+
+async def test_runtime_permissions_are_batched_by_group_and_refreshed_every_call(service, monkeypatch):
+    service.repository.runtime_tools.return_value = [
+        SimpleNamespace(id=i, type=8, is_delete=0, group_deleted=0, is_preset=2) for i in range(1, 51)
+    ]
+    permission = AsyncMock(side_effect=[{"8": {"use_tool"}}, {"8": set()}])
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.agent_config_service.ToolPermissionService.get_tool_permission_map_async",
+        permission,
+    )
+    member = config(connector_refs=list(range(1, 51)), model_id="7").subagents[0]
+    user = SimpleNamespace(user_id=1)
+    await service.validate_runtime_member(member, user)
+    with pytest.raises(LinsightAgentConfigurationError):
+        await service.validate_runtime_member(member, user)
+    assert permission.await_count == 2
+    permission.assert_awaited_with(user, ["8"], ["use_tool"])
+    assert service.repository.runtime_tools.await_count == 2
+
+
+@pytest.mark.parametrize("resource", ["skill", "model", "group", "tool"])
+async def test_runtime_resource_revocation_is_rechecked(service, monkeypatch, resource):
+    model = SimpleNamespace(online=True, model_type="llm")
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.agent_config_service.LLMService.get_model_for_call",
+        AsyncMock(return_value=model),
+    )
+    row = SimpleNamespace(id=42, type=8, is_delete=0, group_deleted=0, is_preset=0)
+    # Preset value is supplied by the same enum as production.
+    from bisheng.tool.domain.const import ToolPresetType
+
+    row.is_preset = ToolPresetType.PRESET.value
+    service.repository.runtime_tools.return_value = [row]
+    service.repository.enabled_skill_names.return_value = {"selected"}
+    member = config(tool_refs=[42], skill_names=["selected"], model_id="7").subagents[0]
+    await service.validate_runtime_member(member, SimpleNamespace(user_id=1))
+    if resource == "skill":
+        service.repository.enabled_skill_names.return_value = set()
+    elif resource == "model":
+        model.online = False
+    elif resource == "group":
+        row.group_deleted = 1
+    else:
+        row.is_delete = 1
+    with pytest.raises(LinsightAgentConfigurationError):
+        await service.validate_runtime_member(member, SimpleNamespace(user_id=1))

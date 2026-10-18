@@ -21,13 +21,7 @@ class MemberResourceGuard(AgentMiddleware):
         self.service = AgentConfigService()
 
     async def validate(self):
-        await self.service.resolve(
-            self.config,
-            self.user,
-            self.tenant_id,
-            self.config.subagents[0].model_id,
-            include_skill_digests=False,
-        )
+        await self.service.validate_runtime_member(self.config.subagents[0], self.user)
 
     async def awrap_model_call(self, request, handler):
         await self.validate()

@@ -30,6 +30,31 @@ class AgentConfigService:
         self.repository = repository or AgentConfigRepository()
         self.store = store
 
+    async def validate_runtime_member(self, member, user):
+        """Fresh, minimal reads per call; permissions are never cached across steps."""
+        ids = [*member.tool_refs, *member.connector_refs]
+        model, rows, enabled = await asyncio.gather(
+            LLMService.get_model_for_call(int(member.model_id)),
+            self.repository.runtime_tools(ids),
+            self.repository.enabled_skill_names(member.skill_names),
+        )
+        if not model.online or model.model_type != "llm":
+            raise LinsightAgentConfigurationError(msg="Selected model is unavailable for chat")
+        if set(ids) != {row.id for row in rows if not row.is_delete and not row.group_deleted}:
+            raise LinsightAgentConfigurationError(msg="Selected tool is unavailable")
+        groups = set()
+        for row in rows:
+            if row.id in member.connector_refs and row.is_preset == ToolPresetType.PRESET.value:
+                raise LinsightAgentConfigurationError(msg="A connector must reference an API or MCP action")
+            if row.is_preset != ToolPresetType.PRESET.value:
+                groups.add(str(row.type))
+        if groups:
+            permissions = await ToolPermissionService.get_tool_permission_map_async(user, sorted(groups), ["use_tool"])
+            if any("use_tool" not in permissions.get(group, set()) for group in groups):
+                raise LinsightAgentConfigurationError(msg="Selected tool is not authorized")
+        if not set(member.skill_names).issubset(enabled):
+            raise LinsightAgentConfigurationError(msg="Selected skill is unavailable")
+
     async def resolve(
         self,
         config: AgentConfig | None,
