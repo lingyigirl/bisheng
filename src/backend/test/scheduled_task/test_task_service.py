@@ -32,7 +32,7 @@ from bisheng.scheduled_task.domain.schemas.task import (
     ScheduledTaskCreateReq,
     ScheduledTaskUpdateReq,
 )
-from bisheng.scheduled_task.domain.services import knowledge_guard, task_service, trigger_guard
+from bisheng.scheduled_task.domain.services import app_shape_guard, knowledge_guard, task_service, trigger_guard
 from bisheng.scheduled_task.domain.services.trigger_guard import IdentityBinding, IdentityState
 
 TABLES = [ScheduledTask.__table__]
@@ -113,6 +113,12 @@ def wire(monkeypatch):
         ApplicationPermissionService,
     )
 
+    # 形状校验会读 Flow.data（真库）——这里给"查不到流程"的桩，让它走"应用不存在→跳过
+    # 形状判定"的分支；`assert_app_schedulable` 本身由 test_nl_draft.py 专测。
+    async def _no_flow(flow_id):
+        return None
+
+    monkeypatch.setattr(app_shape_guard.FlowDao, "aget_flow_by_id", _no_flow)
     monkeypatch.setattr(ApplicationPermissionService, "has_any_permission_async", _allowed)
     monkeypatch.setattr(trigger_guard, "validate_binding", _binding)
     monkeypatch.setattr(knowledge_guard, "assert_app_knowledge_readable", _knowledge)

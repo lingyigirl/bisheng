@@ -114,3 +114,47 @@ async def upsert_policy(tenant_id: int, *, enforce_keys: bool) -> OpenApiTenantS
     row = await OpenApiTenantSettingDao.aupsert(tenant_id, enforce_keys=enforce_keys)
     await _cache_clear_policy(tenant_id)
     return row
+
+
+async def seed_default_tenant_policy(enabled: bool) -> bool:
+    """部署期播种默认租户策略（F077 部署便利）：**只在缺行时**写入。
+
+    租户开关存在 DB（`open_api_tenant_setting`），新建库/重置数据后需要再经管理 API
+    打开。生产部署希望"配一次配置文件即可"，所以启动时按
+    `open_api.default_tenant_enforce_keys` 播种**默认租户**那一行：
+
+    - 已有行 → **不覆盖**（DB 是事实源；运维手动关掉不会因重启被改回来）；
+    - 缺行且 `enabled=True` → 写入并记一条 system 审计（与 API 写入同口径）；
+    - 缺行且 `enabled=False` → 什么都不做（保持 Fail-closed）。
+
+    返回是否发生了播种。异常由调用方（lifespan）记录后继续，不阻塞启动。
+    """
+    from bisheng.core.context.tenant import DEFAULT_TENANT_ID
+
+    if not enabled:
+        return False
+    existing = await OpenApiTenantSettingDao.aget(DEFAULT_TENANT_ID)
+    if existing is not None:
+        return False
+
+    await upsert_policy(DEFAULT_TENANT_ID, enforce_keys=True)
+    logger.info(
+        "open_api: seeded default-tenant policy from config (tenant={}, enforce_keys=true)", DEFAULT_TENANT_ID
+    )
+    try:
+        from bisheng.database.models.audit_log import AuditLogDao
+
+        await AuditLogDao.ainsert_v2(
+            tenant_id=DEFAULT_TENANT_ID,
+            operator_id=0,
+            operator_tenant_id=DEFAULT_TENANT_ID,
+            action="open_api.settings.update",
+            target_type="open_api_tenant_setting",
+            target_id=str(DEFAULT_TENANT_ID),
+            reason="seeded from open_api.default_tenant_enforce_keys",
+            metadata={"after": {"enforce_keys": True}, "source": "startup_seed"},
+        )
+    except Exception:
+        # 审计是 best-effort；策略行已经写入，审计失败不改变状态。
+        logger.exception("open_api: audit write failed while seeding default-tenant policy")
+    return True

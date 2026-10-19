@@ -50,6 +50,11 @@ celery_task:
 # F077 定时任务（可选段；缺省即用代码默认值，见 core/config/scheduled_task.py）。
 # 注意：扫描节拍不在这里配——beat 条目在 CeleryConf 里（scheduled_task_scan，默认 20 秒），
 # 复制一份会变成两处真相。
+# open_api:  # F076 开放 API 鉴权总闸（F077 事件触发同样依赖它）
+#   enforce_keys: true                     # 部署总闸：false = 完全旧行为（连密钥都不校验）；开启需重启
+#   credential_cache_ttl_seconds: 3        # 吊销生效上界，≤5
+#   default_tenant_enforce_keys: false     # 启动时若默认租户【尚无】策略行，按此值播种；已有行不覆盖
+#
 # scheduled_task:
 #   global_max_running: 10           # 全局同时运行的定时任务上限（AC-12）
 #   max_tasks_per_app: 20            # 每应用启用中的任务上限（AC-05）

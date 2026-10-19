@@ -106,6 +106,15 @@ _EXCEPTION_HANDLERS = {
 async def lifespan(app: FastAPI):
     await initialize_app_context(config=settings)
     await init_default_data()
+
+    # F077 部署便利：默认租户尚无策略行时，按配置播种"要求密钥"。
+    # 已有行不覆盖（DB 是事实源）；失败只记日志，不阻塞启动（策略保持缺行=未启用）。
+    try:
+        from bisheng.open_api.domain.services.tenant_setting_service import seed_default_tenant_policy
+
+        await seed_default_tenant_policy(settings.open_api.default_tenant_enforce_keys)
+    except Exception:
+        logger.exception("open_api: default-tenant policy seed failed; continuing with DB state")
     # F034: align frozen system permission tiers with newly-added
     # move_file/move_folder on every boot. Idempotent + non-critical — a failure
     # only leaves the admin permission UI stale, so it must never block startup.
