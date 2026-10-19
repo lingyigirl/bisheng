@@ -5,7 +5,7 @@
 // through applyGuidePlaceholders below, so "what the admin reads on screen" and
 // "what the integrator receives" can never drift apart.
 //
-// Sync note: the body quotes docs/api/open-api-auth.md for the 8 permission
+// Sync note: the body quotes docs/api/open-api-auth.md for the permission
 // scopes and the 11801–11821 error-code table, and src/backend/bisheng/
 // open_api/domain/scopes.py is the runtime authority — change one, change all.
 

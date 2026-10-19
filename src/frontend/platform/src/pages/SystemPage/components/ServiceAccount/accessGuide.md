@@ -57,7 +57,7 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 
 该端点**不需要任何权限位**，是联调第一步——比对着报错猜快得多。
 
-## 六、权限位（可签发 8 项）
+## 六、权限位（可签发 9 项）
 
 每个密钥携带一组权限位，**按端点判定**：调用某端点需要它登记的权限位，缺位返回 `403 / 11807`，响应体 `data.required` 回带缺少的 code。
 
@@ -71,6 +71,7 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 | `knowledge:read` | 知识库与文件读取、检索、引用详情 |
 | `knowledge:write` | 知识库与文件的增删改、问答与元数据写入 |
 | `delegate` | 预留位：本期可签发但**不产生任何生效行为** |
+| `schedule:trigger` | 触发定时任务（事件触发端点 `POST /api/v2/schedule/trigger`） |
 
 - **隐含规则**：授予 `knowledge:write` 即同时具备 `knowledge:read`。
 - 权限位在签发/编辑密钥时由管理员选择；需要补位时联系管理员（编辑后 ≤5 秒生效）。
