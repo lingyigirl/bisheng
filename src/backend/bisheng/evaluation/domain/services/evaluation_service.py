@@ -578,6 +578,11 @@ async def add_evaluation_task(evaluation_id: int):
                 one["duration_ms"] = round((time.perf_counter() - started) * 1000)
                 one["exec_status"] = "failed" if failed else "success"
                 await _attach_token_metrics(one, trace_id)
+                # Workflow runs used to leave the progress key untouched, so the UI
+                # stayed at 0% until the whole task finished. Count failed questions
+                # too — they complete just as well and the bar must keep moving.
+                current_progress += progress_increment
+                redis_client.set(redis_key, round(current_progress))
             if not valid_rows:
                 raise Exception(f"所有题目执行失败, 共 {len(failed_rows)} 题, 无有效答案可评分")
             csv_data = valid_rows
@@ -611,6 +616,15 @@ async def add_evaluation_task(evaluation_id: int):
             # aggregation — the compare report computes Σcontradicted ÷ Σanswer itself.
             ("statements_contradicted_num", "statements_contradicted_num", 1),
             ("statements_num_answer", "statements_num_answer", 1),
+            # Judge diagnostics: when a row's effect metrics are N/A, these three
+            # columns say why (parse failure / missing bucket) and keep a truncated
+            # copy of the raw judge output for later investigation.
+            ("judge_status", "judge_status", 1),
+            ("judge_error", "judge_error", 1),
+            ("judge_raw_output", "judge_raw_output", 1),
+            # attempts > 1 means the first output was unusable and a retry saved
+            # (or still failed) — this is how the raw failure rate is measured.
+            ("judge_attempts", "judge_attempts", 1),
         ]
         row_list, total_dict = build_result_table(result, columns)
         # Display-only: form-type rows get their case summary in the question
@@ -851,6 +865,12 @@ def _inject_failed_rows(row_list: list[dict], failed_rows: list[dict]) -> None:
                 "F1": "N/A",
                 "statements_contradicted_num": "N/A",
                 "statements_num_answer": "N/A",
+                # The judge never ran for an execution failure — distinguish it
+                # from a judge parse failure in the diagnostics columns.
+                "judge_status": "exec_failed",
+                "judge_error": "执行失败未判分",
+                "judge_raw_output": "N/A",
+                "judge_attempts": 0,
                 # F066: a failed question still carries its measured duration; its
                 # token/effect metrics are N/A and excluded from every aggregate.
                 "duration_ms": _perf_cell(one.get("duration_ms")),
