@@ -1631,7 +1631,8 @@
     "embedIntoWebsite": "嵌入到网站中",
     "styleOne": "样式一",
     "styleTwo": "样式二",
-    "embedCodeDescription": "将以下代码嵌入到网站中"
+    "embedCodeDescription": "将以下代码嵌入到网站中",
+    "scheduledTasks": "定时任务"
   },
   "dataset": {
     "confirmDelete": "确认删除数据集！",

@@ -31,7 +31,7 @@ from bisheng.scheduled_task.domain.models.scheduled_task import (
     ScheduleType,
     TaskStatus,
 )
-from bisheng.scheduled_task.domain.services import knowledge_guard, run_service, trigger_guard
+from bisheng.scheduled_task.domain.services import app_shape_guard, knowledge_guard, run_service, trigger_guard
 from bisheng.scheduled_task.domain.services.cron_schedule import (
     describe,
     next_runs,
@@ -168,6 +168,9 @@ async def create_task(user, req) -> ScheduledTask:
     enabled_count = await ScheduledTaskDao.acount_enabled_by_app(req.app_id, req.app_type)
     if enabled_count >= _conf().max_tasks_per_app:
         raise ScheduledTaskLimitExceededError(exception=f"current enabled tasks: {enabled_count}")
+
+    # AC-47：多人工输入节点 / 文件类输入项的应用一期不可定时化（写库前拒绝）。
+    await app_shape_guard.assert_app_schedulable(req.app_id, req.app_type)
 
     schedule_type, cron_expression, next_run_at = _validate_schedule(req.schedule_type, req.cron_expression, req.run_at)
     presets = _validate_presets(req.preset_inputs)

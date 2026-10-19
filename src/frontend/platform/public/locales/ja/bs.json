@@ -1631,7 +1631,8 @@
     "embedIntoWebsite": "Web サイトに埋め込む",
     "styleOne": "スタイル1",
     "styleTwo": "スタイル2",
-    "embedCodeDescription": "以下のコードを Web サイトに埋め込んでください"
+    "embedCodeDescription": "以下のコードを Web サイトに埋め込んでください",
+    "scheduledTasks": "定期タスク"
   },
   "dataset": {
     "confirmDelete": "このデータセットを削除します！",

@@ -1686,7 +1686,8 @@
     "embedIntoWebsite": "Embed into a website",
     "styleOne": "Style One",
     "styleTwo": "Style Two",
-    "embedCodeDescription": "Embed the following code into your website"
+    "embedCodeDescription": "Embed the following code into your website",
+    "scheduledTasks": "Scheduled Tasks"
   },
   "dataset": {
     "confirmDelete": "Confirm delete dataset!",

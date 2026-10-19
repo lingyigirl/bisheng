@@ -17,11 +17,13 @@ from bisheng.scheduled_task.domain.schemas.task import (
     AvailableIdentitiesResp,
     CronPreviewReq,
     CronPreviewResp,
+    NlDraftReq,
+    NlDraftResp,
     ScheduledTaskCreateReq,
     ScheduledTaskItem,
     ScheduledTaskUpdateReq,
 )
-from bisheng.scheduled_task.domain.services import task_service
+from bisheng.scheduled_task.domain.services import nl_draft_service, task_service
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-task"])
 
@@ -103,6 +105,22 @@ async def preview_schedule(
     """cron 预览（AC-07）：服务端解析/归一化/人类可读/未来 N 次，前端只渲染。"""
     expression, description, runs = task_service.preview_schedule(req.expression)
     return resp_200(CronPreviewResp(expression=expression, description=description, next_runs=runs))
+
+
+@router.post("/nl-draft")
+async def nl_draft(
+    req: NlDraftReq,
+    user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """自然语言 → 草稿（AC-41/AC-42）：**不落库**，确认后由 create 落库。
+
+    与创建同样要求目标应用的 `edit_app`（草稿会把用户引向一次创建）。
+    """
+    await task_service.assert_can_manage(user, req.app_type, req.app_id)
+    draft = await nl_draft_service.draft_from_text(
+        tenant_id=user.tenant_id, user_id=user.user_id, text=req.text
+    )
+    return resp_200(NlDraftResp(**draft))
 
 
 @router.get("/available-identities")

@@ -94,3 +94,23 @@ class AvailableIdentityItem(BaseModel):
 
 class AvailableIdentitiesResp(BaseModel):
     data: list[AvailableIdentityItem]
+
+
+class NlDraftReq(BaseModel):
+    """自然语言生成草稿的请求：绑定当前正在编辑的应用。"""
+
+    app_id: str = Field(..., max_length=64)
+    app_type: int
+    text: str = Field(..., description="自然语言描述（≤ nl_max_chars）")
+
+
+class NlDraftResp(BaseModel):
+    """草稿（**不落库**）：确认页据此回显可编辑的计划、时间与输入。"""
+
+    schedule_type: str
+    cron_expression: str | None = None
+    run_at: datetime | None = None
+    schedule_description: str
+    next_runs: list[datetime] = Field(default_factory=list)
+    preset_inputs: list[PresetInputItem] | None = None
+    rationale: str = ""
