@@ -226,6 +226,9 @@ class ScheduledTaskDao:
                             "name": row.name,
                             "created_by": row.created_by,
                             "trace_id": row.last_trace_id,
+                            # 失败前计数：调用方据此判定"首败一条"与阈值停用
+                            "fail_count_before": int(row.consecutive_fail_count or 0),
+                            "fail_count_after": int(row.consecutive_fail_count or 0) + 1,
                         }
                     )
         return reclaimed
@@ -385,6 +388,7 @@ class ScheduledTaskDao:
         trace_id: str | None = None,
         disable: bool = False,
         reset_fail_count: bool = False,
+        increment_fail_count: bool = False,
     ) -> int:
         """**终态回写**：释放租约 + 写最近结果（AC-14 / AC-08 的自动停用）。
 
@@ -411,6 +415,8 @@ class ScheduledTaskDao:
             values["status"] = TaskStatus.DISABLED.value
         if reset_fail_count:
             values["consecutive_fail_count"] = 0
+        elif increment_fail_count:
+            values["consecutive_fail_count"] = ScheduledTask.consecutive_fail_count + 1
 
         conditions = [ScheduledTask.id == task_id]
         if token is not None:
