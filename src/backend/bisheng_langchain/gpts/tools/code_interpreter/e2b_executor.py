@@ -40,6 +40,7 @@ class E2bCodeExecutor(BaseExecutor):
         timeout: int = 900,
         file_list: list[WriteEntry] = None,
         keep_sandbox: bool = False,
+        prewarm_sandbox: bool = True,
         **kwargs,
     ):
         """
@@ -92,7 +93,7 @@ class E2bCodeExecutor(BaseExecutor):
             self.file_list = new_file_list
 
         self.sandbox = None
-        if self.keep_sandbox:
+        if self.keep_sandbox and prewarm_sandbox:
             # Pre-warm the sandbox, but tolerate construction-time failures
             # (transient E2B unavailability / no network in tests): run() will
             # lazily re-init when needed.
@@ -111,15 +112,18 @@ class E2bCodeExecutor(BaseExecutor):
             "such as `/output/...` or `/scratch/...` — files written outside the current working "
             "directory are DISCARDED and will NOT be delivered to the user. "
             "The sandbox ships Python (pandas / matplotlib / python-docx / openpyxl) and Node.js, "
-            "runs as root and has network access: when a tool or package is missing, INSTALL it "
-            "instead of skipping — `pip install` for Python packages, `npm install` for Node "
-            "packages, `apt-get update && apt-get install -y` for system tools (e.g. libreoffice, "
-            "poppler-utils for pdftoppm, pandoc) — run the install as its own step, then continue "
-            "with the original plan. Check `which <tool>` at most once; never hunt for it with "
+            "has network access. Check existing Python libraries with importlib.util.find_spec "
+            "before importing an optional dependency; reuse an installed equivalent first. "
+            "Backend export_docx/export_pdf converters are separate from this sandbox. "
+            "Do not install LibreOffice, Poppler or Pandoc just for optional document previews. "
+            "If visual rendering is unavailable, verify structure and disclose that limitation. "
+            "Only install the smallest dependency needed for a required deliverable or check "
+            "(for example xlsxwriter for formula caches or PyMuPDF for required PDF sampling). "
+            "Use the actual operating system's package manager, never apt-get on Windows. "
+            "Run any necessary install as its own step. Check `which <tool>` at most once; never hunt for it with "
             "`find /` or by reading system directories (/root, /opt, /etc, /usr, /code, "
             "site-packages); never repeat an identical call that adds no new information, and do "
-            "not reinstall the same failing package. Fall back to a Python/Node equivalent, or as "
-            "a last resort skip an optional step, only when installation genuinely fails. "
+            "not reinstall the same failing package. Report incomplete optional checks honestly. "
             + path_namespace_rules(include_skills=True)
             # Skills ARE available: _materialize_working_set stages the workspace
             # `skills/` subtree into the sandbox on the first run (the up-front

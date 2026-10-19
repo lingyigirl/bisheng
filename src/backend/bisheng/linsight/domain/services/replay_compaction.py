@@ -15,9 +15,12 @@ class ReplayCompactor:
     def append(self, event):
         data = event.get("data") or {}
         identity = (
-            (data["call_id"], event.get("execution_epoch", data.get("execution_epoch", 0)))
+            (data["call_id"], event.get("execution_epoch", data.get("execution_epoch", 0)), data.get("step_type"))
             if event.get("event_type") == "task_execute_step"
-            and data.get("step_type") == "thinking"
+            and (
+                data.get("step_type") == "thinking"
+                or (data.get("step_type") == "assistant" and (data.get("extra_info") or {}).get("text_mode") == "delta")
+            )
             and data.get("call_id")
             else None
         )

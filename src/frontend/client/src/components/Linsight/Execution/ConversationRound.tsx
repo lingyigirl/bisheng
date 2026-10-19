@@ -51,7 +51,7 @@ export function ConversationRound({ round, versionId, onPreview }: ConversationR
 
             {/* an answered clarify renders as an inline IntentRow at its
                 chronological position inside the timeline (时序内联). */}
-            <ExecutionTimeline history={sessionSteps} />
+            <ExecutionTimeline finalAnswerStepId={round.output_result?.answer_step_id} history={sessionSteps} />
 
             {tasks.filter((task) => isTaskStarted(task.status)).map((task) => (
                 <TaskStepRow key={task.id} task={task} />

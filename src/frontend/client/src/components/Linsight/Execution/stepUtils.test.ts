@@ -246,13 +246,13 @@ describe('stepUtils — adjacent thinking merge (C)', () => {
     });
 });
 
-describe('stepUtils — orphan namespaced step (defensive inline)', () => {
-    it('renders an orphan namespaced step inline rather than dropping or crashing', () => {
+describe('stepUtils — background namespace attribution', () => {
+    it('keeps a namespace in its own member even without a visible delegation', () => {
         const orphan = nsStep(NS_A, { call_id: 'orphan_01', name: 'web_search', step_type: 'tool', output: 'hit', timestamp: 9 });
         const nodes = buildFlowNodes(mergeStepFrames([orphan]));
         expect(nodes).toHaveLength(1);
-        expect(nodes[0].kind).toBe('step');
-        const step = nodes[0].kind === 'step' ? nodes[0].step : null;
+        expect(nodes[0].kind).toBe('subagent_group');
+        const step = nodes[0].kind === 'subagent_group' ? nodes[0].agents[0].step : null;
         expect(step!.callId).toBe('orphan_01');
     });
 });
@@ -371,7 +371,7 @@ describe('stepUtils — buildTimelineGroups (Wave2 deep_step_group aggregation)'
         )!;
         const agent = group.agents[0];
         // the agent's own anchor step + its children form the full child timeline
-        const childSteps = [agent.step, ...agent.children];
+        const childSteps = [agent.step, ...agent.children].map(step => ({ ...step, namespace: null }));
         const nodes = buildTimelineGroups(childSteps);
         // no subagent_group inside (children carry namespace but no delegation
         // opened this run -> orphan inline -> all wrapped into one deep_step_group)

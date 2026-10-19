@@ -19,7 +19,7 @@
  *   decided purely by the set of distinct subgraph namespaces.
  */
 
-export type ExecStepType = 'tool' | 'thinking' | 'knowledge' | 'subagent' | 'ui_card' | 'call_user_input';
+export type ExecStepType = 'assistant' | 'tool' | 'thinking' | 'knowledge' | 'subagent' | 'ui_card' | 'call_user_input';
 
 /** Raw `task_execute_step.data` frame (contract C1). */
 export interface ExecStepEventData {

@@ -329,6 +329,7 @@ async def test_async_resume_uses_checkpointer_and_command_resume():
     from bisheng.linsight.domain.task_exec import LinsightWorkflowTask
 
     exec_task = LinsightWorkflowTask()
+    exec_task._state_manager = MagicMock(flush_step_projections=AsyncMock())
     exec_task.session_version_id = "svid-resume"
 
     resume_calls = {}

@@ -204,6 +204,24 @@ class TestCreate:
 
 
 class TestQueries:
+    async def test_picker_excludes_missing_legacy_bundle_but_keeps_versioned_skill(self, service):
+        await service.create_from_form(TENANT, USER, _form())
+        await service.create_from_form(
+            TENANT, USER, _form(name="missing-legacy", display_name="Legacy", description="Legacy fixture")
+        )
+        FakeSkillDao.rows["missing-legacy"].content_hash = None
+        assert [skill.name for skill in await service.get_selectable()] == ["ji-du-cai-bao-fen-xi"]
+
+    async def test_picker_keeps_readable_legacy_bundle(self, service):
+        detail = await service.create_from_form(TENANT, USER, _form())
+        row = FakeSkillDao.rows[detail.name]
+        data = service.store.read_bytes(TENANT, detail.name, "SKILL.md", content_hash=row.content_hash)
+        legacy = service.store.skill_dir(TENANT, detail.name)
+        legacy.mkdir(parents=True)
+        (legacy / "SKILL.md").write_bytes(data)
+        row.content_hash = None
+        assert [skill.name for skill in await service.get_selectable()] == [detail.name]
+
     async def test_page_and_selectable(self, service):
         await service.create_from_form(TENANT, USER, _form())
         await service.create_from_form(

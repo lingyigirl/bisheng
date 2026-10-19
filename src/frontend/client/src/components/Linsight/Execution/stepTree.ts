@@ -1,3 +1,4 @@
+import { mergeTextOutput } from '~/hooks/Websocket/textOutput';
 /**
  * Step-tree construction: merge raw WS frames into steps, then group them into the
  * renderable node trees (flow nodes / timeline nodes). Split out of stepUtils.ts —
@@ -111,7 +112,9 @@ export function mergeStepFrames(history: ExecStepEventData[] | null | undefined)
         // streaming (thinking) frames are appended defensively
         if (frame.status === 'end') existing.running = false;
         if (frame.params && Object.keys(frame.params).length) existing.params = frame.params;
-        if (frame.output) {
+        if (frame.step_type === 'assistant') {
+            existing.output = mergeTextOutput(existing.output, frame);
+        } else if (frame.output) {
             existing.output =
                 existing.output && frame.output !== existing.output
                     ? existing.output + frame.output
@@ -148,7 +151,7 @@ export function mergedStepRenderEqual(a: MergedStep, b: MergedStep): boolean {
         a.running === b.running &&
         a.name === b.name &&
         a.stepType === b.stepType &&
-        a.output.length === b.output.length &&
+        (a.stepType === 'assistant' ? a.output === b.output : a.output.length === b.output.length) &&
         a.params === b.params &&
         a.extraInfo.job_status === b.extraInfo.job_status &&
         a.endedAt === b.endedAt &&
@@ -200,69 +203,39 @@ export function mergeAdjacentThinking(steps: MergedStep[]): MergedStep[] {
     return out;
 }
 
-/**
- * (D) Build the renderable node list for one task. Subagent identity is decided
- * purely by the set of distinct subgraph namespaces (per §5 / open decision 2).
- *
- * The team group is materialized LAZILY — only once a real subagent step (a
- * distinct namespace) actually arrives:
- * - step_type==='subagent' (the main-graph `task` delegation, ns=None): records
- *   the delegation goal/name into a pending buffer; it NEVER pushes a node on its
- *   own. Eagerly emitting a group here left an empty `agents` array during the
- *   live window before children stream in — which crashed the renderer
- *   (`agents[0].step`) and showed a stray "0 subagents" / "task" row.
- * - namespaced step (subagent-internal tool/knowledge/thinking, ns=tools:<uuid>):
- *   the first one materializes the group (consuming the pending goals); each
- *   distinct ns becomes one agent (so 3 distinct ns yield agents.length === 3,
- *   NOT 22). Later steps of a known ns append to that agent's children — even if
- *   a top-level step intervened (agentByNamespace persists for the whole task).
- * - top-level step (ns=None, not subagent): render inline and close the current
- *   delegation burst so the NEXT distinct ns starts a fresh group. The main graph
- *   is blocked while subagents run, so top-level steps only fall between rounds.
+/** Group explicit invocations and legacy namespaces independently.
+ * Background members may interleave with main work. A namespace without its
+ * delegation marker remains a separate speaker; it never becomes main prose.
  */
-function buildConfiguredFlowNodes(steps: MergedStep[]): FlowNode[] {
-    const nodes: FlowNode[] = [];
-    const groups = new Map<string, SubagentGroup>();
-    for (const step of steps) {
-        const invocation = step.extraInfo.invocation_id;
-        if (typeof invocation !== 'string') {
-            nodes.push({ kind: 'step', step });
-            continue;
-        }
-        let group = groups.get(invocation);
-        if (!group) {
-            group = { kind: 'subagent_group', name: String(step.extraInfo.agent_name || step.name), agents: [], goals: [String(step.extraInfo.delegate_goal || '')] };
-            groups.set(invocation, group);
-            nodes.push(group);
-        }
-        if (!group.agents.length) group.agents.push({ step, children: [] });
-        else if (step.callId === invocation) {
-            if (group.agents[0].step.callId !== invocation) group.agents[0].children.unshift(group.agents[0].step);
-            group.agents[0].step = step;
-        } else group.agents[0].children.push(step);
-    }
-    return nodes;
-}
-
 export function buildFlowNodes(steps: MergedStep[]): FlowNode[] {
-    if (steps.some((step) => typeof step.extraInfo.invocation_id === 'string')) return buildConfiguredFlowNodes(steps);
-
     const merged = mergeAdjacentThinking(steps);
     const nodes: FlowNode[] = [];
+    const invocationGroups = new Map<string, SubagentGroup>();
     // ns -> agent bucket; persists for the whole task so a subagent's later steps
     // always find their agent, even across an intervening top-level step.
     const agentByNamespace = new Map<string, SubagentAgent>();
-    // Lazily-materialized current team group + the pending delegation metadata
-    // collected from `task` frames that haven't been bound to a group yet.
-    // `pendingDelegation` gates group creation: a namespaced step only forms a
-    // team group when a real `task` delegation preceded it in this burst — a lone
-    // namespaced step with no delegation context stays inline (defensive orphan).
+    let memberIndex = 0;
+    // Legacy metadata is retained for old consumers. Speaker identity comes from
+    // the namespace; arrival order cannot reliably bind a goal to an agent.
     let currentGroup: SubagentGroup | null = null;
     let pendingGoals: string[] = [];
     let pendingName = '';
-    let pendingDelegation = false;
 
     for (const step of merged) {
+        const invocation = step.extraInfo.invocation_id;
+        if (typeof invocation === 'string' && invocation) {
+            let group = invocationGroups.get(invocation);
+            if (!group) {
+                group = { kind: 'subagent_group', name: String(step.extraInfo.agent_name || step.name),
+                    agents: [{ step, children: [], idx: ++memberIndex }], goals: [String(step.extraInfo.delegate_goal || '')] };
+                invocationGroups.set(invocation, group);
+                nodes.push(group);
+            } else if (step.callId === invocation) {
+                if (group.agents[0].step.callId !== invocation) group.agents[0].children.unshift(group.agents[0].step);
+                group.agents[0].step = step;
+            } else group.agents[0].children.push(step);
+            continue;
+        }
         // write_todos is the plan-write call. A subagent-internal one (namespaced)
         // is noise — drop it so it never becomes a subagent anchor or a row. The
         // main-graph one (ns is None) falls through to the top-level branch below,
@@ -277,7 +250,6 @@ export function buildFlowNodes(steps: MergedStep[]): FlowNode[] {
                 if (step.name) currentGroup.name = step.name;
                 if (goal && !currentGroup.goals!.includes(goal)) currentGroup.goals!.push(goal);
             } else {
-                pendingDelegation = true;
                 if (step.name) pendingName = step.name;
                 if (goal && !pendingGoals.includes(goal)) pendingGoals.push(goal);
             }
@@ -291,10 +263,8 @@ export function buildFlowNodes(steps: MergedStep[]): FlowNode[] {
                 known.children.push(step);
                 continue;
             }
-            // first step of a new subagent — but only fold into a team group if a
-            // delegation actually opened this burst; otherwise fall through to
-            // inline (orphan namespaced step, defensive — shouldn't happen live).
-            if (currentGroup || pendingDelegation) {
+            // A background member may first appear after intervening main work.
+            if (step.namespace) {
                 if (!currentGroup) {
                     currentGroup = {
                         kind: 'subagent_group',
@@ -305,23 +275,20 @@ export function buildFlowNodes(steps: MergedStep[]): FlowNode[] {
                     nodes.push(currentGroup);
                     pendingGoals = [];
                     pendingName = '';
-                    pendingDelegation = false;
                 }
-                const agent: SubagentAgent = { step, children: [], idx: currentGroup.agents.length + 1 };
+                const agent: SubagentAgent = { step, children: [], idx: ++memberIndex };
                 currentGroup.agents.push(agent);
                 agentByNamespace.set(step.namespace, agent);
                 continue;
             }
         }
 
-        // top-level step (ns=None, not a delegation) or orphan namespaced step:
-        // render inline + close the current burst so the next distinct ns opens a
-        // fresh group (the main graph is blocked while subagents run).
+        // Main work closes only the current legacy burst. Known namespaces stay
+        // bound across this boundary while background members continue.
         nodes.push({ kind: 'step', step });
         currentGroup = null;
         pendingGoals = [];
         pendingName = '';
-        pendingDelegation = false;
     }
 
     return nodes;
@@ -394,6 +361,11 @@ export function buildTimelineGroups(steps: MergedStep[]): TimelineNode[] {
             // never render the marker itself (段流重构 2026-06).
             if (isSegmentBoundary(node.step)) {
                 flush();
+                continue;
+            }
+            if (node.step.stepType === 'assistant') {
+                flush();
+                out.push(node);
                 continue;
             }
             episode.push(node.step);

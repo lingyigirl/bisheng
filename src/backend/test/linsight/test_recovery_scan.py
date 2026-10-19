@@ -9,6 +9,8 @@ from bisheng.linsight.domain.services import recovery_service
 
 
 async def test_scan_pages_candidates_batches_leases_and_deduplicates_enqueue(monkeypatch):
+    # Legacy fixture states belong to the default queue, regardless of the developer's runtime config.
+    monkeypatch.setattr(recovery_service, "recovery_queue_namespace", lambda: "linsight")
     async with fakeredis.aioredis.FakeRedis() as redis:
         tasks = [SimpleNamespace(id=str(i), tenant_id=i + 1, recovery_state={}) for i in range(4)]
         tasks[2].recovery_state = {"retry_after": float("inf")}

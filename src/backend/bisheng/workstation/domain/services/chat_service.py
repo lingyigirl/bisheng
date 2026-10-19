@@ -2489,4 +2489,5 @@ def _to_linsight_submit(data: APIChatCompletion, org_knowledge_ids: list[int] | 
         # only the user's explicit selection is materialized (None/[] = no skills).
         skills=data.skills,
         agent_config=agent_config,
+        client_capabilities=getattr(data, "client_capabilities", []),
     )

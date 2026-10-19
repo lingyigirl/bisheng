@@ -190,7 +190,7 @@ export function ExecutionFlow({ versionId, conversationId, isSharePage = false, 
                             {/* session-level steps (task_id == svid pseudo task, e.g.
                                 planning-stage tools); an answered clarify renders as an
                                 inline IntentRow at its chronological position here. */}
-                            <ExecutionTimeline history={sessionSteps} />
+                            <ExecutionTimeline finalAnswerStepId={linsight?.output_result?.answer_step_id} history={sessionSteps} />
 
                             {/* planning breathing row */}
                             {planning && <BreathingRow state="planning" />}

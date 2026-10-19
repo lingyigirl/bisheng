@@ -58,6 +58,14 @@ def test_scratch_uploads_and_skills_are_never_deliverables():
     assert select_deliverables(details, baseline_paths=baseline) == []
 
 
+def test_framework_context_offloads_are_never_deliverables():
+    details = [_detail("conversation_history/task.md"), _detail("large_tool_results/call-1")]
+    assert select_deliverables(details, baseline_paths=set()) == []
+    # An intentional deliverable with a similar name must still be retained.
+    report = _detail("output/conversation_history.md")
+    assert select_deliverables([*details, report], baseline_paths=set()) == [report]
+
+
 def test_provisioned_skill_bundles_never_become_the_result():
     """Regression (114, 2026-07-28): skill bundles are copied into the workspace at
     task START — after the baseline snapshot — so criterion 2 saw ~100 SKILL.md /

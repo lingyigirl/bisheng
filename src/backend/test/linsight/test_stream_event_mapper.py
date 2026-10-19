@@ -485,7 +485,7 @@ class TestTermination:
 
 class TestFixturesAlignment:
     def test_exec_step_fixture_fields_are_supported(self):
-        data = json.loads((FIXTURE_DIR / "step_types.json").read_text())
+        data = json.loads((FIXTURE_DIR / "step_types.json").read_text(encoding="utf-8"))
         required = {
             "call_id",
             "task_id",
@@ -500,7 +500,7 @@ class TestFixturesAlignment:
             assert required.issubset(set(step["data"].keys()))
 
     def test_event_samples_cover_ten_types(self):
-        data = json.loads((FIXTURE_DIR / "event_samples.json").read_text())
+        data = json.loads((FIXTURE_DIR / "event_samples.json").read_text(encoding="utf-8"))
         types = {s["event_type"] for s in data["samples"]}
         assert len(types) == 10
 

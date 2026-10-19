@@ -17,14 +17,17 @@ from bisheng.linsight.domain.task_exec import LinsightWorkflowTask
 async def test_factory_guards_researcher_and_every_other_child(monkeypatch):
     import deepagents
 
-    from bisheng.linsight.domain.services import agent_factory, configured_subagents
+    from bisheng.linsight.domain.services import agent_factory, configured_subagents, context_compaction
 
     monkeypatch.setattr(agent_factory, "_resolve_model", AsyncMock(return_value=object()))
     monkeypatch.setattr(agent_factory, "settings", SimpleNamespace(get_linsight_conf=lambda: SimpleNamespace()))
     monkeypatch.setattr(deepagents, "create_deep_agent", lambda **kwargs: kwargs)
+    monkeypatch.setattr(context_compaction, "build_context_compaction", Mock(return_value=object()))
 
     async def members(session, backend, directory, middleware, resources):
-        return [{"name": "member-test", "middleware": middleware([])}], object()
+        from bisheng.linsight.domain.services.subagent_context import DelegationMiddleware
+
+        return [{"name": "member-test", "middleware": middleware([])}], DelegationMiddleware({})
 
     monkeypatch.setattr(configured_subagents, "build_configured_subagents", members)
     session = SimpleNamespace(id="test", agent_config={"recovery_protocol": 1}, tenant_id=1, user_id=1)
@@ -112,6 +115,7 @@ async def test_continuation_checkpoint_accepts_input_exactly_once(monkeypatch, c
     task._current_time_block = lambda: "now"
     task._capture_values_snapshot = Mock()
     task._handle_event = AsyncMock()
+    task._state_manager = SimpleNamespace(flush_step_projections=AsyncMock())
     session = SimpleNamespace(id="task", recovery_state={"continuation": {"id": "request"}})
 
     await task._drive_continue(agent, session, "new question")

@@ -24,10 +24,11 @@
  * per-tool group.running (binding it to group.running used to make the whole group
  * flicker open/closed on every tool call mid-episode).
  *
- * It does NOT import or modify any Chat/Messages (daily /c) component — all
+ * It does not modify the daily chat components; all
  * tokens come from execTokens; the live 用时 ticker is isolated in GroupHeaderLabel
  * so a 100ms tick re-renders only the header text, never the group body.
  */
+import { AssistantText } from './AssistantText';
 import { Outlined } from 'bisheng-icons';
 import { memo, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useLocalize } from '~/hooks';
@@ -210,6 +211,7 @@ const DeepStepGroupBase: FC<DeepStepGroupProps> = ({ group, compact = false, sub
         }
         // Knowledge steps keep their richer hit-list row; everything else is a
         // lite tool row. Both preserve original timeline order.
+        if (seg.step.stepType === 'assistant') return <AssistantText key={seg.key} step={seg.step} showSpeaker={false} />;
         if (seg.step.stepType === 'knowledge') {
             return <KnowledgeRow key={seg.key} step={seg.step} />;
         }

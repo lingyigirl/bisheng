@@ -10,6 +10,7 @@ from bisheng.core.context.tenant import bypass_tenant_filter
 from bisheng.core.database import get_async_db_session
 from bisheng.linsight.domain.models.linsight_session_version import LinsightSessionVersion, SessionVersionStatusEnum
 from bisheng.linsight.domain.services.recovery_context import RecoveryLeaseLost, execution_fence
+from bisheng.linsight.domain.services.recovery_queue_scope import recovery_queue_namespace, scoped_recovery_state
 
 TERMINAL = {
     SessionVersionStatusEnum.COMPLETED,
@@ -31,13 +32,15 @@ class RecoveryRepository:
                 return False
             # Persist the input before enqueueing: the recovery scanner can
             # deliver it even if the queue write or the worker is interrupted.
-            row.recovery_state = {
-                **(row.recovery_state or {}),
-                "continuation": {"id": uuid4().hex, "question": question, "receipt_epoch": row.recovery_epoch + 1},
-                "phase": "continue_queued",
-                "attempts": 0,
-                "retry_after": time.time() + 5,
-            }
+            row.recovery_state = scoped_recovery_state(
+                {
+                    **(row.recovery_state or {}),
+                    "continuation": {"id": uuid4().hex, "question": question, "receipt_epoch": row.recovery_epoch + 1},
+                    "phase": "continue_queued",
+                    "attempts": 0,
+                },
+                time.time() + 5,
+            )
             row.status = SessionVersionStatusEnum.IN_PROGRESS
             await session.commit()
             return True
@@ -73,6 +76,8 @@ class RecoveryRepository:
                 if recovering and row.status != SessionVersionStatusEnum.IN_PROGRESS:
                     return None
                 state = dict(row.recovery_state or {})
+                if state.get("queue_namespace", recovery_queue_namespace()) != recovery_queue_namespace():
+                    return None
                 if (
                     not recovering
                     and row.status == SessionVersionStatusEnum.IN_PROGRESS
@@ -82,12 +87,14 @@ class RecoveryRepository:
                 attempts = int(state.get("attempts", 0)) + int(recovering)
                 row.recovery_epoch += 1
                 row.status = SessionVersionStatusEnum.IN_PROGRESS
-                row.recovery_state = {
-                    **state,
-                    "attempts": attempts,
-                    "phase": "recovering" if recovering else "running",
-                    "retry_after": time.time() + min(120, 5 * 2 ** min(attempts, 5)),
-                }
+                row.recovery_state = scoped_recovery_state(
+                    {
+                        **state,
+                        "attempts": attempts,
+                        "phase": "recovering" if recovering else "running",
+                    },
+                    time.time() + min(120, 5 * 2 ** min(attempts, 5)),
+                )
                 await session.commit()
                 await session.refresh(row)
                 return row

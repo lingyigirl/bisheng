@@ -100,11 +100,14 @@ async def get_all_files_from_session(
 #   uploads/ — the user's own source files
 #   skills/  — skill bundles the platform copies in at task start
 #              (skill_provisioning.WORKSPACE_SKILLS_DIR)
+#   conversation_history/, large_tool_results/ — framework context offloads
 OUTPUT_ZONE = "output"
 SCRATCH_ZONE = "scratch"
 UPLOADS_ZONE = "uploads"
 SKILLS_ZONE = "skills"
-NON_DELIVERABLE_ZONES = frozenset({SCRATCH_ZONE, UPLOADS_ZONE, SKILLS_ZONE})
+NON_DELIVERABLE_ZONES = frozenset(
+    {SCRATCH_ZONE, UPLOADS_ZONE, SKILLS_ZONE, "conversation_history", "large_tool_results"}
+)
 
 
 def _is_skipped_workspace_path(path: str) -> bool:
@@ -287,6 +290,7 @@ async def get_final_result_file(
             "file_path": file_info["file_path"],
             "file_md5": file_info["file_md5"],
             "file_id": file_info["file_id"],
+            "workspace_path": (file_info.get("rel_path") or "").replace("\\", "/"),
         }
         for file_info in select_deliverables(file_details, baseline_paths)
     ]
@@ -294,6 +298,16 @@ async def get_final_result_file(
     async def upload_file_to_minio(final_file_info: dict) -> dict | None:
         """Upload files toMinIOand returns file information"""
         try:
+            from pathlib import Path
+
+            from bisheng.linsight.domain.services.artifact_validation import validate_deliverable
+
+            local = Path(final_file_info["file_path"])
+            relative = final_file_info.get("workspace_path") or local.name
+            root = local
+            for _ in Path(relative).parts:
+                root = root.parent
+            final_file_info["validation"] = await validate_deliverable(str(local), str(root), session_model.id)
             # ASCII-only object key (file_id + ext) — non-ASCII keys break presigned
             # signatures on some S3-compatible backends (Huawei OBS → 403). Display
             # name stays on final_file_info["file_name"].
@@ -312,7 +326,13 @@ async def get_final_result_file(
 
     # Upload files toMinIO (Parallel Processing)
     if final_result_files:
-        upload_tasks = [upload_file_to_minio(final_file_info) for final_file_info in final_result_files]
+        slots = asyncio.Semaphore(2)
+
+        async def limited_upload(info):
+            async with slots:
+                return await upload_file_to_minio(info)
+
+        upload_tasks = [limited_upload(final_file_info) for final_file_info in final_result_files]
 
         upload_results = await asyncio.gather(*upload_tasks, return_exceptions=True)
 
@@ -346,8 +366,22 @@ FALLBACK_REPORT_NAME = "报告.md"
 # .md alone would miss the likeliest claim of all: steps 3c/3d make export_docx /
 # export_pdf the closing action, so "已导出 报告.docx" is exactly where a run that
 # ran out of turns stops.
-_DELIVERABLE_EXTS = (".md", ".markdown", ".html", ".htm", ".docx", ".pdf")
-_DELIVERABLE_EXT_RE = "(?:md|markdown|html?|docx|pdf)"
+_DELIVERABLE_EXTS = (
+    ".md",
+    ".markdown",
+    ".html",
+    ".htm",
+    ".docx",
+    ".pdf",
+    ".xlsx",
+    ".pptx",
+    ".csv",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+)
+_DELIVERABLE_EXT_RE = "(?:md|markdown|html?|docx|pdf|xlsx|pptx|csv|png|jpe?g|webp)"
 
 # Markdown link, captured as a PAIR: the visible text and the target. Only the
 # target carries the path, so only the target can decide the zone — see

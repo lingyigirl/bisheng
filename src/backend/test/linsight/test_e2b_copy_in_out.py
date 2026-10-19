@@ -156,6 +156,32 @@ def make_executor(monkeypatch, workspace=None):
     return exe
 
 
+def test_deferred_persistent_sandbox_initializes_on_first_code_call_and_is_reused(monkeypatch):
+    initialized = []
+    executed = []
+
+    def initialize(executor):
+        executor.sandbox = FakeSandbox()
+        initialized.append(executor.sandbox)
+
+    def run_once(executor, code, required_files):
+        executed.append((code, executor.sandbox))
+        return {"code": code}
+
+    monkeypatch.setattr(E2bCodeExecutor, "init_sandbox", initialize)
+    monkeypatch.setattr(E2bCodeExecutor, "_run_once", run_once)
+    executor = E2bCodeExecutor(minio={}, api_key="test", keep_sandbox=True, prewarm_sandbox=False)
+    assert executor.sandbox is None and not initialized
+    assert executor.run("first") == {"code": "first"}
+    assert executor.run("second") == {"code": "second"}
+    assert len(initialized) == 1
+    assert [code for code, _ in executed] == ["first", "second"]
+    assert executed[0][1] is executed[1][1]
+    assert not initialized[0].killed
+    executor.close()
+    assert initialized[0].killed
+
+
 def test_small_skill_files_are_batched_once_and_unchanged_inputs_are_not_downloaded(monkeypatch, tmp_path):
     from unittest.mock import Mock
 

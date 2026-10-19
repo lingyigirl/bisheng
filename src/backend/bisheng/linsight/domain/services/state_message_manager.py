@@ -111,6 +111,26 @@ class LinsightStateMessageManager:
         # task_id -> event-loop monotonic time of its last `history` DB flush;
         # drives THINKING_DB_FLUSH_INTERVAL coalescing in add_execution_task_step.
         self._last_history_db_flush: dict[str, float] = {}
+        self._pending_text_tasks: dict[str, LinsightExecuteTask] = {}
+        self.defer_step_projection = False
+        self._projection_lock = asyncio.Lock()
+        self._dirty_projection_tasks: set[str] = set()
+
+    async def flush_step_projections(self):
+        """Persist immutable snapshots while the stream keeps updating memory."""
+        async with self._projection_lock:
+            for task_id in list(self._dirty_projection_tasks):
+                model = self._pending_text_tasks.get(task_id)
+                if model is None:
+                    continue
+                snapshot = model.model_dump()
+                self._dirty_projection_tasks.discard(task_id)
+                try:
+                    await LinsightExecuteTaskDao.update_by_id(task_id, history=snapshot["history"])
+                    await self._fenced_cache_write({f"{self._keys['execution_tasks']}{task_id}": snapshot})
+                except BaseException:
+                    self._dirty_projection_tasks.add(task_id)
+                    raise
 
     async def _handle_redis_operation(self, operation, *args, **kwargs):
         """
@@ -280,6 +300,11 @@ class LinsightStateMessageManager:
             Updated task data
         """
         try:
+            if self.defer_step_projection:
+                await self.flush_step_projections()
+            pending = self._pending_text_tasks.get(task_id)
+            if pending is not None:
+                kwargs.setdefault("history", pending.history)
             # Update database first
             task_model = await LinsightExecuteTaskDao.update_by_id(task_id, status=status, **kwargs)
             if task_model is None:
@@ -295,6 +320,7 @@ class LinsightStateMessageManager:
 
             await self._fenced_cache_write({task_key: task_data})
 
+            self._pending_text_tasks.pop(task_id, None)
             self._logger.info(f"Updated task {task_id} status to {status}")
             return task_data
 
@@ -468,7 +494,7 @@ class LinsightStateMessageManager:
         task_key = f"{self._keys['execution_tasks']}{task_id}"
 
         try:
-            task_data = await self.get_execution_task(task_id)
+            task_data = self._pending_text_tasks.get(task_id) or await self.get_execution_task(task_id)
 
             if not task_data:
                 # Orphan step: a top-level agent step whose task_id is the
@@ -499,6 +525,14 @@ class LinsightStateMessageManager:
                 for i in range(len(task_model.history) - 1, -1, -1):
                     prev = task_model.history[i]
                     if isinstance(prev, dict) and prev.get("call_id") == call_id:
+                        if step_dump.get("step_type") == "assistant":
+                            from bisheng.linsight.domain.services.assistant_text_mapper import merge_text_output
+
+                            frame_id = (step_dump.get("extra_info") or {}).get("text_frame_id")
+                            if frame_id and frame_id == (prev.get("extra_info") or {}).get("text_frame_id"):
+                                step_dump = prev
+                            else:
+                                step_dump = merge_text_output(prev, step_dump)
                         if step_dump.get("step_type") == "thinking":
                             step_dump["output"] = (prev.get("output") or "") + (step_dump.get("output") or "")
                         task_model.history[i] = step_dump
@@ -507,10 +541,12 @@ class LinsightStateMessageManager:
             if not merged:
                 task_model.history.append(step_dump)
 
-            # Redis always carries the freshest history: get_execution_task reads
-            # it back to accumulate the next step, and the live WS view derives from
-            # push_message — so it is written every step (no -7120 risk on Redis).
-            await self._fenced_cache_write({task_key: task_model.model_dump()})
+            if self.defer_step_projection:
+                # The fenced replay append precedes this projection. A single
+                # background writer persists the latest snapshot, not each frame.
+                self._pending_text_tasks[task_id] = task_model
+                self._dirty_projection_tasks.add(task_id)
+                return
 
             # DB write-amplification guard (DM8 -7120 incident, 2026-06): a thinking
             # segment streams as many token-delta frames that all merge into ONE
@@ -523,10 +559,21 @@ class LinsightStateMessageManager:
             # / outputs / a reloaded view are never behind. Redis stays authoritative
             # in the throttle window, so no step is lost.
             now = asyncio.get_event_loop().time()
-            is_thinking_delta = merged and step_dump.get("step_type") == "thinking"
+            is_thinking_delta = (
+                merged
+                and step_dump.get("step_type") in {"thinking", "assistant"}
+                and (step_dump.get("step_type") == "thinking" or step_dump.get("status") != "end")
+            )
             recently_flushed = (
                 now - self._last_history_db_flush.get(task_id, float("-inf"))
             ) < self.THINKING_DB_FLUSH_INTERVAL
+            if step_dump.get("step_type") == "assistant" and is_thinking_delta and recently_flushed:
+                # The durable replay stream already owns every delta. Keep only the
+                # projection in memory until the SQL interval or a semantic barrier.
+                self._pending_text_tasks[task_id] = task_model
+                return
+            self._pending_text_tasks.pop(task_id, None)
+            await self._fenced_cache_write({task_key: task_model.model_dump()})
             if not (is_thinking_delta and recently_flushed):
                 await LinsightExecuteTaskDao.update_by_id(task_id, history=task_model.history)
                 self._last_history_db_flush[task_id] = now

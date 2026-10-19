@@ -1,4 +1,5 @@
 // @ts-strict-ignore
+import { createViewBatcher, flushSocketView, registerViewFlush } from "./viewBatcher";
 import { getReplaySnapshot } from "~/api/harness";
 import { useLocalize } from "~/hooks";
 import { isNewerEvent } from "./replayCursor";
@@ -13,7 +14,6 @@ import { buildTaskTree, mapSessionVersionStatus, useLinsightManager } from "../u
 import { MockWebSocket } from "./mock";
 const MOCK = false
 
-// 每个会话单独分配一个 WebSocket实例
 const connections: Record<string, WebSocket> = {};
 
 export const useLinsightWebSocket = (versionId) => {
@@ -48,6 +48,7 @@ export const useLinsightWebSocket = (versionId) => {
             retryTimer.current = null;
             const socket = connections[versionId];
             if (socket) {
+                flushSocketView(socket);
                 delete connections[versionId];
                 socket.close();
             }
@@ -61,7 +62,6 @@ export const useLinsightWebSocket = (versionId) => {
             retryTimer.current = null;
         }
     }, [task.running]);
-
 
     const connect = useCallback(async (id: string, msg: any) => {
         if (connecting.current.has(id)) return;
@@ -91,7 +91,7 @@ export const useLinsightWebSocket = (versionId) => {
         if (activeVersionIdRef.current !== id) return;
         // 清理可能存在的旧连接
         if (connections[id]) {
-            connections[id].close();
+            flushSocketView(connections[id]); connections[id].close();
         }
 
         function getWebSocketUrl(path) {
@@ -119,18 +119,19 @@ export const useLinsightWebSocket = (versionId) => {
         let hydratingReplay = false;
         type ReplayState = NonNullable<ReturnType<typeof getLinsight>>;
         let replayState: ReplayState | null = null;
+        let batchingText = false;
+        const viewBatch = createViewBatcher<ReplayState>(update => updateLinsight(id, update));
         const updateView = (version: string, update: Partial<ReplayState> | ((current: ReplayState) => Partial<ReplayState>)) => {
             if (hydratingReplay && replayState) {
                 replayState = { ...replayState, ...(typeof update === 'function' ? update(replayState) : update) };
-            } else updateLinsight(version, update);
+            } else if (batchingText) viewBatch.enqueue(update);
+            else { viewBatch.flush(); updateLinsight(version, update); }
         };
         const applyEvent = (taskData) => {
             if (taskData.event_id && !isNewerEvent(taskData.event_id, cursors.current.get(id))) return;
-            /**
-             * 生成一级任务list
-             * 生成当前一级任务下的二级任务list
-             * 更新生成的任务信息
-             */
+            batchingText = taskData.event_type === 'task_execute_step' &&
+                ['thinking', 'assistant'].includes(taskData.data?.step_type) && taskData.data?.status !== 'end';
+            if (!batchingText) viewBatch.flush();
             switch (taskData.event_type) {
                 case 'task_recovery':
                     updateView(id, prev => ({
@@ -322,7 +323,6 @@ export const useLinsightWebSocket = (versionId) => {
                         if (parentIndex === -1) return prev; // 父任务不存在
 
                         const parent = prev.tasks[parentIndex];
-                        // const childIndex = parent.children.findIndex(c => c.id === taskData.data.id);
 
                         //  更新现有子任务
                         const newTasks = [...prev.tasks];
@@ -378,7 +378,6 @@ export const useLinsightWebSocket = (versionId) => {
                 case 'final_result':
                     updateView(id, {
                         output_result: taskData.data.output_result,
-                        // summary: taskData.data.output_result.answer,
                         file_list: taskData.data.output_result.final_files || [],
                         status: SopStatus.completed
                     })
@@ -430,9 +429,9 @@ export const useLinsightWebSocket = (versionId) => {
                             },
                             status: SopStatus.Stoped
                         })
-                        // showToast({ message: taskData.data.error, status: 'error' });
                     }
             }
+            batchingText = false;
             if (taskData.event_id) cursors.current.set(id, taskData.event_id);
         };
         if (snapshot && !snapshot.legacy) {
@@ -479,7 +478,6 @@ export const useLinsightWebSocket = (versionId) => {
             // websocket.send(JSON.stringify(msg));
         };
 
-
         websocket.onmessage = (event) => {
             const frame = JSON.parse(event.data);
             if (frame.event_type === 'replay_reset') {
@@ -491,7 +489,9 @@ export const useLinsightWebSocket = (versionId) => {
             }
             applyEvent(frame);
         };
+        registerViewFlush(websocket as WebSocket, viewBatch.flush);
         websocket.onclose = () => {
+            viewBatch.flush();
             console.log(`WebSocket closed for session ${id}`);
             if (connections[id] === websocket) {
                 delete connections[id];
@@ -503,7 +503,6 @@ export const useLinsightWebSocket = (versionId) => {
             console.error(`WebSocket error for session ${id}:`, error);
         };
     }, [])
-
 
     useEffect(() => {
         if (!task.versionId) return;

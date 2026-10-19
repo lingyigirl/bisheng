@@ -240,6 +240,7 @@ export const useLinsightSubmit = (versionId, setVersionId, setVersions) => {
                     // the submit schema does not consume this field yet)
                     skills: linsightSubmission.skills || [],
                     agent_config: linsightSubmission.agent_config,
+                    client_capabilities: ["assistant_text_v1"],
                     // F035: continue an existing session (follow-up round) so the
                     // backend appends a version instead of creating a new 会话.
                     session_id: linsightSubmission.sessionId || null,

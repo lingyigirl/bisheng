@@ -446,7 +446,10 @@ class LinsightWorkflowTask:
         # run owner background subagent jobs are cancelled against.
         bind_run_owner()
         linsight_conf = settings.get_linsight_conf()
-        mapper = StreamEventMapper(svid=session_model.id)
+        mapper = StreamEventMapper(
+            svid=session_model.id,
+            text_protocol=(getattr(session_model, "agent_config", None) or {}).get("text_protocol") == 1,
+        )
         config = {
             "configurable": {"thread_id": session_model.id},
             "recursion_limit": _resolve_recursion_limit(linsight_conf),
@@ -586,7 +589,10 @@ class LinsightWorkflowTask:
         # T2: bind this task as the run owner (see _drive_resume).
         bind_run_owner()
         linsight_conf = settings.get_linsight_conf()
-        mapper = StreamEventMapper(svid=session_model.id)
+        mapper = StreamEventMapper(
+            svid=session_model.id,
+            text_protocol=(getattr(session_model, "agent_config", None) or {}).get("text_protocol") == 1,
+        )
         config = {
             "configurable": {"thread_id": session_model.id},
             "recursion_limit": _resolve_recursion_limit(linsight_conf),
@@ -1211,7 +1217,10 @@ class LinsightWorkflowTask:
         ``_handle_event`` (design §3.2 / §3.4).
         """
         linsight_conf = settings.get_linsight_conf()
-        mapper = StreamEventMapper(svid=session_model.id)
+        mapper = StreamEventMapper(
+            svid=session_model.id,
+            text_protocol=(getattr(session_model, "agent_config", None) or {}).get("text_protocol") == 1,
+        )
 
         async def agent_execution():
             """Agent performs a task via astream + mapper."""
@@ -1439,10 +1448,21 @@ class LinsightWorkflowTask:
                         self._capture_values_snapshot(raw)
                     for event in mapper.normalize(mode, raw, namespace=namespace):
                         yield event
+                for event in mapper.finish_text():
+                    yield event
+                self._answer_step_id = mapper.last_answer_step_id
+                self._answer_step_text = mapper.text_mapper.last_answer_text if mapper.text_mapper else None
 
-        async with aclosing(coalesce_stream_events(events())) as stream:
-            async for event in stream:
-                await self._handle_event(agent, event, session_model)
+        from bisheng.linsight.domain.services.step_projection_writer import deferred_step_projections
+
+        async with deferred_step_projections(self._state_manager) as writer:
+            async with aclosing(coalesce_stream_events(events())) as stream:
+                async for event in stream:
+                    if writer.done():
+                        writer.result()
+                    if not isinstance(event, ExecStep):
+                        await self._state_manager.flush_step_projections()
+                    await self._handle_event(agent, event, session_model)
 
     @staticmethod
     def _unpack_stream_chunk(chunk):
@@ -1691,10 +1711,24 @@ class LinsightWorkflowTask:
         is done here. The legacy ``handle_step_event_extra`` hook (which keyed off
         the retired local_file tool names) is removed.
         """
-        await self._state_manager.add_execution_task_step(event.task_id, step=event)
-        await self._state_manager.push_message(
-            MessageData(event_type=MessageEventType.TASK_EXECUTE_STEP, data=event.model_dump())
-        )
+        message = MessageData(event_type=MessageEventType.TASK_EXECUTE_STEP, data=event.model_dump())
+        if event.step_type == "assistant" or getattr(self._state_manager, "defer_step_projection", False):
+            # The fenced replay append is the durable source for the new text protocol.
+            # Publish before updating the slower SQL/cache projection.
+            await self._state_manager.push_message(message)
+            received = (event.extra_info or {}).get("stream_received_at")
+            if isinstance(received, (float, int)):
+                from time import monotonic
+
+                logger.info(
+                    "assistant_text_delivery task={} elapsed_ms={:.1f}",
+                    session_model.id,
+                    (monotonic() - received) * 1000,
+                )
+            await self._state_manager.add_execution_task_step(event.task_id, step=event)
+        else:
+            await self._state_manager.add_execution_task_step(event.task_id, step=event)
+            await self._state_manager.push_message(message)
 
     # F035 §4.5/§4.6: the legacy `_wait_for_user_input` coroutine and the
     # `_wait_for_input_completion` 1s polling loop are REMOVED. Under
@@ -1893,6 +1927,9 @@ class LinsightWorkflowTask:
             )
         session_model.output_result = {
             "answer": answer,
+            "answer_step_id": (
+                getattr(self, "_answer_step_id", None) if answer == getattr(self, "_answer_step_text", None) else None
+            ),
             "final_files": final_files,
             "all_from_session_files": [],
         }
@@ -1998,6 +2035,9 @@ class LinsightWorkflowTask:
             )
         session_model.output_result = {
             "answer": answer,
+            "answer_step_id": (
+                getattr(self, "_answer_step_id", None) if answer == getattr(self, "_answer_step_text", None) else None
+            ),
             "final_files": final_files,
             "all_from_session_files": [],
             # Marker so the frontend/analytics can tell this was a degraded run
@@ -2047,6 +2087,11 @@ class LinsightWorkflowTask:
             session_model.status = SessionVersionStatusEnum.COMPLETED
             session_model.output_result = {
                 "answer": answer,
+                "answer_step_id": (
+                    getattr(self, "_answer_step_id", None)
+                    if answer == getattr(self, "_answer_step_text", None)
+                    else None
+                ),
                 "final_files": final_result_files,
                 "all_from_session_files": all_from_session_files,
             }

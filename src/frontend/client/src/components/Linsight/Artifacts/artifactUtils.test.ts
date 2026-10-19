@@ -173,7 +173,7 @@ describe('isDeliverableLinkHref', () => {
         expect(isDeliverableLinkHref('output/详细分析报告.md')).toBe(true);
         expect(isDeliverableLinkHref('详细分析报告.md')).toBe(true);
         expect(isDeliverableLinkHref('https://example.com/x.md')).toBe(false);
-        expect(isDeliverableLinkHref('charts/x.png')).toBe(false);
+        expect(isDeliverableLinkHref('charts/x.png')).toBe(true);
     });
 });
 

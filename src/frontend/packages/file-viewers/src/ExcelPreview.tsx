@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next';
 import * as XLSX from 'xlsx';
 import XlsxPopulate, { type Workbook } from 'xlsx-populate/browser/xlsx-populate';
+import { cleanData, parseCSV, readWorksheet, type SheetData } from './worksheetData';
 
 export interface ExcelPreviewProps {
   filePath: string;
@@ -19,7 +20,6 @@ interface ExtractedImage {
   mimeType: string;
 }
 
-type SheetData = string[][];
 
 const VALID_EXTENSIONS = ['csv', 'xlsx', 'xls', 'et', 'txt'];
 
@@ -66,54 +66,6 @@ function extractImageIdFromFormula(formula: unknown): string | null {
     if (match && match[1]) return match[1];
   }
   return null;
-}
-
-function parseCSV(csvStr: string): SheetData {
-  try {
-    if (!csvStr || typeof csvStr !== 'string') return [];
-    const lines = csvStr.split(/\r?\n/).filter((line) => line.trim() !== '');
-    const rows: SheetData = [];
-    const delimiters = [',', '\t', ';', '|'];
-
-    let detectedDelimiter = ',';
-    let maxColumns = 0;
-    for (const delimiter of delimiters) {
-      const testRow = lines[0]?.split(delimiter) || [];
-      if (testRow.length > maxColumns && testRow.some((col) => col.trim() !== '')) {
-        maxColumns = testRow.length;
-        detectedDelimiter = delimiter;
-      }
-    }
-
-    lines.forEach((line) => {
-      const columns = line.split(detectedDelimiter).map((col) => col.replace(/^["']|["']$/g, '').trim());
-      if (columns.some((col) => col !== '')) rows.push(columns);
-    });
-    return rows;
-  } catch (err) {
-    console.error('CSV parsing error:', err);
-    return [];
-  }
-}
-
-function cleanData(data: unknown[][]): SheetData {
-  if (!Array.isArray(data) || data.length === 0) return [];
-
-  const nonEmptyRows = data.filter((row) =>
-    row.some((cell) => cell !== undefined && cell !== null && String(cell).trim() !== ''),
-  );
-  if (nonEmptyRows.length === 0) return [];
-
-  const columnCount = Math.max(...nonEmptyRows.map((row) => row.length));
-  const hasDataColumns: number[] = [];
-  for (let col = 0; col < columnCount; col++) {
-    const hasData = nonEmptyRows.some(
-      (row) => row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== '',
-    );
-    if (hasData) hasDataColumns.push(col);
-  }
-
-  return nonEmptyRows.map((row) => hasDataColumns.map((colIndex) => (row[colIndex] ? String(row[colIndex]).trim() : '')));
 }
 
 function getTableColumnCount(data: SheetData): number {
@@ -314,11 +266,7 @@ export function ExcelPreview({ filePath, fileExt: fileExtProp, loadingIcon }: Ex
           const sheetNames = wb.SheetNames;
           const parsedData: Record<string, SheetData> = {};
           sheetNames.forEach((sheetName) => {
-            const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {
-              header: 1,
-              defval: '',
-            }) as unknown[][];
-            parsedData[sheetName] = cleanData(aoa);
+            parsedData[sheetName] = readWorksheet(wb.Sheets[sheetName]);
           });
           setExcelData(parsedData);
           setSheets(sheetNames);
