@@ -31,6 +31,7 @@ bisheng/
 | [商业版 API 网关](./11-gateway.md) | Gateway 架构、SSO/OAuth 流程、内容安全、流控、开发环境 |
 | [多租户架构](./12-multi-tenant.md) | 逻辑隔离、租户上下文传播、自动过滤、存储隔离、Celery 传递 |
 | [列表 Cursor 翻页与无限滚动](./13-cursor-pagination.md) | F027 — cursor envelope、keyset DM8 兼容、fetch-until-enough、前端 LoadMore 模式 |
+| [目录结构与配置文件速查](./14-目录结构与配置速查.md) | 仓库目录地图、60+ 个 YAML/compose/env 的分工、参数四层加载链与生效时机 |
 
 ## 快速导航
 
@@ -39,6 +40,7 @@ bisheng/
 - 想了解工作流如何定义和执行、如何扩展自定义节点，请看 [工作流引擎](./03-workflow-engine.md)
 - 想了解文档解析、向量化、检索的完整流程，请看 [知识库与 RAG 管道](./04-knowledge-rag.md)
 - 想了解如何部署项目或搭建本地开发环境，请看 [部署架构与配置](./08-deployment.md)
+- 想搞清楚「改哪个文件 / 改完要不要重启 / 参数为什么不生效」，请看 [目录结构与配置文件速查](./14-目录结构与配置速查.md)
 - 想了解用户认证、角色权限、资源授权的完整机制，请看 [用户与权限体系](./10-permission-rbac.md)
 - 想了解开发规范、如何新增模块或编写测试，请看 [开发指南](./09-development-guide.md)
 - 想了解商业版网关（SSO/OAuth、内容安全、流控）的架构和开发方式，请看 [商业版 API 网关](./11-gateway.md)
