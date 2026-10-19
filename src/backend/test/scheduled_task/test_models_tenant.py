@@ -369,3 +369,54 @@ async def test_claim_without_due_for_sync_entries(patched_db):
     row = await _read(patched_db, task.id)
     assert row.run_lease_token == "manual"
     assert row.next_run_at.replace(tzinfo=None) == NOW + timedelta(days=1), "立即运行不改变既定计划"
+
+
+def test_count_enabled_by_app_sync_uses_tenant_scope():
+    """同步计数（供删除拦截用）：只数启用中的任务，且受租户过滤约束。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from sqlalchemy.pool import StaticPool
+
+    from bisheng.core.context.tenant import set_current_tenant_id
+    from bisheng.core.database import tenant_filter
+
+    # 同步 sqlite 引擎 + 内存库（与异步测试同表定义）
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ScheduledTask.metadata.create_all(engine, tables=TABLES)
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _session():
+        with Session(bind=engine) as session:
+            yield session
+
+    original = tenant_filter.__dict__.get("get_sync_db_session")
+    set_current_tenant_id(TENANT_ID)
+    try:
+        import bisheng.core.database as core_db
+
+        core_db.get_sync_db_session = _session  # type: ignore[assignment]
+        with Session(bind=engine) as session:
+            session.add_all(
+                [
+                    ScheduledTask(
+                        name="a", app_id="1001", app_type=10, service_account_id=5,
+                        run_identity_user_id=501, created_by=42, tenant_id=TENANT_ID,
+                    ),
+                    ScheduledTask(
+                        name="b", app_id="1001", app_type=10, service_account_id=5,
+                        run_identity_user_id=501, created_by=42, tenant_id=TENANT_ID,
+                        status=TaskStatus.DISABLED.value,
+                    ),
+                ]
+            )
+            session.commit()
+
+        assert ScheduledTaskDao.count_enabled_by_app_sync("1001", 10) == 1
+        assert ScheduledTaskDao.count_enabled_by_app_sync("9999", 10) == 0
+    finally:
+        if original is not None:
+            core_db.get_sync_db_session = original  # type: ignore[assignment]
+        set_current_tenant_id(None)
+        engine.dispose()

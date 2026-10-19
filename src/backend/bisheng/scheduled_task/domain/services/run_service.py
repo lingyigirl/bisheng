@@ -700,3 +700,70 @@ async def _resolve_recipients(task) -> list[int]:
     except Exception:
         logger.warning("scheduled_task: could not resolve global super admins")
     return sorted(set(fallback))
+
+
+# ── 立即运行（人工触发，AC-17）────────────────────────────────────────
+
+
+def _rejection_error(decision):
+    """把 planner 的拒绝原因映射成 119 段错误（端点据此回真状态码）。"""
+    from bisheng.common.errcode.scheduled_task import (
+        ScheduledTaskAppUnavailableError,
+        ScheduledTaskIdentityUnavailableError,
+        ScheduledTaskRunRejectedError,
+    )
+
+    if decision.reason in (PlanReason.APP_OFFLINE, PlanReason.APP_DELETED):
+        return ScheduledTaskAppUnavailableError()
+    if decision.reason is PlanReason.IDENTITY_UNAVAILABLE:
+        return ScheduledTaskIdentityUnavailableError()
+    return ScheduledTaskRunRejectedError()
+
+
+async def run_now(task_id: int, *, dispatch=None) -> str:
+    """立即运行一轮（`manual` 语义）：不排队、不重试、不改变既定计划（AC-17）。
+
+    与计划轮次共用同一套复检/判定/原子写回/派发；差别只有三点：`trigger_kind=MANUAL`、
+    claim 不要求到期（``require_due=False``）、不推进计划（``keep_next_run_at=True``）。
+    """
+    task = await ScheduledTaskDao.aget(task_id)
+    if task is None:
+        from bisheng.common.errcode.http_error import NotFoundError
+
+        raise NotFoundError()
+
+    dispatch = dispatch or _dispatch
+    now = _now()
+    recheck = await trigger_guard.recheck_task(task)
+    running = await ScheduledTaskDao.acount_running(now)
+    decision = classify(
+        _snapshot(task),
+        now,
+        recheck,
+        cap_room=cap_room(running, _conf().global_max_running),
+        trigger_kind=TriggerKind.MANUAL,
+        next_fire=_next_fire_for(task),
+    )
+    if decision.variant is not PlanVariant.NORMAL:
+        raise _rejection_error(decision)
+
+    token = generate_uuid()
+    claimed = await ScheduledTaskDao.aclaim_lease(
+        task.id,
+        token=token,
+        now=now,
+        lease_expires_at=now + timedelta(seconds=_conf().run_timeout_seconds),
+        next_run_at=None,
+        planned_at=None,
+        trace_id=token,
+        keep_next_run_at=True,
+        require_due=False,
+    )
+    if claimed != 1:
+        # 复检与 claim 之间被计划轮次/别的人工触发抢走：按"已有运行中"拒绝。
+        from bisheng.common.errcode.scheduled_task import ScheduledTaskRunRejectedError
+
+        raise ScheduledTaskRunRejectedError()
+
+    await dispatch(task, trace_id=token)
+    return token

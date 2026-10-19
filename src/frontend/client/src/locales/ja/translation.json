@@ -2080,5 +2080,7 @@
   "com_app_plaza_retry": "再試行",
   "com_ai_generated_disclaimer": "この回答はAIが生成されたものです。参考情報としてご利用いただき、内容はご自身でご確認ください。",
   "com_suggestion_keywords": "関連キーワード",
-  "com_suggestion_questions": "こんな質問もできます"
+  "com_suggestion_questions": "こんな質問もできます",
+  "com_notifications_action_scheduled_task_failed": "定期タスクの実行に失敗しました",
+  "com_notifications_action_scheduled_task_needs_input": "定期タスクが手動入力を待っています"
 }

@@ -122,6 +122,26 @@ class ScheduledTaskDao:
                 or 0
             )
 
+    @classmethod
+    def count_enabled_by_app_sync(cls, app_id: str, app_type: int) -> int:
+        """同步版（供既有的同步删除端点用）：某应用下启用中的任务数（AC-30）。
+
+        与异步版同口径；租户过滤在同步会话上同样生效。
+        """
+        from bisheng.core.database import get_sync_db_session
+
+        with get_sync_db_session() as session:
+            return int(
+                session.execute(
+                    select(func.count(ScheduledTask.id)).where(
+                        ScheduledTask.app_id == app_id,
+                        ScheduledTask.app_type == app_type,
+                        ScheduledTask.status == TaskStatus.ENABLED.value,
+                    )
+                ).scalar()
+                or 0
+            )
+
     # ── 调度路径（跨租户；调用方负责 bypass_tenant_filter） ────────────────
 
     @classmethod

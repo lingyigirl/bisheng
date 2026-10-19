@@ -149,3 +149,71 @@ def describe_failure(outcome: RecheckOutcome) -> str:
     text = ",".join(parts)
     logger.debug("scheduled_task: recheck failed ({})", text)
     return text
+
+
+# ── 创建期校验（AC-20）────────────────────────────────────────────────
+#
+# 与触发期的四查共用同一批"零件"，但输入不同：创建时还没有锁定身份，用户是
+# **选一个服务账号**；校验通过后把该账号的 owner 锁进任务行（INV-25）。
+# 应用只要求"存在且类型合法"——创建任务时应用可以处于下线状态（AC-16 由触发期
+# 处理下线），但类型不对/行已删则没有可调度的对象。
+
+
+@dataclass(frozen=True)
+class IdentityBinding:
+    """创建期校验结果：可绑定的运行身份。"""
+
+    identity_state: IdentityState
+    owner_user_id: int | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.identity_state is IdentityState.OK
+
+
+async def _app_exists(app_id: str, app_type: int) -> bool:
+    if app_type == FlowType.ASSISTANT.value:
+        row = await AssistantDao.aget_one_assistant(str(app_id))
+        return row is not None and int(getattr(row, "is_delete", 0) or 0) == 0
+    if app_type == FlowType.WORKFLOW.value:
+        row = await FlowDao.aget_flow_by_id(str(app_id))
+        return row is not None and row.flow_type == FlowType.WORKFLOW.value
+    return False
+
+
+async def validate_binding(
+    *, app_id: str, app_type: int, service_account_id: int, tenant_id: int
+) -> tuple[bool, IdentityBinding]:
+    """校验「目标应用 + 所选服务账号」能否绑定成一条定时任务。
+
+    返回 ``(app_ok, binding)``：应用不存在/类型非法 → ``app_ok=False``（端点回 11902）；
+    身份不可用 → ``binding.identity_state`` 指出原因（端点回 11905）。
+    """
+    if not await _app_exists(str(app_id), app_type):
+        return False, IdentityBinding(identity_state=IdentityState.ACCOUNT_UNAVAILABLE)
+
+    account = await ServiceAccountDao.aget_scoped(service_account_id, tenant_id=tenant_id)
+    if account is None or not account.is_enabled:
+        return True, IdentityBinding(identity_state=IdentityState.ACCOUNT_UNAVAILABLE)
+
+    owner_user_id = int(account.resource_owner_user_id)
+    payload = await load_owner_payload(owner_user_id=owner_user_id, tenant_id=tenant_id)
+    if payload is None:
+        return True, IdentityBinding(identity_state=IdentityState.OWNER_UNAVAILABLE)
+    if await owner_is_privileged(payload, tenant_id):
+        return True, IdentityBinding(identity_state=IdentityState.OWNER_PRIVILEGED)
+
+    object_type = _OBJECT_TYPE_BY_APP_TYPE.get(app_type)
+    if object_type is None:
+        return False, IdentityBinding(identity_state=IdentityState.ACCOUNT_UNAVAILABLE)
+    if not await ApplicationPermissionService.has_any_permission_async(
+        payload, object_type, str(app_id), ["use_app"]
+    ):
+        return True, IdentityBinding(identity_state=IdentityState.NO_USE_APP)
+
+    return True, IdentityBinding(identity_state=IdentityState.OK, owner_user_id=owner_user_id)
+
+
+def object_type_of(app_type: int) -> str | None:
+    """应用类型 → 权限判定的资源类型（`assistant` / `workflow`）；不支持的类型返回 None。"""
+    return _OBJECT_TYPE_BY_APP_TYPE.get(app_type)

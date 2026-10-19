@@ -71,6 +71,10 @@ const NOTIFICATION_ACTION_TEXT_KEYS: Record<string, string> = {
     channel_made_private: "com_notifications_action_channel_made_private",
     knowledge_space_made_private: "com_notifications_action_knowledge_space_made_private",
     channel_dismissed: "com_notifications_action_channel_dismissed",
+    // F077 scheduled-task notifications: first failure (one per consecutive
+    // failure series), auto-disable notice, and "waiting for human input".
+    scheduled_task_failed: "com_notifications_action_scheduled_task_failed",
+    scheduled_task_needs_input: "com_notifications_action_scheduled_task_needs_input",
     knowledge_space_deleted: "com_notifications_action_knowledge_space_deleted",
 };
 
