@@ -875,8 +875,12 @@
     "reportMetricLatency": "延迟",
     "reportEffectChart": "效果指标对比",
     "reportPerQuestionChart": "逐题对比",
-    "reportPerQuestion": "逐题明细",
-    "reportStats": "共 {{count}} 题 · 成功率 {{rate}} · 失败 {{failed}}"
+    "reportPerQuestion": "逐题差异明细",
+    "reportStats": "共 {{count}} 题 · 成功率 {{rate}} · 失败 {{failed}}",
+    "reportTopDiffHint": "共 {{total}} 题，按当前指标仅展示差异最大的 {{shown}} 题",
+    "reportShowingAll": "共 {{total}} 题，已展示全部",
+    "reportShowAll": "查看全部",
+    "reportShowTop": "只看差异 Top {{shown}}"
   },
   "code": {
     "editPythonCodeDescription": "编辑你的 Python 代码此代码片段接受模块导入和一个函数定义。确保您的函数返回一个字符串。",

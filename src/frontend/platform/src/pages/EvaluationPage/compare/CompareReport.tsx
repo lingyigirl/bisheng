@@ -35,6 +35,10 @@ const METRIC_I18N: Record<string, string> = {
     latency: "evaluation.reportMetricLatency",
 };
 
+// With large datasets only the largest current-metric differences are shown by
+// default; the full list stays available behind a toggle.
+const DIFF_TOP_N = 10;
+
 type Verdict = "better" | "worse" | "same" | "na";
 
 function fmtValue(value: number | null, unit: string): string {
@@ -97,11 +101,13 @@ export default function CompareReport() {
     const [loading, setLoading] = useState(false);
     const [exporting, setExporting] = useState(false);
     const [metricKey, setMetricKey] = useState<string>("precision");
+    const [showAll, setShowAll] = useState(false);
 
     useEffect(() => {
         if (!groupId) return;
         setLoading(true);
         setData(null);
+        setShowAll(false);
         captureAndAlertRequestErrorHoc(
             getEvaluationCompareReportApi(groupId)
                 .then(setData)
@@ -125,6 +131,44 @@ export default function CompareReport() {
         [data, t]
     );
     const selected = metrics.find((m) => m.key === metricKey) ?? metrics[0];
+
+    // Rank by the selected metric's absolute delta. Rows with a missing value on
+    // either side (execution failure / N/A) sort first — hiding them would defeat
+    // the purpose — and keep their original order among themselves.
+    const detailRows = useMemo(() => {
+        if (!data || !selected) return [];
+        return data.per_question
+            .map((row, index) => {
+                const side1 = row.v1 as unknown as Record<string, number | null> | null;
+                const side2 = row.v2 as unknown as Record<string, number | null> | null;
+                const raw1 = side1 ? side1[selected.key] : null;
+                const raw2 = side2 ? side2[selected.key] : null;
+                const usable =
+                    typeof raw1 === "number" &&
+                    Number.isFinite(raw1) &&
+                    typeof raw2 === "number" &&
+                    Number.isFinite(raw2);
+                const v1 = usable ? raw1 : null;
+                const v2 = usable ? raw2 : null;
+                return {
+                    row,
+                    index,
+                    v1,
+                    v2,
+                    verdict:
+                        v1 !== null && v2 !== null
+                            ? decideVerdict(v1, v2, selected.higher_is_better)
+                            : ("na" as Verdict),
+                    diff:
+                        v1 !== null && v2 !== null
+                            ? Math.abs(v2 - v1)
+                            : Number.POSITIVE_INFINITY,
+                };
+            })
+            .sort((a, b) => (a.diff === b.diff ? a.index - b.index : b.diff - a.diff));
+    }, [data, selected]);
+
+    const visibleRows = showAll ? detailRows : detailRows.slice(0, DIFF_TOP_N);
 
     const handleExport = (format: CompareReportExportFormat) => {
         if (!groupId) return;
@@ -309,13 +353,10 @@ export default function CompareReport() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {data.per_question.map((row, idx) => {
-                                        const v1 = row.v1 && selected ? (row.v1 as unknown as Record<string, number | null>)[selected.key] : null;
-                                        const v2 = row.v2 && selected ? (row.v2 as unknown as Record<string, number | null>)[selected.key] : null;
-                                        const verdict = selected ? decideVerdict(v1, v2, selected.higher_is_better) : "na";
+                                    {visibleRows.map(({ row, index, v1, v2, verdict }) => {
                                         return (
-                                            <tr key={idx} className="border-t border-gray-100 dark:border-zinc-800">
-                                                <td className="px-3 py-2 text-gray-400">{idx + 1}</td>
+                                            <tr key={index} className="border-t border-gray-100 dark:border-zinc-800">
+                                                <td className="px-3 py-2 text-gray-400">{index + 1}</td>
                                                 <td className="max-w-96 px-3 py-2">
                                                     <div className="truncate" title={row.question}>
                                                         {row.question}
@@ -348,6 +389,27 @@ export default function CompareReport() {
                                 </tbody>
                             </table>
                         </div>
+                        {data.per_question.length > DIFF_TOP_N && (
+                            <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                                <span>
+                                    {showAll
+                                        ? t("evaluation.reportShowingAll", { total: data.per_question.length })
+                                        : t("evaluation.reportTopDiffHint", {
+                                              total: data.per_question.length,
+                                              shown: DIFF_TOP_N,
+                                          })}
+                                </span>
+                                <button
+                                    type="button"
+                                    className="text-blue-600 hover:underline"
+                                    onClick={() => setShowAll((value) => !value)}
+                                >
+                                    {showAll
+                                        ? t("evaluation.reportShowTop", { shown: DIFF_TOP_N })
+                                        : t("evaluation.reportShowAll")}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

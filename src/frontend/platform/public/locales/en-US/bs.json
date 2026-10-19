@@ -1028,8 +1028,12 @@
     "reportMetricLatency": "Latency",
     "reportEffectChart": "Effect metrics",
     "reportPerQuestionChart": "Per question",
-    "reportPerQuestion": "Per-question detail",
-    "reportStats": "{{count}} questions · success {{rate}} · failed {{failed}}"
+    "reportPerQuestion": "Per-question differences",
+    "reportStats": "{{count}} questions · success {{rate}} · failed {{failed}}",
+    "reportTopDiffHint": "{{total}} questions in total; showing the top {{shown}} by current metric difference",
+    "reportShowingAll": "{{total}} questions in total; showing all",
+    "reportShowAll": "Show all",
+    "reportShowTop": "Top {{shown}} differences only"
   },
   "code": {
     "editPythonCodeDescription": "Edit your Python code here. This code snippet accepts module imports and a function definition. Make sure your function returns a string.",

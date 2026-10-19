@@ -870,8 +870,12 @@
     "reportMetricLatency": "レイテンシ",
     "reportEffectChart": "効果指標の比較",
     "reportPerQuestionChart": "問題ごとの比較",
-    "reportPerQuestion": "問題別の詳細",
-    "reportStats": "全 {{count}} 問 · 成功率 {{rate}} · 失敗 {{failed}}"
+    "reportPerQuestion": "設問別の差異詳細",
+    "reportStats": "全 {{count}} 問 · 成功率 {{rate}} · 失敗 {{failed}}",
+    "reportTopDiffHint": "全 {{total}} 問のうち、現在の指標で差が大きい上位 {{shown}} 問を表示しています",
+    "reportShowingAll": "全 {{total}} 問を表示しています",
+    "reportShowAll": "すべて表示",
+    "reportShowTop": "差の上位 {{shown}} 問のみ表示"
   },
   "code": {
     "editPythonCodeDescription": "ここで Python コードを編集します。このコードスニペットはモジュールのインポートと1つの関数定義を受け付けます。関数は文字列を返すようにしてください。",
