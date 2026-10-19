@@ -115,3 +115,91 @@ export type EvaluationCompareResp = {
 export const getEvaluationCompareApi = async (groupId: string): Promise<EvaluationCompareResp> => {
     return await axios.get(`/api/v1/evaluation/compare/${groupId}`);
 };
+
+// ============ F067 可视化对比报告 ============
+
+/** one report metric card: direction + both versions' aggregate value */
+export type CompareReportMetric = {
+    key: string;
+    label: string;
+    unit: string;
+    /** true = higher is better (准确率/F1/召回); false = lower is better (幻觉率/成本/延迟) */
+    higher_is_better: boolean;
+    v1: number | null;
+    v2: number | null;
+    delta: number | null;
+};
+
+/** one question's six metrics for one version */
+export type CompareReportSide = {
+    precision: number | null;
+    f1: number | null;
+    recall: number | null;
+    hallucination: number | null;
+    token: number | null;
+    latency: number | null;
+    exec_status: string | null;
+    fail_reason?: string | null;
+};
+
+export type CompareReportQuestion = {
+    question: string;
+    failed?: boolean;
+    fail_reason?: string | null;
+    v1: CompareReportSide | null;
+    v2: CompareReportSide | null;
+};
+
+export type CompareReportEvaluation = {
+    id: number;
+    version: number | null;
+    version_name: string | null;
+    status: number;
+    result_score: Evaluation["result_score"] | null;
+    description: string;
+    question_count: number;
+    success_count: number;
+    failed_count: number;
+    success_rate: number | null;
+};
+
+export type CompareReportResp = {
+    group_id: string;
+    evaluations: CompareReportEvaluation[];
+    object_bar: {
+        app_name: string;
+        data_set: string;
+        models: { v1: string[]; v2: string[] };
+        prompt_nodes: { v1: string[]; v2: string[] };
+        change_kind: "model" | "prompt" | "both" | "none";
+    };
+    conclusion: "v1" | "v2" | "unable";
+    analysis: string;
+    metrics: CompareReportMetric[];
+    charts: { grouped_bar: CompareReportMetric[] };
+    per_question: CompareReportQuestion[];
+};
+
+/**
+ * 可视化对比报告数据（两版模型/提示词对比 + 结论 + 6 指标 + 逐题全指标）
+ * @param groupId 对比组 id
+ */
+export const getEvaluationCompareReportApi = async (groupId: string): Promise<CompareReportResp> => {
+    return await axios.get(`/api/v1/evaluation/compare/${groupId}/report`);
+};
+
+export type CompareReportExportFormat = "pdf" | "docx" | "xlsx" | "html";
+
+/**
+ * 导出对比报告（后端生成 xlsx / 完整 HTML / PDF，返回预签名下载链接）
+ * @param groupId 对比组 id
+ * @param format 导出格式
+ */
+export const exportEvaluationCompareReportApi = async (
+    groupId: string,
+    format: CompareReportExportFormat = "xlsx"
+): Promise<EvaluationReportResp> => {
+    return await axios.get(`/api/v1/evaluation/compare/${groupId}/report/export`, {
+        params: { format },
+    });
+};

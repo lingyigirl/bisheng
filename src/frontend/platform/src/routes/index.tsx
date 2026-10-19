@@ -23,6 +23,7 @@ const SkillToolsPage = lazy(() => import("@/pages/BuildPage/tools"));
 const DataSetPage = lazy(() => import("@/pages/DataSetPage"));
 const EvaluatingPage = lazy(() => import("@/pages/EvaluationPage"));
 const EvaluatingCreate = lazy(() => import("@/pages/EvaluationPage/EvaluationCreate"));
+const EvaluationCompareReport = lazy(() => import("@/pages/EvaluationPage/compare/CompareReport"));
 const KnowledgePage = lazy(() => import("@/pages/KnowledgePage"));
 const KnowledgeQaPage = lazy(() => import("@/pages/KnowledgePage/KnowledgeQaPage"));
 const TermLibraryPage = lazy(() => import("@/pages/KnowledgePage/TermLibraryPage"));
@@ -121,6 +122,8 @@ const privateRouter = [
       { path: "log/chatlog/:cid", element: <DailyChatDetail />, permission: "log" },
       { path: "evaluation", element: <EvaluatingPage />, permission: 'evaluation' },
       { path: "evaluation/create", element: <EvaluatingCreate />, permission: 'evaluation' },
+      // F067: standalone visual comparison report page (replaces the F053 drawer for viewing)
+      { path: "evaluation/compare/:groupId", element: <EvaluationCompareReport />, permission: 'evaluation' },
       { path: "dataset", element: <DataSetPage />, permission: 'dataset' },
       { path: "label", element: <LabelPage />, permission: 'mark_task' },
       { path: "label/:id", element: <TaskApps />, permission: 'mark_task' },

@@ -14,8 +14,20 @@ from json_repair import repair_json
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate
 
-CORRECTNESS_PROMPT = HumanMessagePromptTemplate.from_template(
-    """
+# F067 (design 决策 6): the 4th bucket — statements from the answer that contradict
+# the ground truth. Appended to the judge prompt OUTSIDE the {placeholders} so it
+# reaches the model whether the caller uses the default few-shot prompt or their own.
+HALLUCINATION_INSTRUCTION = """
+
+Also add a fourth list to the same JSON object: the statements from the answer that
+directly contradict the ground truth. It is a strict subset of "statements present in
+the answer but not found in the ground truth" — a claim that merely paraphrases or omits
+detail is NOT a contradiction, and a statement must not be repeated across lists. Use
+exactly this key:
+  "statements present in the answer that contradict the ground truth": [...]
+"""
+
+_CORRECTNESS_TEMPLATE_TEXT = """
 Extract following from given question and ground truth
 
 Question:What powers the sun and what is its primary function?
@@ -83,13 +95,25 @@ Question:{question}
 Answer: {answer}
 Ground truth: {ground_truth}
 Extracted statements:"""
-)
+
+CORRECTNESS_PROMPT = HumanMessagePromptTemplate.from_template(_CORRECTNESS_TEMPLATE_TEXT + HALLUCINATION_INSTRUCTION)
 
 _KEY_MAP = {
     "TP": "statements that are present in both the answer and the ground truth",
     "FP": "statements present in the answer but not found in the ground truth",
     "FN": "relevant statements found in the ground truth but omitted in the answer",
+    "CONTRA": "statements present in the answer that contradict the ground truth",
 }
+
+
+def build_judge_prompt_template(human_prompt: str = "") -> HumanMessagePromptTemplate:
+    """Final judge template with the 4th-bucket instruction folded in (design 决策 6).
+
+    Used for **both** paths — the default few-shot prompt and a user-supplied one —
+    so a custom prompt does not silently drop hallucination counting.
+    """
+    text = human_prompt if human_prompt else _CORRECTNESS_TEMPLATE_TEXT
+    return HumanMessagePromptTemplate.from_template(text + HALLUCINATION_INSTRUCTION)
 
 
 def _parse(text: str) -> list:
@@ -107,8 +131,8 @@ def compute_answer_correctness(
     ground_truths: list[list[str]],
     human_prompt: str = "",
 ) -> dict[str, list[Any]]:
-    """Return a dict-of-lists with question/answer/ground_truths plus the nine metric fields."""
-    prompt_template = HumanMessagePromptTemplate.from_template(human_prompt) if human_prompt else CORRECTNESS_PROMPT
+    """Return a dict-of-lists with question/answer/ground_truths plus the metric fields."""
+    prompt_template = build_judge_prompt_template(human_prompt)
     message_batches = []
     for q, a, g in zip(question, answer, ground_truths):
         msg = prompt_template.format(question=q, ground_truth=g[0], answer=a)
@@ -126,6 +150,11 @@ def compute_answer_correctness(
         "statements_num_answer_only": [],
         "statements_overlap": [],
         "statements_num_overlap": [],
+        # F067: hallucination inputs — contradicted claims (⊆ answer-only) and the
+        # answer's total statement count (overlap + answer-only).
+        "statements_contradicted": [],
+        "statements_contradicted_num": [],
+        "statements_num_answer": [],
         "answer_f1": [],
         "answer_precision": [],
         "answer_recall": [],
@@ -138,13 +167,20 @@ def compute_answer_correctness(
             overlap = item.get(_KEY_MAP["TP"], "")
             answer_only = item.get(_KEY_MAP["FP"], "")
             gt_only = item.get(_KEY_MAP["FN"], "")
+            contradicted = item.get(_KEY_MAP["CONTRA"], "")
             tp, fp, fn = (len(x) if isinstance(x, list) else np.nan for x in (overlap, answer_only, gt_only))
+            contra_num = len(contradicted) if isinstance(contradicted, list) else np.nan
             out["statements_overlap"].append(str(overlap))
             out["statements_answer_only"].append(str(answer_only))
             out["statements_gt_only"].append(str(gt_only))
             out["statements_num_overlap"].append(tp)
             out["statements_num_answer_only"].append(fp)
             out["statements_num_gt_only"].append(fn)
+            out["statements_contradicted"].append(str(contradicted))
+            out["statements_contradicted_num"].append(contra_num)
+            # answer's total statements = overlap + answer-only (contradicted ⊆ answer-only,
+            # so it is never added on top — no double counting, design 坑 5).
+            out["statements_num_answer"].append(tp + fp)
             # 0/0 denominators (judge measured nothing at all, e.g. empty answer)
             # count as 0.0 — "nothing earned" — instead of NaN, which poisons the
             # aggregate mean (2026-09-05 evaluation NaN cleanup).
@@ -162,6 +198,9 @@ def compute_answer_correctness(
             out["statements_num_overlap"].append(np.nan)
             out["statements_num_answer_only"].append(np.nan)
             out["statements_num_gt_only"].append(np.nan)
+            out["statements_contradicted"].append("")
+            out["statements_contradicted_num"].append(np.nan)
+            out["statements_num_answer"].append(np.nan)
             out["answer_f1"].append(np.nan)
             out["answer_precision"].append(np.nan)
             out["answer_recall"].append(np.nan)

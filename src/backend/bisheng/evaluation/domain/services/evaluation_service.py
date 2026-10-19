@@ -607,6 +607,10 @@ async def add_evaluation_task(evaluation_id: int):
             ("answer_recall", "recall", 3),
             ("answer_precision", "precision", 3),
             ("answer_f1", "F1", 3),
+            # F067: hallucination inputs. unit_type 1 keeps them out of the total-row
+            # aggregation — the compare report computes Σcontradicted ÷ Σanswer itself.
+            ("statements_contradicted_num", "statements_contradicted_num", 1),
+            ("statements_num_answer", "statements_num_answer", 1),
         ]
         row_list, total_dict = build_result_table(result, columns)
         # Display-only: form-type rows get their case summary in the question
@@ -845,6 +849,8 @@ def _inject_failed_rows(row_list: list[dict], failed_rows: list[dict]) -> None:
                 "recall": "N/A",
                 "precision": "N/A",
                 "F1": "N/A",
+                "statements_contradicted_num": "N/A",
+                "statements_num_answer": "N/A",
                 # F066: a failed question still carries its measured duration; its
                 # token/effect metrics are N/A and excluded from every aggregate.
                 "duration_ms": _perf_cell(one.get("duration_ms")),
