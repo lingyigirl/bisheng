@@ -13,9 +13,11 @@
 from fastapi import APIRouter
 
 from bisheng.scheduled_task.api.endpoints.tasks import router as tasks_router
+from bisheng.scheduled_task.api.endpoints.trigger import router as trigger_router
 
 management_router = APIRouter()
 management_router.include_router(tasks_router)
 rpc_router = APIRouter()
+rpc_router.include_router(trigger_router)
 
 __all__ = ["management_router", "rpc_router"]

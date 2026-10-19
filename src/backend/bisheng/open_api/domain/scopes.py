@@ -35,7 +35,7 @@ class OpenApiScope:
     group: str
 
 
-#: 一期可签发的 8 项权限位。`delegate` 为二期(受控代表调用)预留:
+#: 一期可签发的 9 项权限位（F077 追加 `schedule:trigger`）。`delegate` 为二期(受控代表调用)预留:
 #: 可签发但当前不产生任何生效行为(design §2.6,spec 已在 §2.6 声明)。
 OPEN_API_SCOPES: tuple[OpenApiScope, ...] = (
     OpenApiScope(
@@ -81,6 +81,11 @@ OPEN_API_SCOPES: tuple[OpenApiScope, ...] = (
             ("POST", f"{_V2}/chat/comment"),
             ("POST", f"{_V2}/chat/sync/messages"),
         ),
+    ),
+    OpenApiScope(
+        code="schedule:trigger",
+        group="schedule",
+        endpoints=(("POST", f"{_V2}/schedule/trigger"),),
     ),
     OpenApiScope(
         code="knowledge:read",

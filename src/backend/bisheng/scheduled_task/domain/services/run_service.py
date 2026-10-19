@@ -705,9 +705,15 @@ async def _resolve_recipients(task) -> list[int]:
 # ── 立即运行（人工触发，AC-17）────────────────────────────────────────
 
 
-def _rejection_error(decision):
-    """把 planner 的拒绝原因映射成 119 段错误（端点据此回真状态码）。"""
+def _rejection_error(decision, trigger_kind: TriggerKind = TriggerKind.MANUAL):
+    """把 planner 的拒绝原因映射成 119 段错误（端点据此回真状态码）。
+
+    事件触发与立即运行共享拒绝语义，但**互斥拒绝的码不同**：事件触发是 11910
+    （该任务已有运行中），立即运行是 11909（同步触发被拒）——对接方与人工用户
+    对同一情形的自助动作不同（AC-38 vs AC-17）。
+    """
     from bisheng.common.errcode.scheduled_task import (
+        ScheduledTaskAlreadyRunningError,
         ScheduledTaskAppUnavailableError,
         ScheduledTaskIdentityUnavailableError,
         ScheduledTaskRunRejectedError,
@@ -717,10 +723,12 @@ def _rejection_error(decision):
         return ScheduledTaskAppUnavailableError()
     if decision.reason is PlanReason.IDENTITY_UNAVAILABLE:
         return ScheduledTaskIdentityUnavailableError()
+    if trigger_kind is TriggerKind.EVENT and decision.reason is PlanReason.OVERLAP:
+        return ScheduledTaskAlreadyRunningError()
     return ScheduledTaskRunRejectedError()
 
 
-async def run_now(task_id: int, *, dispatch=None) -> str:
+async def run_now(task_id: int, *, dispatch=None, trigger_kind: TriggerKind = TriggerKind.MANUAL) -> str:
     """立即运行一轮（`manual` 语义）：不排队、不重试、不改变既定计划（AC-17）。
 
     与计划轮次共用同一套复检/判定/原子写回/派发；差别只有三点：`trigger_kind=MANUAL`、
@@ -741,11 +749,11 @@ async def run_now(task_id: int, *, dispatch=None) -> str:
         now,
         recheck,
         cap_room=cap_room(running, _conf().global_max_running),
-        trigger_kind=TriggerKind.MANUAL,
+        trigger_kind=trigger_kind,
         next_fire=_next_fire_for(task),
     )
     if decision.variant is not PlanVariant.NORMAL:
-        raise _rejection_error(decision)
+        raise _rejection_error(decision, trigger_kind)
 
     token = generate_uuid()
     claimed = await ScheduledTaskDao.aclaim_lease(
@@ -760,10 +768,74 @@ async def run_now(task_id: int, *, dispatch=None) -> str:
         require_due=False,
     )
     if claimed != 1:
-        # 复检与 claim 之间被计划轮次/别的人工触发抢走：按"已有运行中"拒绝。
-        from bisheng.common.errcode.scheduled_task import ScheduledTaskRunRejectedError
+        # 复检与 claim 之间被计划轮次/别的入口抢走：按入口给"已有运行中"的对应码。
+        from bisheng.scheduled_task.domain.services.run_planner import PlanDecision
 
-        raise ScheduledTaskRunRejectedError()
+        raise _rejection_error(
+            PlanDecision(variant=PlanVariant.REJECT, trigger_kind=trigger_kind, reason=PlanReason.OVERLAP),
+            trigger_kind,
+        )
 
     await dispatch(task, trace_id=token)
     return token
+
+
+# ── 事件触发的防重放与频控（T-19，design 决策 12.3/12.6）───────────────
+
+
+def _trigger_redis_error():
+    from bisheng.common.errcode.open_api import OpenApiAuthBackendUnavailableError
+
+    return OpenApiAuthBackendUnavailableError()
+
+
+async def assert_not_replayed(timestamp: int | None, nonce: str | None, *, now_epoch: int | None = None) -> None:
+    """时间窗 + 一次性随机数（spec AC-37）。
+
+    ``SET NX EX`` **单次往返**占 nonce（TTL = 2×窗口，覆盖窗口边界上的最后一次重放）；
+    不用两步 setnx+expire。缺头/超窗/重复 → 400/11912；Redis 不可用 → 503/11812。
+    """
+    import time as _time
+
+    from bisheng.common.errcode.scheduled_task import ScheduledTaskReplayRejectedError
+
+    window = _conf().replay_window_seconds
+    now_epoch = int(_time.time()) if now_epoch is None else now_epoch
+    if not timestamp or not nonce or abs(now_epoch - int(timestamp)) > window:
+        raise ScheduledTaskReplayRejectedError(msg="missing/expired X-Bs-Timestamp or X-Bs-Nonce")
+
+    try:
+        redis = await get_redis_client()
+        accepted = await redis.async_connection.set(
+            f"scheduled_task:nonce:{nonce}", 1, nx=True, ex=window * 2
+        )
+    except Exception:
+        logger.exception("scheduled_task: replay guard unavailable")
+        raise _trigger_redis_error()
+    if not accepted:
+        raise ScheduledTaskReplayRejectedError(msg="X-Bs-Nonce already used")
+
+
+async def consume_trigger_quota(task_id: int, *, now_epoch: int | None = None) -> None:
+    """任务级触发频率上限（spec AC-38 的放大量护栏，≠ 平台 API 限流）。
+
+    固定窗口 ``INCR + 首写 EXPIRE``；超限 → 429/11911。Redis 不可用 → 503/11812。
+    """
+    import time as _time
+
+    from bisheng.common.errcode.scheduled_task import ScheduledTaskTriggerRateLimitedError
+
+    limit = _conf().event_rate_limit_per_minute
+    now_epoch = int(_time.time()) if now_epoch is None else now_epoch
+    bucket = now_epoch // 60
+    key = f"scheduled_task:rate:{task_id}:{bucket}"
+    try:
+        redis = await get_redis_client()
+        count = await redis.async_connection.incr(key)
+        if count == 1:
+            await redis.async_connection.expire(key, 120)
+    except Exception:
+        logger.exception("scheduled_task: trigger rate limiter unavailable")
+        raise _trigger_redis_error()
+    if count > limit:
+        raise ScheduledTaskTriggerRateLimitedError(exception=f"per-minute limit {limit} exceeded")

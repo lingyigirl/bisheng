@@ -189,7 +189,7 @@ async def test_revoke_single_and_all(patched_db, fake_redis, account):
     assert {row["status"] for row in listed.data.data} == {"revoked"}
 
 
-async def test_scopes_catalog_lists_eight_issuable(patched_db):
+async def test_scopes_catalog_lists_all_issuable(patched_db):
     catalog = await keys_api.list_scopes(login_user=_Admin())
     codes = {item["code"] for item in catalog.data["data"]}
     assert codes == {
@@ -200,9 +200,10 @@ async def test_scopes_catalog_lists_eight_issuable(patched_db):
         "chat:invoke",
         "knowledge:read",
         "knowledge:write",
+        "schedule:trigger",
         "delegate",
     }
-    assert catalog.data["total"] == 8
+    assert catalog.data["total"] == 9
 
 
 def test_every_key_endpoint_declares_admin_dependency():
