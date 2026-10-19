@@ -44,6 +44,8 @@ export default function SystemLog() {
     const { t } = useTranslation()
     const { message } = useToast()
     const [exporting, setExporting] = useState(false)
+    // 与 disabled 配合做同步防重入：双击时 state 尚未刷新，按钮还没变成禁用态。
+    const exportingRef = useRef(false)
     const { users, loadUsers } = useUsers()
     const { groups, loadData } = useGroups()
     const { modules, loadModules } = useModules()
@@ -77,6 +79,8 @@ export default function SystemLog() {
     // 导出当前筛选条件下的全部审计日志（非仅当前页）。
     // 未选择时间区间时默认最近 60 天，并给出提示，避免误导出全量数据。
     const handleExport = async () => {
+        if (exportingRef.current) return
+        exportingRef.current = true
         const range = resolveAuditExportRange(keys.start, keys.end)
         if (range.notice === 'default') {
             message({ variant: 'warning', description: t('log.systemLogExportNoDateRange') })
@@ -107,6 +111,7 @@ export default function SystemLog() {
             // 请求层已统一提示业务错误，这里仅记录，避免未处理的 Promise 拒绝。
             console.error('export audit logs failed:', error)
         } finally {
+            exportingRef.current = false
             setExporting(false)
         }
     }
@@ -181,7 +186,8 @@ export default function SystemLog() {
                     <Button variant="outline" className="px-6" onClick={handleReset}>
                         {t('log.resetButton')}
                     </Button>
-                    <Button variant="outline" className="ml-3 px-6" onClick={handleExport} disabled={exporting}>
+                    {/* 与「应用使用」页保持一致：导出中禁用按钮并显示 loading 图标 */}
+                    <Button className="ml-3 px-6" onClick={handleExport} disabled={exporting}>
                         {exporting && <LoadIcon className="mr-1" />}{t('log.exportButton')}
                     </Button>
                 </div>
