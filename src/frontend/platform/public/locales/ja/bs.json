@@ -1530,6 +1530,7 @@
     "selectQaLib": "QAナレッジベースを選択してください",
     "detailedSession": "セッション詳細",
     "exportNoDateRange": "期間が指定されていないため、直近60日間のデータを自動的に書き出しました",
+    "systemLogExportNoDateRange": "期間が選択されていないため、既定で直近60日分をエクスポートします",
     "exportCustomDateRange": "期間が指定されていないため、{{start}} - {{end}} のデータを自動的に書き出しました",
     "exportDateRangeExceed": "エクスポート期間は60日を超過できません。範囲を縮小して再試行してください",
     "messageConversionFailed": "メッセージの変換に失敗しました",

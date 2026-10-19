@@ -1585,6 +1585,7 @@
     "selectQaLib": "Please select a QA Knowledge Base",
     "detailedSession": "Detailed Session",
     "exportNoDateRange": "No date range selected, automatically exported last 60 days data",
+    "systemLogExportNoDateRange": "No date range selected; exporting the last 60 days by default",
     "exportCustomDateRange": "No date range selected, automatically exported {{start}} - {{end}} data",
     "exportDateRangeExceed": "Export date range cannot exceed 60 days, please narrow the range and try again",
     "messageConversionFailed": "Message conversion failed",

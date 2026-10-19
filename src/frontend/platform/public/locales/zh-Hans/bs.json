@@ -1530,6 +1530,7 @@
     "selectQaLib": "请选择 QA 知识库",
     "detailedSession": "详细会话",
     "exportNoDateRange": "未选择时间范围，已自动为你导出最近 60 天数据",
+    "systemLogExportNoDateRange": "您未选择时间区间，默认导出最近60天记录",
     "exportCustomDateRange": "未选择时间范围，已自动为你导出 {{start}} - {{end}} 数据",
     "exportDateRangeExceed": "导出时间范围不能超过 60 天，请缩小范围后重试",
     "messageConversionFailed": "消息转换失败",
