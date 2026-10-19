@@ -422,7 +422,7 @@
 - **手工验证一遍**（本地可复现；命令均单行可粘）：
   1. 起服务：`cd src/backend && export config=config.yaml && uv run uvicorn bisheng.main:app --host 0.0.0.0 --port 7860 --workers 1`；四个终端分别起 knowledge / workflow worker、`beat`，以及——**必须**——默认队列 worker：`uv run celery -A bisheng.worker.main worker -l info -c 100 -P threads -Q celery -n default@%h`（扫描任务落这里，不起它则"任务投出去没人消费"）。
   2. 平台 `http://localhost:3001` → 系统 → 服务账号：建账号 → 签发密钥（复制明文，仅此一次）→ 授权该账号对目标工作流 **editor 档**（须 editor 才持有 `use_app`）。
-  3. 打开目标应用编辑器 →「对外发布」→ 左侧第 4 项「定时任务」：手动建一条 `*/2 * * * *`（运行身份选刚建的服务账号），确认列表立即出现、显示人类可读计划与下次执行；或先 NL 输入「每小时提醒一次」→ 确认页应回显「每小时的第 0 分钟」+ 下次运行时间 → 修改后保存（草稿不落库，点保存才落）。
+  3. 打开目标应用编辑页 →「对外发布」→ 左侧「定时任务」（有 `share_app` 时为第 4 项）：手动建一条 `*/2 * * * *`（运行身份选刚建的服务账号），确认列表立即出现、显示人类可读计划与下次执行；或先 NL 输入「每小时提醒一次」→ 确认页应回显「每小时的第 0 分钟」+ 下次运行时间 → 修改后保存（草稿不落库，点保存才落）。
   4. 点「立即运行」→ 列表出现运行中；≤1 个 tick 后上次结果 = 成功，可点「监控」一跳进入该次运行详情（对上 `last_trace_id`）。
   5. 事件触发（密钥取自第 2 步）：`curl -s -X POST -H "Authorization: Bearer bs-sak-<key>" -H 'Content-Type: application/json' -H "X-Bs-Timestamp: $(date +%s)" -H 'X-Bs-Nonce: n1' -d '{"task_id":"<id>"}' http://localhost:7860/api/v2/schedule/trigger` → 200 + `run_trace_id`；**nonce 换成别的值再发一次 → 200（新运行）**；**把 nonce 换回 `n1` → 400/11912**；`X-Bs-Timestamp` 取 `date +%s` ± 3600 → 400/11912；运行中（换新 nonce）再触发 → 409/11910；body 加 `"user_id":1` → 400/11817；body 加 `"app_id":"x"` → 400/11916。
   6. 下线处置：把该工作流置为下线 → 手工触发一轮（`uv run celery -A bisheng.worker.main call bisheng.worker.scheduled_task.scan.scan_scheduled_tasks`）→ 列表显示「已跳过（应用已下线）」且连续失败计数不变；上线后按计划恢复。
