@@ -3,6 +3,7 @@ import { Button } from "@/components/bs-ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/bs-ui/dialog"
 import { SearchInput } from "@/components/bs-ui/input"
 import AutoPagination from "@/components/bs-ui/pagination/autoPagination"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/bs-ui/tabs"
 import {
     Table,
     TableBody,
@@ -25,14 +26,17 @@ import { ServiceAccount } from "@/types/api/serviceAccount"
 import { formatIsoDateTime } from "@/util/utils"
 import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { AccessGuideTab } from "./AccessGuideTab"
 import { CreateServiceAccountDialog } from "./CreateServiceAccountDialog"
 import { DetailView } from "./DetailView"
 
 const PAGE_SIZE = 20
 
 /**
- * System -> Service accounts (F076): list + create. Detail tabs (keys / grants) land in
- * the follow-up task; this page links nothing that does not exist yet.
+ * System -> Service accounts (F076): list + create, plus the API access guide
+ * (the handover material admins used to dictate offline). Detail tabs
+ * (keys / grants) land in the follow-up task; this page links nothing that
+ * does not exist yet.
  */
 export function ServiceAccountPanel() {
     const { t } = useTranslation("serviceAccount")
@@ -46,6 +50,8 @@ export function ServiceAccountPanel() {
     const [created, setCreated] = useState<ServiceAccount | null>(null)
     // Non-null = the detail view replaces the list (T-24).
     const [detail, setDetail] = useState<{ id: number; tab: string } | null>(null)
+    // Panel-level sub-tab: accounts (list/detail) vs. the access guide.
+    const [section, setSection] = useState("accounts")
     // Guards against out-of-order responses when the admin types fast.
     const requestSeq = useRef(0)
 
@@ -136,108 +142,126 @@ export function ServiceAccountPanel() {
 
     return (
         <div className="flex h-full w-full flex-col gap-4 overflow-hidden p-4">
-            {/* 说清用途:本页管的是"谁能从外部经 API 调进来",而不只是账号清单。 */}
+            {/* Say what this page governs: "who may call in from outside via API",
+                not merely a list of accounts. */}
             <p className="shrink-0 text-sm text-muted-foreground">{t("subtitle")}</p>
-            <div className="flex shrink-0 items-center justify-between gap-4">
-                <SearchInput
-                    className="w-[320px] shrink-0"
-                    placeholder={t("searchPlaceholder")}
-                    value={keyword}
-                    onChange={(e) => setKeyword(e.target.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter") load(1, keyword)
-                    }}
-                />
-                <Button className="px-8" onClick={() => setCreateOpen(true)}>
-                    <PlusIcon className="mr-2 h-4 w-4" />
-                    {t("create")}
-                </Button>
-            </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border">
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>{t("columns.name")}</TableHead>
-                            <TableHead className="w-[120px]">{t("columns.status")}</TableHead>
-                            <TableHead className="w-[120px]">{t("columns.keyCount")}</TableHead>
-                            <TableHead className="w-[200px]">{t("columns.lastUsed")}</TableHead>
-                            <TableHead className="w-[220px] text-right">{t("columns.actions")}</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {loading && rows.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={5} className="text-center text-muted-foreground">
-                                    {t("loading")}
-                                </TableCell>
-                            </TableRow>
-                        ) : rows.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={5} className="text-center text-muted-foreground">
-                                    {t("emptyHint")}
-                                </TableCell>
-                            </TableRow>
-                        ) : (
-                            rows.map((row) => (
-                                <TableRow key={row.id}>
-                                    <TableCell>
-                                        <div className="flex flex-col">
-                                            <span>{row.name}</span>
-                                            {row.description && (
-                                                <span className="text-xs text-muted-foreground">{row.description}</span>
-                                            )}
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Badge variant={row.enabled ? "success" : "gray"}>
-                                            {row.enabled ? t("status.enabled") : t("status.disabled")}
-                                        </Badge>
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className={row.key_count === 0 ? "text-red-500" : undefined}>
-                                            {row.key_count}
-                                        </span>
-                                    </TableCell>
-                                    <TableCell className="text-muted-foreground">
-                                        {row.last_used_at ? formatIsoDateTime(row.last_used_at) : t("never")}
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                        <Button
-                                            variant="link"
-                                            size="sm"
-                                            onClick={() => setDetail({ id: row.id, tab: "overview" })}
-                                        >
-                                            {t("detailAction")}
-                                        </Button>
-                                        <Button variant="link" size="sm" onClick={() => handleToggleEnabled(row)}>
-                                            {row.enabled ? t("disable") : t("enable")}
-                                        </Button>
-                                        <Button
-                                            variant="link"
-                                            size="sm"
-                                            className="text-red-500"
-                                            onClick={() => handleDelete(row)}
-                                        >
-                                            {t("delete")}
-                                        </Button>
-                                    </TableCell>
+            <Tabs value={section} onValueChange={setSection} className="flex min-h-0 w-full flex-1 flex-col">
+                <TabsList className="shrink-0 self-start">
+                    <TabsTrigger value="accounts">{t("tabs.accounts")}</TabsTrigger>
+                    <TabsTrigger value="guide">{t("tabs.guide")}</TabsTrigger>
+                </TabsList>
+
+                {/* Radix unmounts the inactive tab's subtree, but every piece of list
+                    state (rows/page/keyword) lives on this component, so switching back
+                    re-renders from state instead of refetching. */}
+                <TabsContent value="accounts" className="mt-3 flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+                    <div className="flex shrink-0 items-center justify-between gap-4">
+                        <SearchInput
+                            className="w-[320px] shrink-0"
+                            placeholder={t("searchPlaceholder")}
+                            value={keyword}
+                            onChange={(e) => setKeyword(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") load(1, keyword)
+                            }}
+                        />
+                        <Button className="px-8" onClick={() => setCreateOpen(true)}>
+                            <PlusIcon className="mr-2 h-4 w-4" />
+                            {t("create")}
+                        </Button>
+                    </div>
+
+                    <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>{t("columns.name")}</TableHead>
+                                    <TableHead className="w-[120px]">{t("columns.status")}</TableHead>
+                                    <TableHead className="w-[120px]">{t("columns.keyCount")}</TableHead>
+                                    <TableHead className="w-[200px]">{t("columns.lastUsed")}</TableHead>
+                                    <TableHead className="w-[220px] text-right">{t("columns.actions")}</TableHead>
                                 </TableRow>
-                            ))
-                        )}
-                    </TableBody>
-                </Table>
-            </div>
+                            </TableHeader>
+                            <TableBody>
+                                {loading && rows.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={5} className="text-center text-muted-foreground">
+                                            {t("loading")}
+                                        </TableCell>
+                                    </TableRow>
+                                ) : rows.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={5} className="text-center text-muted-foreground">
+                                            {t("emptyHint")}
+                                        </TableCell>
+                                    </TableRow>
+                                ) : (
+                                    rows.map((row) => (
+                                        <TableRow key={row.id}>
+                                            <TableCell>
+                                                <div className="flex flex-col">
+                                                    <span>{row.name}</span>
+                                                    {row.description && (
+                                                        <span className="text-xs text-muted-foreground">{row.description}</span>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge variant={row.enabled ? "success" : "gray"}>
+                                                    {row.enabled ? t("status.enabled") : t("status.disabled")}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <span className={row.key_count === 0 ? "text-red-500" : undefined}>
+                                                    {row.key_count}
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-muted-foreground">
+                                                {row.last_used_at ? formatIsoDateTime(row.last_used_at) : t("never")}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <Button
+                                                    variant="link"
+                                                    size="sm"
+                                                    onClick={() => setDetail({ id: row.id, tab: "overview" })}
+                                                >
+                                                    {t("detailAction")}
+                                                </Button>
+                                                <Button variant="link" size="sm" onClick={() => handleToggleEnabled(row)}>
+                                                    {row.enabled ? t("disable") : t("enable")}
+                                                </Button>
+                                                <Button
+                                                    variant="link"
+                                                    size="sm"
+                                                    className="text-red-500"
+                                                    onClick={() => handleDelete(row)}
+                                                >
+                                                    {t("delete")}
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
 
-            <div className="flex shrink-0 items-center justify-end">
-                <AutoPagination
-                    page={page}
-                    pageSize={PAGE_SIZE}
-                    total={total}
-                    showTotal
-                    onChange={(p) => load(p)}
-                />
-            </div>
+                    <div className="flex shrink-0 items-center justify-end">
+                        <AutoPagination
+                            page={page}
+                            pageSize={PAGE_SIZE}
+                            total={total}
+                            showTotal
+                            onChange={(p) => load(p)}
+                        />
+                    </div>
+                </TabsContent>
+
+                <TabsContent value="guide" className="mt-3 flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <AccessGuideTab />
+                </TabsContent>
+            </Tabs>
 
             <CreateServiceAccountDialog
                 open={createOpen}
