@@ -1162,7 +1162,7 @@
       "count": 1
     },
     "@typescript-eslint/no-explicit-any": {
-      "count": 3
+      "count": 2
     }
   },
   "src/controllers/API/orgSync.ts": {
@@ -3113,7 +3113,7 @@
   },
   "src/pages/LogPage/systemLog/index.tsx": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 13
+      "count": 5
     },
     "@typescript-eslint/no-unused-vars": {
       "count": 1

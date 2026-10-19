@@ -8,6 +8,11 @@ from bisheng.core.database import get_sync_db_session
 from bisheng.core.storage.minio.minio_manager import get_minio_storage
 from bisheng.evaluation.domain.models.evaluation import Evaluation
 from bisheng.evaluation.domain.schemas.evaluation import EvaluationCreate
+from bisheng.evaluation.domain.services.evaluation_compare_report import (
+    EXPORT_CONTENT_TYPES,
+    build_compare_export,
+    build_compare_report,
+)
 from bisheng.evaluation.domain.services.evaluation_service import EvaluationService, add_evaluation_task
 
 router = APIRouter(prefix="/evaluation", tags=["Evaluation"], dependencies=[Depends(UserPayload.get_login_user)])
@@ -115,6 +120,26 @@ def create_evaluation(
 def get_evaluation_compare(*, group_id: str, login_user: UserPayload = Depends(UserPayload.get_login_user)):
     """F053: dual-version compare — totals, per-question table and conclusion."""
     return EvaluationService.get_evaluation_compare(login_user, group_id)
+
+
+@router.get("/compare/{group_id}/report")
+def get_evaluation_compare_report(*, group_id: str, login_user: UserPayload = Depends(UserPayload.get_login_user)):
+    """F067: 可视化对比报告数据（只读）。属主 + 租户校验在 service 内完成；
+    组不存在/非属主 → 404，两版非同一智能体 → 400。"""
+    return resp_200(build_compare_report(group_id, login_user.user_id))
+
+
+@router.get("/compare/{group_id}/report/export")
+def export_evaluation_compare_report(
+    *,
+    group_id: str,
+    format: str = Query(default="xlsx", description="Export format: xlsx | html | pdf"),
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    """F067: 生成两版对比报告（xlsx / 完整 HTML / PDF）并返回预签名下载链接。"""
+    if format not in EXPORT_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="unsupported export format")
+    return resp_200(build_compare_export(group_id, login_user.user_id, format))
 
 
 @router.delete("/{evaluation_id}", status_code=200)

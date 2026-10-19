@@ -442,7 +442,8 @@ function Show-Status {
         $state = '未运行'
         $color = 'DarkGray'
         if (Test-Path $pf) {
-            $procId = (Get-Content $pf.FullName -Raw).Trim()
+            # $pf 是 Join-Path 返回的路径字符串,不能按 FileInfo 取 .FullName(会得到空值)
+            $procId = (Get-Content $pf -Raw).Trim()
             if ($procId -match '^\d+$' -and (Test-ProcAlive ([int]$procId))) {
                 $state = "运行中 (PID $procId)"
                 $color = 'Green'
