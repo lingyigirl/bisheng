@@ -73,7 +73,7 @@ elif [ "$start_mode" = "linsight" ]; then
     echo "Starting LinSight worker..."
     start_linsight
 elif [ "$start_mode" = "worker" ]; then
-    echo "Starting All worker..."
+    echo "Starting All worker (beat is NOT started here)..."
     # 处理知识库相关任务的worker
 #    start_knowledge &
 #    # 处理工作流相关任务的worker
@@ -84,7 +84,12 @@ elif [ "$start_mode" = "worker" ]; then
 
     start_min_worker &
     start_linsight &
-    start_beat
+    # F077: do NOT start beat here. docker-compose runs a dedicated
+    # `backend_beat` service; a second beat on the same broker would publish
+    # every periodic task twice. If you deploy `worker` mode without a
+    # separate beat process, run `entrypoint.sh beat` separately.
+    # `wait` keeps this container alive while the background workers run.
+    wait
 
     echo "All workers started successfully."
 else
