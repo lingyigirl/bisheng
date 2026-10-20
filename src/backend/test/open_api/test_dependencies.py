@@ -107,6 +107,13 @@ def fake_redis(monkeypatch):
     # The auth dependency checks the credential tenant's disabled-tenant key;
     # share the same fake so unit tests never touch real Redis/DB.
     monkeypatch.setattr(deps, "_get_redis", _get)
+    # On a cache miss the dependency re-checks the tenant row; default to active.
+    from types import SimpleNamespace
+
+    async def _tenant_active(tenant_id: int):
+        return SimpleNamespace(status="active")
+
+    monkeypatch.setattr("bisheng.database.models.tenant.TenantDao.aget_by_id", _tenant_active)
     monkeypatch.setattr(cred_service, "_credential_cache_ttl", lambda: 3)
     return fake
 
@@ -308,6 +315,24 @@ async def test_disabled_tenant_rejected(patched_db, fake_redis, monkeypatch):
     _stub_owner(monkeypatch, _StubPayload())
     _, plaintext = await _seed_account_and_key()
     fake_redis.store[f"disabled_tenant:{TENANT_ID}"] = "1"
+
+    with pytest.raises(OpenApiTenantDisabledError):
+        await _enter(_http(f"Bearer {plaintext}"))
+
+
+async def test_disabled_tenant_cache_miss_falls_back_to_db(patched_db, fake_redis, monkeypatch):
+    """Redis 正常但黑名单键缺失（重启/清空）时，仍要回查租户行。"""
+    _enable_deployment(monkeypatch, True)
+    _stub_owner(monkeypatch, _StubPayload())
+    _, plaintext = await _seed_account_and_key()
+
+    class _DisabledTenant:
+        status = "disabled"
+
+    async def _get_tenant(tenant_id: int):
+        return _DisabledTenant()
+
+    monkeypatch.setattr("bisheng.database.models.tenant.TenantDao.aget_by_id", _get_tenant)
 
     with pytest.raises(OpenApiTenantDisabledError):
         await _enter(_http(f"Bearer {plaintext}"))
