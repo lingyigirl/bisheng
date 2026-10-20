@@ -5,13 +5,25 @@ import AutoPagination from "@/components/bs-ui/pagination/autoPagination";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/bs-ui/select";
 import MultiSelect from "@/components/bs-ui/select/multi";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/bs-ui/table";
-import { getActionsApi, getActionsByModuleApi, getLogsApi, getModulesApi, getOperatorsApi } from "@/controllers/API/log";
+import { useToast } from "@/components/bs-ui/toast/use-toast";
+import { exportAuditLogsApi, getActionsApi, getActionsByModuleApi, getLogsApi, getModulesApi, getOperatorsApi } from "@/controllers/API/log";
 import { getUserGroupsApi } from "@/controllers/API/user";
 import { useTable } from "@/util/hook";
-import { formatDate } from "@/util/utils";
+import { exportCsv, formatDate } from "@/util/utils";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LoadingIcon } from "@/components/bs-icons/loading";
+import { LoadIcon, LoadingIcon } from "@/components/bs-icons/loading";
+import {
+    buildAuditExportRows,
+    renderEventType,
+    renderObjectName,
+    renderObjectType,
+    renderSystemId,
+    resolveAuditExportRange,
+} from "./auditLogFormat";
+
+// 既有单测从页面入口引用该方法，保留原导出路径。
+export { actionToI18nKey } from "./auditLogFormat";
 
 const useGroups = () => {
     const [groups, setGroups] = useState([])
@@ -26,52 +38,6 @@ const useModules = () => {
         getModulesApi().then(res => setModules(res.data))
     }
     return { modules, loadModules }
-}
-
-// v2.5.1 audit_log rows from `ainsert_v2()` only fill `action` / `target_type`
-// / `target_id` and leave the legacy `system_id` / `event_type` / `object_type`
-// columns NULL. Fall back to the structured fields so the page does not render
-// the literal i18n key (`log.systemIdEnum.null`). Backend `_UI_VISIBLE_V2_ACTIONS`
-// already restricts which v2 rows reach the list — these helpers only need to
-// handle that whitelist plus a defensive fallback for unexpected rows.
-
-// Structured action (`tenant.mount`, `approval.exception.assign_approver`) →
-// camelCase i18n leaf key (`tenantMount`, `approvalExceptionAssignApprover`).
-// Both `.` and `_` act as word separators: i18next treats `.` as a nesting
-// separator and locale keys use camelCase throughout, so snake_case segments
-// must also be folded into the camelCase form to resolve.
-export const actionToI18nKey = (action: string): string => {
-    const [head, ...rest] = action.split(/[._]/).filter(Boolean)
-    if (!head) return action
-    return head + rest.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('')
-}
-
-const renderSystemId = (log: any, t: (key: string, opts?: any) => string): string => {
-    if (log.system_id) return t(`log.systemIdEnum.${log.system_id}`)
-    if (log.action) {
-        const ns = String(log.action).split('.')[0]
-        return t(`log.systemIdEnum.${ns}`, { defaultValue: ns })
-    }
-    return '-'
-}
-
-const renderEventType = (log: any, t: (key: string, opts?: any) => string): string => {
-    if (log.event_type) return t(`log.eventTypeEnum.${log.event_type}`)
-    if (log.action) {
-        const key = actionToI18nKey(log.action)
-        return t(`log.eventTypeEnum.${key}`, { defaultValue: log.action })
-    }
-    return '-'
-}
-
-const renderObjectType = (log: any, t: (key: string, opts?: any) => string): string => {
-    if (log.object_type) return t(`log.objectTypeEnum.${log.object_type}`)
-    if (log.target_type) return t(`log.objectTypeEnum.${log.target_type}`, { defaultValue: log.target_type })
-    return t('log.objectTypeEnum.none')
-}
-
-const renderObjectName = (log: any, t: (key: string, opts?: any) => string): string => {
-    return log.object_name || log.target_id || t('log.objectTypeEnum.none')
 }
 
 type AuditLogRow = {
@@ -101,9 +67,12 @@ const renderAuditNote = (
     })
     return lines.join('\n') || t('log.objectTypeEnum.none')
 }
-
 export default function SystemLog() {
     const { t } = useTranslation()
+    const { message } = useToast()
+    const [exporting, setExporting] = useState(false)
+    // 与 disabled 配合做同步防重入：双击时 state 尚未刷新，按钮还没变成禁用态。
+    const exportingRef = useRef(false)
     const { users, loadUsers } = useUsers()
     const { groups, loadData } = useGroups()
     const { modules, loadModules } = useModules()
@@ -133,6 +102,45 @@ export default function SystemLog() {
     const handleReset = () => {
         setKeys({ ...init })
         filterData(init)
+    }
+    // 导出当前筛选条件下的全部审计日志（非仅当前页）。
+    // 未选择时间区间时默认最近 60 天，并给出提示，避免误导出全量数据。
+    const handleExport = async () => {
+        if (exportingRef.current) return
+        exportingRef.current = true
+        const range = resolveAuditExportRange(keys.start, keys.end)
+        if (range.notice === 'default') {
+            message({ variant: 'warning', description: t('log.systemLogExportNoDateRange') })
+        } else if (range.notice === 'custom') {
+            message({
+                variant: 'warning',
+                description: t('log.exportCustomDateRange', {
+                    start: range.start.split(' ')[0],
+                    end: range.end.split(' ')[0],
+                }),
+            })
+        }
+
+        setExporting(true)
+        try {
+            const rows = await exportAuditLogsApi({
+                userIds: keys.userIds,
+                groupId: keys.groupId,
+                start: range.start,
+                end: range.end,
+                moduleId: keys.moduleId,
+                action: keys.action,
+            })
+            const stamp = formatDate(new Date(), 'yyyy-MM-dd_HH-mm-ss')
+            const fileName = `Export_${range.start.split(' ')[0]}_${range.end.split(' ')[0]}_${stamp}.csv`
+            exportCsv(buildAuditExportRows(rows, t), fileName, true)
+        } catch (error) {
+            // 请求层已统一提示业务错误，这里仅记录，避免未处理的 Promise 拒绝。
+            console.error('export audit logs failed:', error)
+        } finally {
+            exportingRef.current = false
+            setExporting(false)
+        }
     }
     useEffect(() => {
         loadUsers()
@@ -204,6 +212,10 @@ export default function SystemLog() {
                     </Button>
                     <Button variant="outline" className="px-6" onClick={handleReset}>
                         {t('log.resetButton')}
+                    </Button>
+                    {/* 与「应用使用」页保持一致：导出中禁用按钮并显示 loading 图标 */}
+                    <Button className="ml-3 px-6" onClick={handleExport} disabled={exporting}>
+                        {exporting && <LoadIcon className="mr-1" />}{t('log.exportButton')}
                     </Button>
                 </div>
             </div>

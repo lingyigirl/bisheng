@@ -46,6 +46,7 @@ from bisheng.tool.domain.models.gpts_tools import GptsToolsDao
 from bisheng.tool.domain.services.executor import ToolExecutor
 from bisheng.utils import util
 from bisheng.utils.util import async_calculate_md5
+from bisheng_langchain.gpts.tools.code_interpreter.base_executor import is_skipped_workspace_name
 from bisheng_langchain.gpts.tools.code_interpreter.e2b_executor import SIZE_AUTOPUSH
 
 
@@ -83,14 +84,23 @@ class LinsightWorkbenchImpl:
     # hard-fails past 10k chars), a Word file loses styling, a PDF loses table
     # geometry. These land in the workspace ALONGSIDE the .md so
     # ``bisheng_code_interpreter`` can open them with pandas / python-docx / fitz.
-    # Images are deliberately absent: their originals are already promoted for
-    # frontend preview, and feeding one back through ``read_file`` yields an
-    # ``image`` block that a non-vision model rejects.
+    # Images are NOT in this set because they follow a separate carry rule with
+    # their own ceiling (see ``_write_raw_original_to_workspace``): a picture's
+    # original is the only form the MODEL can consume directly — ``read_file``
+    # turns it into a real ``image`` block, so the file must sit next to its
+    # (.md) text view in the workspace.
     _RAW_KEEP_EXTS = frozenset({"xlsx", "xls", "csv", "docx", "doc", "pptx", "ppt", "pdf", "ofd"})
     # Ceiling for carrying an original into the workspace + local task dir. Past
     # this, the .md view is the only thing worth the storage and the download
     # latency on every task start.
     _RAW_KEEP_MAX_BYTES = 50 * 1024 * 1024
+    # Images carry a tighter ceiling: the sandbox auto-push stops at 5MB, so a
+    # bigger copy can never reach the code interpreter, and ``read_file`` only
+    # inlines pictures up to 500KB — past 5MB the copy would cost storage without
+    # unlocking any route. 500KB..5MB still earns its place: the interpreter can
+    # downscale it into a viewable copy, and follow-up turns inherit it via the
+    # workspace seed.
+    _IMAGE_CARRY_MAX_BYTES = 5 * 1024 * 1024
 
     # ``mimetypes`` reads the SYSTEM mime database, which on a stock Linux image
     # (every deploy target, and CI) knows nothing about the OOXML types — xlsx /
@@ -200,6 +210,12 @@ class LinsightWorkbenchImpl:
         Raises:
             LinsightError: When creating a session fails
         """
+        from bisheng.core.context.tenant import get_current_tenant_id
+        from bisheng.linsight.domain.services.agent_config_service import AgentConfigService
+
+        agent_config = await AgentConfigService().resolve(
+            submit_obj.agent_config, login_user, get_current_tenant_id() or 1, submit_obj.model
+        )
         try:
             # Continue an existing session when session_id is supplied, else
             # start a fresh one. Continuing reuses the MessageSession and only
@@ -224,6 +240,37 @@ class LinsightWorkbenchImpl:
             svid = uuid.uuid4().hex
             # Process files (if present) — after chat_id is finalized
             processed_files = await cls._process_submitted_files(submit_obj.files, svid, login_user.user_id)
+
+            # Omitted configuration inherits the previous turn's collaborators;
+            # an explicit empty list clears them while retaining Harness.
+            # Re-resolve (not a raw copy) so a since-revoked tool/skill fails
+            # closed — degrade to no collaborators instead of blocking the turn.
+            if submit_obj.agent_config is None and continuing:
+                from bisheng.linsight.domain.schemas.agent_config import AgentConfig
+
+                try:
+                    versions = await LinsightSessionVersionDao.get_session_versions_by_session_id(chat_id)
+                    prev = next((v for v in versions if v.id != svid), None)
+                    snapshot = getattr(prev, "agent_config", None) if prev is not None else None
+                    if snapshot:
+                        agent_config = await AgentConfigService().resolve(
+                            AgentConfig.model_validate(
+                                {
+                                    "schema_version": snapshot.get("schema_version", 1),
+                                    "subagents": snapshot.get("subagents", []),
+                                }
+                            ),
+                            login_user,
+                            get_current_tenant_id() or 1,
+                            snapshot.get("main_model_id") or submit_obj.model,
+                        )
+                        if agent_config:
+                            logger.info(
+                                f"agent_config inherited from previous turn {prev.id[:8]} "
+                                f"({len(agent_config['subagents'])} member(s))"
+                            )
+                except Exception as e:
+                    logger.warning(f"agent_config inherit from previous turn skipped (non-fatal): {e}")
 
             if not continuing:
                 # F035 Track J (unified conversation model): a task turn is not a
@@ -282,10 +329,21 @@ class LinsightWorkbenchImpl:
                 organization_knowledge_ids=org_ids,
                 knowledge_space_ids=submit_obj.knowledge_space_ids,
                 files=processed_files,
-                model=submit_obj.model,
+                model=agent_config["main_model_id"] if agent_config else submit_obj.model,
                 skills=submit_obj.skills,
+                agent_config=agent_config,
             )
+            if agent_config and "assistant_text_v1" in getattr(submit_obj, "client_capabilities", []):
+                agent_config["text_protocol"] = 1
+                linsight_session_version.agent_config = agent_config
             linsight_session_version = await LinsightSessionVersionDao.insert_one(linsight_session_version)
+            if agent_config:
+                from bisheng.linsight.domain.services.event_replay import EventReplayService
+
+                replay_redis = await get_redis_client()
+                await EventReplayService(
+                    replay_redis.async_connection, linsight_session_version.tenant_id, svid
+                ).append({"event_type": "replay_init", "data": {}}, "init")
 
             # F035 Track J: land the user question in the unified conversation
             # stream so the round reads as one Q→A pair regardless of task mode.
@@ -813,7 +871,9 @@ class LinsightWorkbenchImpl:
     ) -> None:
         """Second track: copy the ORIGINAL next to its markdown view.
 
-        No-op unless the type is worth keeping raw AND an original was persisted
+        No-op unless the type is worth keeping raw — ``_RAW_KEEP_EXTS`` documents
+        (code interpreter data) or an IMAGE (the model's own viewing route: a
+        real ``image`` block via ``read_file``) — AND an original was persisted
         upstream (``entry["original_file_path"]``, set by ``_parse_file`` /
         ``_ingest_daily_file``). Best-effort: a failure here must never sink an
         attachment whose markdown view already landed — the task stays usable,
@@ -822,13 +882,25 @@ class LinsightWorkbenchImpl:
         from bisheng.linsight.domain.services.workspace_backend import WORKSPACE_PREFIX
 
         original_object = entry.get("original_file_path")
-        if not original_object or not cls._should_keep_raw(entry.get("original_filename", "")):
+        original_name = entry.get("original_filename", "")
+        ext = os.path.splitext(original_name)[1].lower().lstrip(".")
+        is_image = ext in cls._IMAGE_EXTS
+        if not original_object or not (cls._should_keep_raw(original_name) or is_image):
             return
 
         try:
             raw_bytes = await minio_client.get_object(bucket_name=minio_client.bucket, object_name=original_object)
             if not raw_bytes:
                 logger.warning("original {} is empty/missing; workspace keeps only the markdown view", original_object)
+                return
+            ceiling = cls._IMAGE_CARRY_MAX_BYTES if is_image else cls._RAW_KEEP_MAX_BYTES
+            if len(raw_bytes) > ceiling:
+                logger.info(
+                    "skip carrying original {} into workspace: {} bytes exceeds the {} ceiling",
+                    original_name,
+                    len(raw_bytes),
+                    ceiling,
+                )
                 return
 
             raw_filename = cls._dedupe_workspace_name(safe_name, used_names)
@@ -980,6 +1052,7 @@ class LinsightWorkbenchImpl:
 
         items: list[str] = []
         has_raw = False
+        has_image = False
         has_unparsed = False
         for file in session_version.files:
             path = file.get("workspace_path") or f"/uploads/{file.get('file_id')}/index.md"
@@ -1011,24 +1084,35 @@ class LinsightWorkbenchImpl:
             )
             raw_path = file.get("raw_workspace_path")
             if raw_path:
-                has_raw = True
-                # Rendered RELATIVE on purpose. The code interpreter resolves paths
-                # against its working directory (the local task dir / sandbox root),
-                # where the original lives at ``uploads/<name>``; a leading slash
-                # would send it to the filesystem root and fail.
-                item += f"\n  raw: {raw_path.lstrip('/')}"
+                rel_raw = raw_path.lstrip("/")
+                ext = os.path.splitext(file.get("original_filename", ""))[1].lower().lstrip(".")
+                if ext in cls._IMAGE_EXTS:
+                    # An image is the one original the MODEL reads directly: the
+                    # file tools return it as a real image block (vision), so it
+                    # gets its own key + guidance instead of the "raw is for the
+                    # code interpreter, do not read_file it" document advice.
+                    # Rendered RELATIVE for the same reason as `raw` below.
+                    has_image = True
+                    item += f"\n  image: {rel_raw}"
+                else:
+                    has_raw = True
+                    # Rendered RELATIVE on purpose. The code interpreter resolves
+                    # paths against its working directory (the local task dir /
+                    # sandbox root), where the original lives at ``uploads/<name>``;
+                    # a leading slash would send it to the filesystem root and fail.
+                    item += f"\n  raw: {rel_raw}"
             items.append(item)
 
         if not items:
             return []
 
-        header = ""
+        notes: list[str] = []
         if has_raw or has_unparsed:
             # Say it once, at the top, instead of repeating per item: markdown is
             # the reading view, the original is the data. Without this the model
             # reads the flattened table and "eyeballs" numbers it could compute.
             if has_code_interpreter:
-                header = (
+                notes.append(
                     "说明：path 指向可直接 read_file 的文本视图；raw 指向同名原件"
                     "（表格/文档的精确数据、单元格、样式、页面结构都在原件里）。"
                     "需要精确数值或做数据分析时，用 bisheng_code_interpreter 读 raw 原件"
@@ -1038,13 +1122,29 @@ class LinsightWorkbenchImpl:
             else:
                 # No code interpreter this run: the original is unusable, so do not
                 # send the model chasing it. Say what it CAN do instead.
-                header = (
+                notes.append(
                     "说明：path 指向可直接 read_file 的文本视图；raw 是原始二进制文件，"
                     "本次没有可用的代码执行工具，无法读取原件——请基于文本视图作答，"
                     "并在结论中说明受原件格式限制的部分。不要对 raw 路径调用 read_file。\n"
                 )
+        if has_image:
+            # Images invert the document rule: the original IS the model's
+            # reading view (image block, token-cheap on vision routes), and the
+            # parsed .md only carries the text found ON the picture.
+            if has_code_interpreter:
+                notes.append(
+                    "说明：image 指向用户上传图片的原图（相对当前工作目录），"
+                    "直接用 read_file 读取该路径即可看到画面本身（视觉核对），不要只依赖文本视图。"
+                    "若 read_file 提示图片过大（>500KB），先用 bisheng_code_interpreter 把图片压缩到 500KB 以内再读；"
+                    "需要像素级处理（裁剪、缩放、批量分析）时用代码执行器。\n"
+                )
+            else:
+                notes.append(
+                    "说明：image 指向用户上传图片的原图（相对当前工作目录），"
+                    "直接用 read_file 读取该路径即可看到画面本身（视觉核对）。\n"
+                )
 
-        block = "<uploaded_files>\n" + header + "\n".join(items) + "\n</uploaded_files>"
+        block = "<uploaded_files>\n" + "".join(notes) + "\n".join(items) + "\n</uploaded_files>"
         return [block]
 
     @classmethod
@@ -1371,7 +1471,15 @@ class LinsightWorkbenchImpl:
             return tools
         # Individual initialization code interpreter tool
         selected_tool_ids.remove(bisheng_code_tool.id)
-        code_config = json.loads(bisheng_code_tool.extra) if bisheng_code_tool.extra else {}
+        # Resolve the group configuration before adding per-task workspace options.
+        # Otherwise a non-empty tool override hides the administrator's E2B settings.
+        saved_config = bisheng_code_tool.extra
+        if not saved_config and getattr(bisheng_code_tool, "type", None) is not None:
+            tool_group = await GptsToolsDao.aget_one_tool_type(bisheng_code_tool.type)
+            saved_config = tool_group.extra if tool_group else None
+        code_config = (
+            json.loads(saved_config) if isinstance(saved_config, str) else json.loads(json.dumps(saved_config or {}))
+        )
         if "config" not in code_config:
             code_config["config"] = {}
         if "local" not in code_config["config"]:
@@ -1383,6 +1491,9 @@ class LinsightWorkbenchImpl:
         # Default60Validity period of minutes
         code_config["config"]["e2b"]["timeout"] = 3600
         code_config["config"]["e2b"]["keep_sandbox"] = True
+        # Bind tools without starting a remote sandbox on the worker event loop.
+        # The first actual code call initializes it, then keep_sandbox reuses it.
+        code_config["config"]["e2b"]["prewarm_sandbox"] = False
         # ``file_list`` is the E2B copy-in set: E2bCodeExecutor.__init__ reads every
         # entry fully into worker memory and pushes it into the sandbox up front.
         # E2B's own contract caps that at SIZE_AUTOPUSH — anything larger is meant to
@@ -1393,6 +1504,10 @@ class LinsightWorkbenchImpl:
         file_list = []
         oversized: list[str] = []
         for root, dirs, files in os.walk(file_dir):
+            # Toolchain trees (node_modules / caches) are never task inputs; the
+            # E2B copy-in reads every entry fully into worker memory, so pruning
+            # them here keeps the push — and every later sandbox walk — cheap.
+            dirs[:] = [d for d in dirs if not is_skipped_workspace_name(d)]
             for file in files:
                 file_path = os.path.join(root, file)
                 try:
@@ -1403,7 +1518,8 @@ class LinsightWorkbenchImpl:
                     # Unstattable file: let it through rather than silently dropping
                     # it — the push itself will surface any real problem.
                     pass
-                file_list.append(WriteEntry(data=file_path, path=file_path.replace(file_dir, ".")))
+                sandbox_path = "./" + os.path.relpath(file_path, file_dir).replace("\\", "/")
+                file_list.append(WriteEntry(data=file_path, path=sandbox_path))
         if oversized:
             # Never let a bounded copy-in look complete: the model is told these
             # paths exist, so a silent drop reads as "the tool is broken".

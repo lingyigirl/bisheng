@@ -1,3 +1,4 @@
+import type { AgentConfig } from "~/types/harness";
 // src/state/linsightState.ts
 import { atom, atomFamily, selectorFamily } from 'recoil';
 import { ExtendedFile } from '~/common';
@@ -26,6 +27,8 @@ export const enum SopStatus {
 }
 
 export type LinsightInfo = {
+    recoveryAttempt?: number;
+    agent_config?: AgentConfig | null;
     title: string;
     user_id: number;
     question: string;
@@ -250,6 +253,7 @@ export type SubmissionState = {
     model: string;
     /** F035 Track H: skill names picked in the task-mode input (enabled skills only). */
     skills?: string[];
+    agent_config?: AgentConfig;
     enableWebSearch: boolean;
     useKnowledgeBase: boolean;
     /**

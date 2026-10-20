@@ -115,6 +115,24 @@ def _copied_rel_paths(backend: _CacheBackend) -> set[str]:
 
 
 class TestGate:
+    async def test_member_sources_discover_only_their_selected_bundles(self, monkeypatch, store, backend):
+        from deepagents.backends.filesystem import FilesystemBackend
+        from deepagents.middleware.skills import SkillsMiddleware
+
+        _patch_enabled(monkeypatch, ENABLED)
+        await materialize_session_skills(
+            backend, TENANT, ["biao-shu-zhuan-xie"], store=store, workspace_dir="skills/agents/a"
+        )
+        await materialize_session_skills(
+            backend, TENANT, ["he-tong-shen-yue"], store=store, workspace_dir="skills/agents/b"
+        )
+        middleware = SkillsMiddleware(
+            backend=FilesystemBackend(root_dir=str(backend.file_dir), virtual_mode=True),
+            sources=[("/skills/agents/a/", "Skills")],
+        )
+        update = middleware.before_agent({}, MagicMock(), {"configurable": {}})
+        assert [entry["name"] for entry in update["skills_metadata"]] == ["biao-shu-zhuan-xie"]
+
     async def test_selected_subset_copies_only_those(self, monkeypatch, store, backend):
         _patch_enabled(monkeypatch, ENABLED)
         copied = await materialize_session_skills(backend, TENANT, ["biao-shu-zhuan-xie"], store=store)
@@ -139,15 +157,19 @@ class TestGate:
 
     async def test_db_disabled_skill_never_copied_even_if_selected(self, monkeypatch, store, backend):
         _patch_enabled(monkeypatch, ENABLED)
-        copied = await materialize_session_skills(
-            backend, TENANT, ["ting-yong-ji-neng", "biao-shu-zhuan-xie"], store=store
-        )
-        assert copied == ["biao-shu-zhuan-xie"]
+        from bisheng.common.errcode.linsight import LinsightAgentConfigurationError
 
-    async def test_unknown_selected_name_ignored(self, monkeypatch, store, backend):
+        with pytest.raises(LinsightAgentConfigurationError):
+            await materialize_session_skills(backend, TENANT, ["ting-yong-ji-neng", "biao-shu-zhuan-xie"], store=store)
+        assert backend.uploaded == []
+
+    async def test_unknown_selected_name_rejected(self, monkeypatch, store, backend):
         _patch_enabled(monkeypatch, ENABLED)
-        copied = await materialize_session_skills(backend, TENANT, ["does-not-exist"], store=store)
-        assert copied == []
+        from bisheng.common.errcode.linsight import LinsightAgentConfigurationError
+
+        with pytest.raises(LinsightAgentConfigurationError):
+            await materialize_session_skills(backend, TENANT, ["does-not-exist"], store=store)
+        assert backend.uploaded == []
 
 
 class TestByteFidelity:
@@ -169,8 +191,10 @@ class TestCrossTenant:
         # the name were "enabled", the on-disk source path is keyed by tenant_id, so a
         # different tenant resolves an empty bundle and copies nothing.
         _patch_enabled(monkeypatch, {"biao-shu-zhuan-xie"})
-        copied = await materialize_session_skills(backend, OTHER_TENANT, ["biao-shu-zhuan-xie"], store=store)
-        assert copied == []
+        from bisheng.common.errcode.linsight import LinsightAgentConfigurationError
+
+        with pytest.raises(LinsightAgentConfigurationError):
+            await materialize_session_skills(backend, OTHER_TENANT, ["biao-shu-zhuan-xie"], store=store)
         assert backend.uploaded == []
 
 

@@ -3,19 +3,28 @@ import useAiChatSSE, { type SSESubmission } from "./useAiChatSSE";
 
 // The hook registers its listeners on a `sse.js` instance; capture them so a
 // test can drive frames by hand instead of opening a real connection.
-const mockHandlers: Record<string, ((e: { data: string }) => void)[]> = {};
+type MockSSEEvent = { data?: string; readyState?: number };
+type MockSSEHandler = (e: MockSSEEvent) => void;
+const mockHandlers: Record<string, MockSSEHandler[]> = {};
 
 jest.mock("sse.js", () => ({
   SSE: jest.fn().mockImplementation(() => ({
     readyState: 1,
-    addEventListener: (type: string, fn: (e: { data: string }) => void) => {
+    addEventListener: (type: string, fn: MockSSEHandler) => {
       mockHandlers[type] = mockHandlers[type] || [];
       mockHandlers[type].push(fn);
     },
     // The hook notifies "cancel" on unmount; a no-op is enough here.
     dispatchEvent: jest.fn(),
     stream: jest.fn(),
-    close: jest.fn(),
+    // Mirror sse.js: close() aborts the xhr, which flips readyState to 2 and
+    // fires `readystatechange` — the same ordering the close watchdog sees in
+    // production when the user hits stop.
+    close: jest.fn(() => {
+      (mockHandlers["readystatechange"] || []).forEach((fn) =>
+        fn({ readyState: 2 }),
+      );
+    }),
   })),
 }));
 
@@ -39,6 +48,12 @@ const push = (data: Record<string, unknown>) => {
     (mockHandlers["message"] || []).forEach((fn) =>
       fn({ data: JSON.stringify(data) }),
     );
+  });
+};
+
+const fire = (type: string, event: MockSSEEvent = {}) => {
+  act(() => {
+    (mockHandlers[type] || []).forEach((fn) => fn(event));
   });
 };
 
@@ -122,5 +137,86 @@ describe("useAiChatSSE — agent_answer frames", () => {
     const patch = onAgentUpdate.mock.calls.at(-1)?.[0] as AgentPatch;
     expect(patch.text).toBe("first half second half");
     expect(patch.finalised).toBe(true);
+  });
+});
+
+describe("useAiChatSSE — silent stream drops", () => {
+  // A 200 stream that dies mid-turn (worker restart / proxy timeout / server
+  // exception after the headers) never runs sse.js's non-2xx failure path, so
+  // without the close watchdog the turn ended with a blank bubble and no copy.
+  it("reports connection lost exactly once when the stream closes before any terminal frame", () => {
+    const submission = makeSubmission();
+    renderHook(() => useAiChatSSE(submission));
+
+    fire("open");
+    // …then the connection drops mid-turn.
+    fire("readystatechange", { readyState: 2 });
+    // A second close notification must not add a second error.
+    fire("readystatechange", { readyState: 2 });
+
+    expect(submission.onError).toHaveBeenCalledTimes(1);
+    expect(submission.onError).toHaveBeenCalledWith(
+      "workstation.chat.connection_lost",
+    );
+    expect(submission.onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a failure when the user stops the stream", () => {
+    const submission = makeSubmission();
+    const { result } = renderHook(() => useAiChatSSE(submission));
+
+    fire("open");
+    act(() => {
+      result.current.abort();
+    });
+
+    expect(submission.onError).not.toHaveBeenCalled();
+    expect(submission.onEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a failure when the terminal `final` frame arrived", () => {
+    const submission = makeSubmission();
+    renderHook(() => useAiChatSSE(submission));
+
+    fire("open");
+    push({ final: true, conversation: { conversationId: "c1" } });
+    fire("readystatechange", { readyState: 2 });
+
+    expect(submission.onError).not.toHaveBeenCalled();
+  });
+
+  it("does not report a failure when the stream closes after the task handoff", () => {
+    const submission = makeSubmission();
+    renderHook(() => useAiChatSSE(submission));
+
+    fire("open");
+    push({
+      event: "linsight_task_handoff",
+      data: { session_version_id: "sv1", chat_id: "c1" },
+    });
+    fire("readystatechange", { readyState: 2 });
+
+    expect(submission.onError).not.toHaveBeenCalled();
+  });
+
+  it("does not report a failure for the blocked-input single `over` frame", () => {
+    const submission = makeSubmission();
+    renderHook(() => useAiChatSSE(submission));
+
+    fire("open");
+    // Verbatim shape of `_blocked_input_stream` (chat_service.py): one frame,
+    // then the stream closes — that close is normal, not a drop.
+    push({
+      category: "agent_answer",
+      type: "over",
+      message: { msg: "BLOCKED: input matched the platform policy" },
+      is_bot: true,
+      chat_id: "c1",
+      flow_id: "",
+    });
+    fire("readystatechange", { readyState: 2 });
+
+    expect(submission.onError).not.toHaveBeenCalled();
+    expect(submission.onEnd).toHaveBeenCalledTimes(1);
   });
 });

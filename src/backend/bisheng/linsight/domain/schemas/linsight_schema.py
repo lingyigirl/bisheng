@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 
+from bisheng.linsight.domain.schemas.agent_config import AgentConfig
 from bisheng_langchain.linsight.event import NeedUserInput
 
 
@@ -33,6 +34,8 @@ class SubmitFileSchema(BaseModel):
 
 # Submit a problemSchema
 class LinsightQuestionSubmitSchema(BaseModel):
+    client_capabilities: list[str] = Field(default_factory=list, max_length=8)
+    agent_config: AgentConfig | None = None
     question: str = Field(..., description="User Submitted Questions")
     org_knowledge_enabled: bool = Field(False, description="Whether to enable organization knowledge base")
     personal_knowledge_enabled: bool = Field(False, description="Whether or not to enable Personal Knowledge Base")
@@ -78,6 +81,7 @@ class LinsightQuestionSubmitSchema(BaseModel):
 class DownloadFilesSchema(BaseModel):
     file_name: str = Field(..., description="File Name")
     file_url: str = Field(..., description="File download link")
+    session_version_id: str | None = Field(None, description="Authorized task containing the source report")
 
 
 class UserInputEventSchema(NeedUserInput):

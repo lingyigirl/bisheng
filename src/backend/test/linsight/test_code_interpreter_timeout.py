@@ -64,6 +64,23 @@ def _execute(code: str, work_dir, timeout: int = RUN_TIMEOUT):
 
 
 def _process_alive(pid: int) -> bool:
+    if os.name == "nt":
+        # Windows: os.kill(pid, 0) is NOT a probe — CPython routes it to
+        # TerminateProcess (i.e. it would kill the pid), and a dead pid raises
+        # WinError 87 (EINVAL) instead of ProcessLookupError. Ask the kernel.
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return exit_code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

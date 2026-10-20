@@ -297,11 +297,15 @@ def test_local_description_explains_both_namespaces():
     assert "skills/" in d
 
 
-def test_e2b_description_omits_skills():
-    """E2B copy-in snapshots the working dir BEFORE skills are materialised, so
-    promising `skills/` there would point the model at nothing."""
+def test_e2b_description_advertises_skills_after_staging():
+    """Skill bundles are staged into the sandbox on first run (see
+    E2bCodeExecutor._materialize_working_set), so the namespace mapping may
+    advertise the skills zone again."""
     from bisheng_langchain.gpts.tools.code_interpreter.base_executor import path_namespace_rules
+    from bisheng_langchain.gpts.tools.code_interpreter.e2b_executor import E2bCodeExecutor
 
+    assert "skills/" in E2bCodeExecutor(minio={}, api_key="k").description
+    # The omit variant stays available for callers that genuinely lack the tree.
     rules = path_namespace_rules(include_skills=False)
     assert "skills/" not in rules
     assert "`/output/x` is `output/x`" in rules

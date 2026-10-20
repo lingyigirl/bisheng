@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from bisheng.database.models.message import ChatMessage, ChatMessageQuery
 from bisheng.database.models.session import MessageSession
@@ -87,6 +87,8 @@ class UseKnowledgeBaseParam(BaseModel):
 
 
 class APIChatCompletion(BaseModel):
+    client_capabilities: list[str] = Field(default_factory=list, max_length=8)
+    agent_config: dict | None = None
     clientTimestamp: str
     conversationId: str | None = None
     error: bool | None = False

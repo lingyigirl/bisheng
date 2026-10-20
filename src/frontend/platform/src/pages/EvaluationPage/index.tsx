@@ -28,9 +28,8 @@ import { captureAndAlertRequestErrorHoc } from "@/controllers/request";
 import { useTable } from "@/util/hook";
 import { downloadFile } from "@/util/utils";
 import { map } from "lodash-es";
-import { CompareSheet } from "./compare/CompareSheet";
 import { CircleHelpIcon } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   EvaluationScore,
@@ -57,9 +56,6 @@ export default function EvaluationPage() {
   } = useTable({ cancelLoadingWhenReload: true }, (param) =>
     getEvaluationApi(param.page, param.pageSize)
   );
-
-  // F053: compare group opened in the sheet (groupId + the two rows)
-  const [compareGroup, setCompareGroup] = useState<{ groupId: string; rows: Evaluation[] } | null>(null);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -162,9 +158,7 @@ export default function EvaluationPage() {
                               <Button
                                 variant="outline"
                                 className="h-7 px-3 text-xs"
-                                onClick={() =>
-                                  setCompareGroup({ groupId: el.compare_group_id as string, rows: [el, nextRow as Evaluation] })
-                                }
+                                onClick={() => navigate(`/evaluation/compare/${el.compare_group_id}`)}
                               >
                                 {t("evaluation.compareButton")}
                               </Button>
@@ -281,11 +275,6 @@ export default function EvaluationPage() {
           <TabsContent value="password"></TabsContent>
         </Tabs>
       </div>
-      <CompareSheet
-        groupId={compareGroup?.groupId ?? null}
-        rows={compareGroup?.rows ?? []}
-        onClose={() => setCompareGroup(null)}
-      />
       <div className="bisheng-table-footer px-6 bg-background-login">
         <p className="desc">{t("evaluation.evaluationCollection")}</p>
         <div>

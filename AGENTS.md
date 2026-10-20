@@ -22,6 +22,8 @@
 
 ## 2. Commands
 
+Git 提交说明统一使用中文：标题和正文均用中文描述；可保留 `feat`、`fix`、`docs` 等类型前缀、作用域及必要技术名称。
+
 Dev / test / build commands live in each sub-project's `AGENTS.md`: `src/backend/AGENTS.md` · `src/frontend/platform/AGENTS.md` · `src/frontend/client/AGENTS.md`.
 
 Middleware (MySQL / Redis / Milvus / ES / MinIO / OpenFGA): integration tests run in **CI**; per-developer middleware machines are pending.

@@ -60,6 +60,11 @@ def two_turn_session(monkeypatch: pytest.MonkeyPatch):
         "get_linsight_session_version_list",
         AsyncMock(return_value=versions),
     )
+    monkeypatch.setattr(
+        linsight_ep.linsight_execute_utils,
+        "get_task_feedback_by_version",
+        AsyncMock(return_value={}),
+    )
     return versions
 
 

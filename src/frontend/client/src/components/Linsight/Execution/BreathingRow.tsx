@@ -13,7 +13,9 @@
  *  - generating  → com_linsight_generating ("Generating results, please wait…")
  */
 import { Outlined } from 'bisheng-icons';
+import { useState } from 'react';
 import { useLocalize } from '~/hooks';
+import { useElapsedTicker } from './useElapsedTicker';
 
 type BreathingState = 'planning' | 'researching' | 'generating';
 
@@ -31,6 +33,8 @@ interface BreathingRowProps {
 
 export function BreathingRow({ state }: BreathingRowProps) {
     const localize = useLocalize();
+    const [startedAt] = useState(Date.now);
+    const { elapsedMs } = useElapsedTicker(startedAt, null, state === 'planning');
     return (
         // Match the task panel's "working" treatment: blue spinning loader +
         // shimmer text (same gradient as the panel's running task name).
@@ -38,6 +42,7 @@ export function BreathingRow({ state }: BreathingRowProps) {
             <Outlined.Loading size={16} className="shrink-0 animate-spin text-blue-main" />
             <span className="bg-[linear-gradient(90deg,#cccccc_0%,#6b6b6b_50%,#cccccc_100%)] bg-[length:200%_100%] bg-clip-text text-transparent animate-text-shimmer">
                 {localize(STATE_I18N[state])}
+                {state === 'planning' && ` · ${Math.floor(elapsedMs / 1000)}s`}
             </span>
         </div>
     );

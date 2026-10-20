@@ -119,7 +119,7 @@ export function SaveAsButton({ file, versionId, variant = 'row', className }: Sa
         setBusy(true);
         showToast?.({ message: localize('com_linsight_exporting'), severity: NotificationSeverity.SUCCESS });
         try {
-            const res = await getMdDownload({ file_url: file.file_url, file_name: file.file_name }, toType);
+            const res = await getMdDownload({ file_url: file.file_url, file_name: file.file_name, session_version_id: versionId }, toType);
             const errMsg = res instanceof Blob ? await readBlobError(res) : null;
             if (errMsg) throw new Error(errMsg);
             const mime =

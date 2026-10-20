@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import CHAR, Boolean, Column, DateTime, ForeignKey, Integer, Text, text
+from sqlalchemy import CHAR, Boolean, Column, DateTime, ForeignKey, Index, Integer, Text, text
 from sqlalchemy import Enum as SQLEnum
 from sqlmodel import Field, col, select, update
 
@@ -44,6 +44,10 @@ class LinsightSessionVersionBase(SQLModelSerializable):
     """
     Inspiration Conversation Version Model Base Class
     """
+
+    agent_config: dict | None = Field(default=None, sa_column=Column(JsonType, nullable=True))
+    recovery_epoch: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    recovery_state: dict | None = Field(default=None, sa_column=Column(JsonType, nullable=True))
 
     session_id: str = Field(
         ...,
@@ -142,6 +146,7 @@ class LinsightSessionVersion(LinsightSessionVersionBase, table=True):
     )
 
     __tablename__ = "linsight_session_version"
+    __table_args__ = (Index("ix_linsight_session_version_status_id", "status", "id"),)
 
 
 class LinsightSessionVersionDao:

@@ -1,6 +1,9 @@
 // @ts-strict-ignore
 import {LinsightInfo} from "~/store/linsight";
+import type {ContextUsageSnapshot} from "~/types/contextUsage";
+import type {SavedMember, SavedMemberPayload} from "~/types/harness";
 import request from "./request";
+import { getShareTokenFromPath } from '~/utils/shareToken';
 
 // 获取灵思会话信息
 export function getLinsightSessionVersionList(ConversationId: string, shareToken: string): Promise<any> {
@@ -39,6 +42,33 @@ export function getLinsightTaskList(versionId: string, linsight: LinsightInfo, s
         }
         return res.data
     });
+}
+
+// F086 上下文显示：任务运行的真实 token 用量快照（主图当前上下文 / 累计输入输出 / 子代理）
+export function getLinsightContextUsage(versionId: string): Promise<{data?: ContextUsageSnapshot}> {
+    return request.get('/api/v1/linsight/workbench/context-usage', {
+        params: {
+            session_version_id: versionId
+        }
+    })
+}
+
+// F087 常用成员库：当前用户保存的协作成员模板（保存/复用/删除）
+export function listSavedMembers(): Promise<SavedMember[]> {
+    return request.get('/api/v1/linsight/member').then(res => (res?.data || []) as SavedMember[])
+}
+
+export function saveMember(payload: SavedMemberPayload): Promise<SavedMember> {
+    return request.post('/api/v1/linsight/member', payload).then(res => res?.data as SavedMember)
+}
+
+export function deleteSavedMember(memberId: number): Promise<{data?: {deleted?: boolean}}> {
+    return request.delete(`/api/v1/linsight/member/${memberId}`)
+}
+
+// 星标开关：默认携带的成员会在新会话自动勾选
+export function setMemberDefault(memberId: number, isDefault: boolean): Promise<{data?: {updated?: boolean}}> {
+    return request.post(`/api/v1/linsight/member/${memberId}/default`, { is_default: isDefault })
 }
 
 
@@ -190,14 +220,17 @@ export function getCaseDetail(sop_id: string): Promise<any> {
 }
 
 export function getMdDownload(file_info: {
+    session_version_id?: string;
     file_url: string;
     file_name: string
 }, to_type: 'pdf' | 'docx'): Promise<any> {
+    const shareToken = getShareTokenFromPath();
     return request.post('/api/v1/linsight/workbench/download-md-to-pdf-or-docx', {
             file_info: file_info,
             to_type: to_type
         }
         , {
-            responseType: 'blob' // 确保这里设置了 responseType
+            responseType: 'blob',
+            headers: shareToken ? { 'share-token': shareToken } : {},
         })
 }

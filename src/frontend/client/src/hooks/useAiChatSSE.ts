@@ -81,10 +81,16 @@ export interface SSESubmission {
 
 export default function useAiChatSSE(submission: SSESubmission | null) {
     const sseRef = useRef<any>(null);
+    // Set by `abort()` (outside this effect's closure) so the close watchdog
+    // below can tell a user-requested stop apart from a genuine stream drop.
+    const abortRequestedRef = useRef(false);
     const localize = useLocalize();
 
     useEffect(() => {
         if (!submission) return;
+
+        // Fresh stream — clear any stop flag left over from the previous turn.
+        abortRequestedRef.current = false;
 
         const {
             payload,
@@ -132,7 +138,7 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
 
         const sseUrl = submission.sseUrl || getSSEUrl();
         const sse = new SSE(sseUrl, {
-            payload: JSON.stringify(payload),
+            payload: JSON.stringify({ ...payload, client_capabilities: ["assistant_text_v1"] }),
             headers: { "Content-Type": "application/json" },
         });
         sseRef.current = sse;
@@ -147,11 +153,31 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
             onEnd();
         };
 
+        // `finalised` tracks whether the turn reached a terminal frame
+        // (`final`, a single-frame `agent_answer`, `agent_answer.end`, the task
+        // handoff, or a server-sent error/typed failure). `disposed` marks our
+        // own teardown (unmount / submission replaced), and
+        // `abortRequestedRef` a user stop — neither of those is a failure, so
+        // the close watchdog must stay quiet for them.
+        let finalised = false;
+        let disposed = false;
+
         sse.addEventListener("open", () => onStart());
 
         sse.addEventListener("readystatechange", (e: any) => {
             // sse.js exposes readyState: 0=connecting, 1=open, 2=closed.
-            if (e?.readyState === 2) safeEnd();
+            if (e?.readyState !== 2) return;
+            // A 200 response can drop mid-turn (worker restart, proxy timeout,
+            // server exception after the headers were already sent) without
+            // sse.js firing its `error` event: `_onStreamFailure` only covers
+            // non-2xx / network-level failures. Without this guard such a turn
+            // ended silently — blank bubble, no copy, input just unlocked.
+            // Report it once, then fall through to safeEnd() as usual.
+            if (!finalised && !disposed && !abortRequestedRef.current) {
+                finalised = true;
+                onError(localize("workstation.chat.connection_lost"));
+            }
+            safeEnd();
         });
 
         sse.addEventListener("message", (e: MessageEvent) => {
@@ -164,6 +190,11 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
                 // hand the SV/chat ids to the caller and let the readystatechange
                 // watchdog fire onEnd when the stream drops.
                 if (data.event === "linsight_task_handoff") {
+                    // The handoff IS this stream's terminal frame: the task
+                    // continues over the linsight WS and the stream closes
+                    // right after (title generation). Mark it finalised so the
+                    // close watchdog doesn't report a connection loss.
+                    finalised = true;
                     const handoff = data.data || {};
                     onTaskHandoff?.({
                         session_version_id: String(handoff.session_version_id ?? ""),
@@ -174,6 +205,7 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
 
                 // --- final: stream complete ---
                 if (data.final != null) {
+                    finalised = true;
                     onFinal(data);
                     safeEnd();
                     return;
@@ -300,6 +332,10 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
                                 }
                             }
                         } else if (type === "end") {
+                            // The answer is complete and persisted at this
+                            // point; a drop after it (before `final`) may cost
+                            // bookkeeping, not content — don't cry failure.
+                            finalised = true;
                             if (message_id) currentMessageId = String(message_id);
                             // `message.msg` on the end event is the final full
                             // string; prefer it to accumulated deltas.
@@ -322,6 +358,10 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
                             emitLegacy();
                             return;
                         } else if (type === "over") {
+                            // Single-frame complete answer (guardrail close-out
+                            // / blocked input): the stream closes right after,
+                            // so this frame is terminal too.
+                            finalised = true;
                             // A COMPLETE answer arriving as a single frame, with
                             // no `stream` phase before it. The workstation entry
                             // sends exactly one of these when the input hits the
@@ -430,6 +470,10 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
         });
 
         sse.addEventListener("error", (e: MessageEvent) => {
+            // A typed backend failure or a transport-level drop is terminal;
+            // the close watchdog below must not report a second, generic error
+            // when readyState flips to 2 right after this listener runs.
+            finalised = true;
             try {
                 const data = JSON.parse(e.data);
                 // Resolve the SSE error envelope ({ status_code, status_message,
@@ -459,11 +503,15 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
             safeEnd();
         });
 
-        sse.addEventListener("cancel", () => safeEnd());
+        sse.addEventListener("cancel", () => {
+            finalised = true;
+            safeEnd();
+        });
 
         sse.stream();
 
         return () => {
+            disposed = true;
             const isCancelled = sse.readyState <= 1;
             sse.close();
             if (isCancelled) sse.dispatchEvent(new Event("cancel"));
@@ -473,6 +521,10 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
 
     /** Abort the current SSE stream */
     const abort = () => {
+        // Mark before close(): sse.js's close() aborts the xhr, which flips
+        // readyState to 2 and runs the close watchdog — a user stop must not
+        // surface as a send failure.
+        abortRequestedRef.current = true;
         if (sseRef.current) {
             sseRef.current.close();
             sseRef.current = null;

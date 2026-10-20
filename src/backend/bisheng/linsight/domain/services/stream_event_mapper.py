@@ -33,6 +33,7 @@ from uuid import uuid4
 from loguru import logger
 
 from bisheng.common.utils.think_tags import strip_reasoning_tags
+from bisheng.linsight.domain.services.assistant_text_mapper import AssistantTextMapper
 from bisheng_langchain.linsight.event import (
     BaseEvent,
     ExecStep,
@@ -176,8 +177,23 @@ class StreamContext:
 class StreamEventMapper:
     """Translate ``(mode, chunk)`` tuples into ``BaseEvent`` instances."""
 
-    def __init__(self, svid: str):
+    def __init__(self, svid: str, text_protocol: bool = False):
+        self.text_mapper = AssistantTextMapper(svid, uuid4().hex[:8]) if text_protocol else None
         self.ctx = StreamContext(svid=svid)
+        self._member_namespaces: dict[str, dict] = {}
+        self._member_calls: dict[str, dict] = {}
+
+    @property
+    def last_answer_step_id(self):
+        return self.text_mapper.last_answer_step_id if self.text_mapper else None
+
+    def finish_text(self):
+        events = self.text_mapper.finish() if self.text_mapper else []
+        for event in events:
+            identity = self._member_namespaces.get((event.extra_info or {}).get("namespace", ""))
+            if identity:
+                event.extra_info = {**event.extra_info, **identity}
+        return events
 
     # -- public entry ------------------------------------------------------
 
@@ -198,7 +214,52 @@ class StreamEventMapper:
         if self.ctx.terminated:
             return []
 
+        # Internal compaction calls share the graph's message stream but are
+        # not user-facing reasoning, answers, or tool invocations.
+        if mode == "messages" and isinstance(chunk, (list, tuple)) and len(chunk) > 1:
+            metadata = chunk[1]
+            if isinstance(metadata, dict) and metadata.get("lc_source") == "summarization":
+                return []
+
         ns = self._namespace_str(namespace)
+        if mode == "custom":
+            if isinstance(chunk, dict) and chunk.get("type") == "background_subagent_end":
+                return self._handle_background_end(chunk)
+            if not isinstance(chunk, dict) or chunk.get("type") not in {"subagent_identity", "subagent_failure"}:
+                return []
+            identity = {key: value for key, value in chunk.items() if key != "type"}
+            self._member_calls[identity["invocation_id"]] = identity
+            if ns:
+                self._member_namespaces[ns] = identity
+                return []
+            if chunk["type"] == "subagent_identity":
+                # A resumed tool node has no fresh AI tool-call start message.
+                # Its trusted delegation identity reconstructs the open call so
+                # the eventual ToolMessage can close the same invocation.
+                self.ctx.open_calls.setdefault(
+                    identity["invocation_id"],
+                    _OpenCall(
+                        call_id=identity["invocation_id"],
+                        task_id=self.ctx.svid,
+                        name=identity["agent_name"],
+                        params={},
+                        step_type="subagent",
+                        call_reason=identity.get("delegate_goal", ""),
+                        namespace=None,
+                        delegate_goal=identity.get("delegate_goal", ""),
+                    ),
+                )
+            return [
+                ExecStep(
+                    task_id=self.ctx.svid,
+                    call_id=identity["invocation_id"],
+                    step_type="subagent",
+                    name=identity["agent_name"],
+                    status="end" if chunk["type"] == "subagent_failure" else "start",
+                    call_reason=identity.get("delegate_goal", ""),
+                    extra_info=identity,
+                )
+            ]
         try:
             if mode == "updates":
                 result = self._handle_updates(chunk, ns)
@@ -223,6 +284,13 @@ class StreamEventMapper:
         # a thinking ExecStep and must not reset their own segment.
         if not self._is_thinking_continuation(result):
             self.ctx.thinking_call_ids.pop(ns or "", None)
+        for event in result:
+            if isinstance(event, ExecStep):
+                identity = self._member_namespaces.get(ns or "") or self._member_calls.get(event.call_id)
+                if identity:
+                    event.extra_info = {**(event.extra_info or {}), **identity}
+                    if not ns and event.step_type == "subagent":
+                        event.name = identity["agent_name"]
         return result
 
     @staticmethod
@@ -275,6 +343,9 @@ class StreamEventMapper:
         for node_output in chunk.values():
             if not isinstance(node_output, dict):
                 continue
+            if self.text_mapper:
+                for message in node_output.get("messages", []):
+                    events.extend(self.text_mapper.message(message, ns))
             todos = node_output.get("todos")
             if todos is not None:
                 # design #1 §5.2(a): a subagent carries its OWN write_todos
@@ -445,6 +516,9 @@ class StreamEventMapper:
         enriched = self._reconcile_open_delegations()
 
         # Thinking stream: reasoning_content (DeepSeek-R1) or thinking blocks.
+        if self.text_mapper:
+            metadata = chunk[1] if isinstance(chunk, (list, tuple)) and len(chunk) > 1 else {}
+            enriched.extend(self.text_mapper.message(message, ns, metadata))
         thinking = self._extract_thinking(message)
         # A whitespace-only delta is the model's own line break and MUST survive:
         # dropping it split the segment (``normalize`` closes a segment on any
@@ -455,7 +529,7 @@ class StreamEventMapper:
         # fragment "未来展望14.". Only forward it while a segment is already OPEN,
         # so leading whitespace never mints an empty thinking row of its own.
         if thinking and (thinking.strip() or self._has_open_thinking(ns)):
-            return [*enriched, self._build_thinking_step(thinking, ns)]
+            enriched.append(self._build_thinking_step(thinking, ns))
 
         # Tool-call start frames live on AIMessage.tool_calls.
         tool_calls = getattr(message, "tool_calls", None)
@@ -633,8 +707,11 @@ class StreamEventMapper:
         return events
 
     def _handle_tool_end(self, message: Any, call_id: str, ns: str | None) -> list[BaseEvent]:
+        if getattr(message, "additional_kwargs", {}).get("background_job_id"):
+            # This is a launch acknowledgement, not the child's completion.
+            return []
         output = self._message_text(message)
-        payload = {"output": output}
+        payload = {"output": output, "outcome": getattr(message, "status", "success")}
 
         open_call = self.ctx.open_calls.pop(call_id, None)
         if open_call is None:
@@ -649,9 +726,30 @@ class StreamEventMapper:
         self.ctx.tool_arg_buffers.pop(call_id, None)
         return [self._build_end_step(open_call, payload)]
 
+    def _handle_background_end(self, chunk: dict[str, Any]) -> list[BaseEvent]:
+        call_id = chunk["call_id"]
+        payload = {"output": chunk["output"], "outcome": "success" if chunk["status"] == "completed" else "error"}
+        open_call = self.ctx.open_calls.pop(call_id, None)
+        if open_call is None:
+            self.ctx.orphan_ends[call_id] = payload
+            return []
+        self._enrich_delegation_from_buffer(open_call)
+        event = self._build_end_step(open_call, payload)
+        identity = self._member_calls.get(call_id, {})
+        event.extra_info = {
+            **event.extra_info,
+            **identity,
+            "job_id": chunk["job_id"],
+            "job_status": chunk["status"],
+            "elapsed_seconds": chunk["elapsed_seconds"],
+        }
+        event.name = identity.get("agent_name", event.name)
+        self.ctx.tool_arg_buffers.pop(call_id, None)
+        return [event]
+
     def _build_end_step(self, open_call: _OpenCall, payload: dict[str, Any]) -> ExecStep:
         output, truncated = _truncate(payload.get("output"))
-        extra_info: dict[str, Any] = {"truncated": truncated}
+        extra_info: dict[str, Any] = {"truncated": truncated, "outcome": payload.get("outcome", "success")}
         if open_call.delegate_goal is not None:
             extra_info["delegate_goal"] = open_call.delegate_goal
         if open_call.namespace:

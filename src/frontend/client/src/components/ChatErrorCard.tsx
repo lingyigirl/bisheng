@@ -34,6 +34,7 @@ interface ChatErrorCardProps {
 // error_type values that have their own localized copy; anything else (or a
 // missing type from an older backend) falls back to the generic `unknown` set.
 const KNOWN_TYPES = new Set([
+    'recovery_blocked',
     'content_filter',
     'quota_exhausted',
     'rate_limit',

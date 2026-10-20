@@ -98,3 +98,36 @@ async def test_batch_updates_run_under_bypass_tenant_filter(monkeypatch, patched
     assert flags["task"] is True
     assert flags["ids"] == ["sv-1"]  # the orphaned task was queued for termination
     assert is_tenant_filter_bypassed() is False
+
+
+async def test_harness_crash_notifies_own_tenant_stream_without_reexecuting(monkeypatch, patched_worker):
+    from bisheng.linsight.domain.services.event_replay import EventReplayService
+
+    orphan = SimpleNamespace(id="orphan", user_id=42, tenant_id=17, agent_config={"event_protocol": 2})
+    active = SimpleNamespace(id="active", user_id=43, tenant_id=18, agent_config={"event_protocol": 2})
+    legacy = SimpleNamespace(id="legacy", user_id=44, tenant_id=19, agent_config=None)
+    patched_worker.async_connection = object()
+    patched_worker.aget = AsyncMock(side_effect=[None, "live-node", None])
+    monkeypatch.setattr(_StubNodeManager, "is_node_alive", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        utils.LinsightSessionVersionDao,
+        "get_session_versions_by_status",
+        AsyncMock(return_value=[orphan, active, legacy]),
+    )
+    update = AsyncMock()
+    monkeypatch.setattr(utils.LinsightSessionVersionDao, "batch_update_session_versions_status", update)
+    monkeypatch.setattr(utils.LinsightExecuteTaskDao, "batch_update_status_by_session_version_id", AsyncMock())
+    published = []
+
+    async def append(replay, event, producer_id=None):
+        published.append((replay.key, event, producer_id))
+
+    monkeypatch.setattr(EventReplayService, "append", append)
+    await utils.check_and_terminate_incomplete_tasks("new-node")
+    assert update.await_args.kwargs["session_version_ids"] == ["orphan", "legacy"]
+    assert len(published) == 1
+    key, event, producer_id = published[0]
+    assert key == "linsight:replay:{17:orphan}:events"
+    assert event["event_type"] == "error_message"
+    assert producer_id == "worker-crash"
+    assert is_tenant_filter_bypassed() is False

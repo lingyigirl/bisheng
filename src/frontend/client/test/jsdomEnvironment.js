@@ -13,6 +13,9 @@
  * whole jest process runs without canvas, which is exactly the desired state
  * for unit tests (see also jest-canvas-mock in setupTests.js).
  */
+/* eslint-disable @typescript-eslint/no-require-imports -- jest testEnvironment
+ * modules are loaded as CommonJS (this file uses `module.exports` below);
+ * require() is the only module system the loader supports here. */
 'use strict';
 
 const Module = require('module');

@@ -126,7 +126,7 @@ class TestCreate:
         assert detail.enabled is True
         assert detail.source == "manual"
         # SKILL.md rendered with display-name metadata
-        text = service.store.read_text(TENANT, detail.name)
+        text = service.store.read_text(TENANT, detail.name, content_hash=FakeSkillDao.rows[detail.name].content_hash)
         assert "display-name: 季度财报分析" in text
         # owner tuple written best-effort
         service_module.PermissionService.authorize.assert_awaited_once()
@@ -160,7 +160,7 @@ class TestCreate:
         assert FakeSkillDao.rows["demo-skill"].size == sum(f.size for f in detail.files)
 
     async def test_zip_without_skill_md_rejected(self, service):
-        with pytest.raises(SkillValidationError, match="SKILL.md"):
+        with pytest.raises(SkillValidationError, match=r"SKILL\.md"):
             await service.create_from_upload(TENANT, USER, "x.zip", _zip_bytes({"readme.md": b"x"}))
 
     async def test_oversize_rejected(self, service):
@@ -204,6 +204,24 @@ class TestCreate:
 
 
 class TestQueries:
+    async def test_picker_excludes_missing_legacy_bundle_but_keeps_versioned_skill(self, service):
+        await service.create_from_form(TENANT, USER, _form())
+        await service.create_from_form(
+            TENANT, USER, _form(name="missing-legacy", display_name="Legacy", description="Legacy fixture")
+        )
+        FakeSkillDao.rows["missing-legacy"].content_hash = None
+        assert [skill.name for skill in await service.get_selectable()] == ["ji-du-cai-bao-fen-xi"]
+
+    async def test_picker_keeps_readable_legacy_bundle(self, service):
+        detail = await service.create_from_form(TENANT, USER, _form())
+        row = FakeSkillDao.rows[detail.name]
+        data = service.store.read_bytes(TENANT, detail.name, "SKILL.md", content_hash=row.content_hash)
+        legacy = service.store.skill_dir(TENANT, detail.name)
+        legacy.mkdir(parents=True)
+        (legacy / "SKILL.md").write_bytes(data)
+        row.content_hash = None
+        assert [skill.name for skill in await service.get_selectable()] == [detail.name]
+
     async def test_page_and_selectable(self, service):
         await service.create_from_form(TENANT, USER, _form())
         await service.create_from_form(
@@ -246,7 +264,9 @@ class TestUpdateDelete:
         )
         assert detail.display_name == "演示技能v2"
         assert {f.path for f in detail.files} == {SKILL_MD, "scripts/a.py"}
-        assert "# 新正文" in service.store.read_text(TENANT, "demo-skill")
+        assert "# 新正文" in service.store.read_text(
+            TENANT, "demo-skill", content_hash=FakeSkillDao.rows["demo-skill"].content_hash
+        )
 
     async def test_update_form_cannot_change_id(self, service):
         await service.create_from_form(TENANT, USER, _form())
@@ -297,7 +317,9 @@ class TestImportNameNormalization:
         assert detail.display_name == "Presentations"
         assert detail.normalized_from == "Presentations"
         # stored SKILL.md is rewritten so frontmatter name == bundle dir name
-        text = service.store.read_text(TENANT, "presentations")
+        text = service.store.read_text(
+            TENANT, "presentations", content_hash=FakeSkillDao.rows["presentations"].content_hash
+        )
         assert "name: presentations" in text
         assert "display-name: Presentations" in text
 
@@ -311,7 +333,7 @@ class TestImportNameNormalization:
     async def test_foreign_frontmatter_keys_survive_rewrite(self, service):
         md = b"---\nname: My-Skill\ndescription: demo\nlicense: Apache-2.0\nallowed-tools: Bash, Read\n---\n\nbody"
         await service.create_from_upload(TENANT, USER, "s.md", md)
-        text = service.store.read_text(TENANT, "my-skill")
+        text = service.store.read_text(TENANT, "my-skill", content_hash=FakeSkillDao.rows["my-skill"].content_hash)
         assert "license: Apache-2.0" in text
         assert "allowed-tools: Bash, Read" in text
 
@@ -326,7 +348,9 @@ class TestImportNameNormalization:
         )
         detail = await service.create_from_upload(TENANT, USER, "s.md", md)
         assert detail.display_name == "演示技能"
-        text = service.store.read_text(TENANT, "presentations")
+        text = service.store.read_text(
+            TENANT, "presentations", content_hash=FakeSkillDao.rows["presentations"].content_hash
+        )
         assert "display-name: 演示技能" in text
         assert "display-name: Presentations" not in text
 
@@ -334,7 +358,12 @@ class TestImportNameNormalization:
         raw = _md_bytes()
         detail = await service.create_from_upload(TENANT, USER, "demo-skill.md", raw)
         assert detail.normalized_from is None
-        assert service.store.read_text(TENANT, "demo-skill").encode() == raw
+        assert (
+            service.store.read_text(
+                TENANT, "demo-skill", content_hash=FakeSkillDao.rows["demo-skill"].content_hash
+            ).encode()
+            == raw
+        )
 
     async def test_unsalvageable_name_still_rejected(self, service):
         md = b"---\nname: '!!!'\ndescription: demo\n---\n\nbody"

@@ -23,6 +23,7 @@ from bisheng.linsight.domain.models.linsight_session_version import (
     SessionVersionStatusEnum,
 )
 from bisheng.utils import util
+from bisheng_langchain.gpts.tools.code_interpreter.base_executor import is_skipped_workspace_name
 
 
 # Get all manipulated files in a task
@@ -99,11 +100,25 @@ async def get_all_files_from_session(
 #   uploads/ — the user's own source files
 #   skills/  — skill bundles the platform copies in at task start
 #              (skill_provisioning.WORKSPACE_SKILLS_DIR)
+#   conversation_history/, large_tool_results/ — framework context offloads
 OUTPUT_ZONE = "output"
 SCRATCH_ZONE = "scratch"
 UPLOADS_ZONE = "uploads"
 SKILLS_ZONE = "skills"
-NON_DELIVERABLE_ZONES = frozenset({SCRATCH_ZONE, UPLOADS_ZONE, SKILLS_ZONE})
+NON_DELIVERABLE_ZONES = frozenset(
+    {SCRATCH_ZONE, UPLOADS_ZONE, SKILLS_ZONE, "conversation_history", "large_tool_results"}
+)
+
+
+def _is_skipped_workspace_path(path: str) -> bool:
+    """True when any path segment is a toolchain/cache dir (``node_modules`` …).
+
+    Mirrors the skip set the code-interpreter executors walk with, so the local
+    harvest and the sandbox walks agree on what task state is. These trees are
+    by-products, not deliverables: the 2026-10-14 docx/npm task spent ~14 min of
+    file-API calls crawling node_modules and then uploaded 470+ junk files.
+    """
+    return any(is_skipped_workspace_name(part) for part in path.replace("\\", "/").split("/"))
 
 
 def snapshot_file_paths(file_dir: str) -> set[str]:
@@ -116,7 +131,7 @@ def snapshot_file_paths(file_dir: str) -> set[str]:
     """
     if not file_dir or not os.path.exists(file_dir):
         return set()
-    return set(util.read_files_in_directory(file_dir))
+    return {path for path in util.read_files_in_directory(file_dir) if not _is_skipped_workspace_path(path)}
 
 
 def _zone_of(rel_path: str) -> str:
@@ -176,7 +191,7 @@ async def read_file_directory(file_dir: str) -> list[dict[str, Any]]:
     if not file_dir or not os.path.exists(file_dir):
         return []
 
-    files = util.read_files_in_directory(file_dir)
+    files = [path for path in util.read_files_in_directory(file_dir) if not _is_skipped_workspace_path(path)]
     file_details = []
     for file in files:
         file_md5 = await util.async_calculate_md5(file)
@@ -275,6 +290,7 @@ async def get_final_result_file(
             "file_path": file_info["file_path"],
             "file_md5": file_info["file_md5"],
             "file_id": file_info["file_id"],
+            "workspace_path": (file_info.get("rel_path") or "").replace("\\", "/"),
         }
         for file_info in select_deliverables(file_details, baseline_paths)
     ]
@@ -282,6 +298,16 @@ async def get_final_result_file(
     async def upload_file_to_minio(final_file_info: dict) -> dict | None:
         """Upload files toMinIOand returns file information"""
         try:
+            from pathlib import Path
+
+            from bisheng.linsight.domain.services.artifact_validation import validate_deliverable
+
+            local = Path(final_file_info["file_path"])
+            relative = final_file_info.get("workspace_path") or local.name
+            root = local
+            for _ in Path(relative).parts:
+                root = root.parent
+            final_file_info["validation"] = await validate_deliverable(str(local), str(root), session_model.id)
             # ASCII-only object key (file_id + ext) — non-ASCII keys break presigned
             # signatures on some S3-compatible backends (Huawei OBS → 403). Display
             # name stays on final_file_info["file_name"].
@@ -300,7 +326,13 @@ async def get_final_result_file(
 
     # Upload files toMinIO (Parallel Processing)
     if final_result_files:
-        upload_tasks = [upload_file_to_minio(final_file_info) for final_file_info in final_result_files]
+        slots = asyncio.Semaphore(2)
+
+        async def limited_upload(info):
+            async with slots:
+                return await upload_file_to_minio(info)
+
+        upload_tasks = [limited_upload(final_file_info) for final_file_info in final_result_files]
 
         upload_results = await asyncio.gather(*upload_tasks, return_exceptions=True)
 
@@ -334,8 +366,22 @@ FALLBACK_REPORT_NAME = "报告.md"
 # .md alone would miss the likeliest claim of all: steps 3c/3d make export_docx /
 # export_pdf the closing action, so "已导出 报告.docx" is exactly where a run that
 # ran out of turns stops.
-_DELIVERABLE_EXTS = (".md", ".markdown", ".html", ".htm", ".docx", ".pdf")
-_DELIVERABLE_EXT_RE = "(?:md|markdown|html?|docx|pdf)"
+_DELIVERABLE_EXTS = (
+    ".md",
+    ".markdown",
+    ".html",
+    ".htm",
+    ".docx",
+    ".pdf",
+    ".xlsx",
+    ".pptx",
+    ".csv",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+)
+_DELIVERABLE_EXT_RE = "(?:md|markdown|html?|docx|pdf|xlsx|pptx|csv|png|jpe?g|webp)"
 
 # Markdown link, captured as a PAIR: the visible text and the target. Only the
 # target carries the path, so only the target can decide the zone — see
@@ -525,6 +571,12 @@ async def check_and_terminate_incomplete_tasks(node_id: str) -> None:
             user_ids_to_rollback = set()
 
             for session in incomplete_tasks:
+                if (
+                    isinstance(getattr(session, "agent_config", None), dict)
+                    and session.agent_config.get("recovery_protocol") == 1
+                ):
+                    # Recovery-enabled executions are claimed by the periodic lease scanner.
+                    continue
                 session_id = session.id
 
                 # Check task ownership in Redis
@@ -569,6 +621,31 @@ async def check_and_terminate_incomplete_tasks(node_id: str) -> None:
                         LinsightExecuteTask.status != ExecuteTaskStatusEnum.FAILED,
                     ),
                 )
+
+                # A database-only failure leaves existing subscribers running.
+                # Publish once to each private Harness stream without replaying tools.
+                from bisheng.linsight.domain.services.event_replay import EventReplayService
+
+                terminated_ids = set(tasks_to_terminate)
+                for session in incomplete_tasks:
+                    config = getattr(session, "agent_config", None) or {}
+                    if session.id not in terminated_ids or config.get("event_protocol") != 2:
+                        continue
+                    try:
+                        await EventReplayService(redis_client.async_connection, session.tenant_id, session.id).append(
+                            {
+                                "event_type": "error_message",
+                                "data": {
+                                    "error": "Worker node crash detected",
+                                    "error_type": "unknown",
+                                    "detail": "Worker node crash detected; task was not automatically replayed.",
+                                },
+                            },
+                            producer_id="worker-crash",
+                        )
+                    except Exception:
+                        # The database terminal state remains authoritative if Redis is unavailable.
+                        logger.exception("Failed to publish worker crash event for {}", session.id)
 
             logger.warning(f"Terminated {len(tasks_to_terminate)} incomplete tasks due to worker node crash.")
 

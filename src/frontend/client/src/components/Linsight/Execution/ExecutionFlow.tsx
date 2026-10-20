@@ -31,7 +31,7 @@ import { ResultPanel } from './ResultPanel';
 import { TaskPanel } from './TaskPanel';
 import { ChatErrorCard } from '~/components/ChatErrorCard';
 import { TaskStepRow, type ExecTask } from './TaskStepRow';
-import { ExecutionLiveContext } from './executionLive';
+import { ExecutionLiveContext, ExecutionTurnLiveContext } from './executionLive';
 import { findPendingUserInput, hasRenderableTimeline, isTaskRunning, isTaskStarted, splitSessionPseudoTask } from './stepUtils';
 import type { ExecStepEventData } from './stepUtils';
 
@@ -54,7 +54,7 @@ export function ExecutionFlow({ versionId, conversationId, isSharePage = false, 
     const localize = useLocalize();
     const { getLinsight, continueConversation, updateLinsight } = useLinsightManager();
     // Mount the WS pump here (the legacy TaskFlow used to own it).
-    const { stop, sendInput } = useLinsightWebSocket(versionId);
+    const { stop, sendInput } = useLinsightWebSocket(isSharePage ? "" : versionId);
 
     const linsight = getLinsight(versionId);
     // On reload, session-level steps come back inside the "执行准备" pseudo-task;
@@ -143,6 +143,7 @@ export function ExecutionFlow({ versionId, conversationId, isSharePage = false, 
         // has started yet (!realTasks.length). Once the first task appears the
         // planning is done, so the planning thinking collapses to "已深度思考" instead
         // of lingering as a pulsing "正在深度思考" concurrent with the running task.
+        <ExecutionTurnLiveContext.Provider value={running && !pendingInput}>
         <ExecutionLiveContext.Provider value={running && !pendingInput && !realTasks.length}>
         <div className="relative flex h-full w-full flex-col">
             {/* Soft top fade: content dissolves into the page as it scrolls under the
@@ -189,7 +190,7 @@ export function ExecutionFlow({ versionId, conversationId, isSharePage = false, 
                             {/* session-level steps (task_id == svid pseudo task, e.g.
                                 planning-stage tools); an answered clarify renders as an
                                 inline IntentRow at its chronological position here. */}
-                            <ExecutionTimeline history={sessionSteps} />
+                            <ExecutionTimeline finalAnswerStepId={linsight?.output_result?.answer_step_id} history={sessionSteps} />
 
                             {/* planning breathing row */}
                             {planning && <BreathingRow state="planning" />}
@@ -266,7 +267,7 @@ export function ExecutionFlow({ versionId, conversationId, isSharePage = false, 
                     Continuation now happens in the daily /c chat; the standalone
                     linsight viewer only displays ("make same style" removed, F035). */}
                 {!isSharePage && !readOnly && (
-                    <TaskModeInput
+                    <TaskModeInput agentConfig={linsight?.agent_config}
                         // The landing route URL is rewritten via history.replaceState after the
                         // first submit, so react-router's `conversationId` stays 'new'. Treat
                         // 'new'/empty as "no real id yet" and fall back to the live session_id,
@@ -313,5 +314,6 @@ export function ExecutionFlow({ versionId, conversationId, isSharePage = false, 
             />
         </div>
         </ExecutionLiveContext.Provider>
+        </ExecutionTurnLiveContext.Provider>
     );
 }

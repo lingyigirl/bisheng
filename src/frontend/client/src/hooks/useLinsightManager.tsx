@@ -239,6 +239,8 @@ export const useLinsightSubmit = (versionId, setVersionId, setVersions) => {
                     // F035 Track H: user-picked skill names (forward-compatible —
                     // the submit schema does not consume this field yet)
                     skills: linsightSubmission.skills || [],
+                    agent_config: linsightSubmission.agent_config,
+                    client_capabilities: ["assistant_text_v1"],
                     // F035: continue an existing session (follow-up round) so the
                     // backend appends a version instead of creating a new 会话.
                     session_id: linsightSubmission.sessionId || null,
@@ -462,7 +464,7 @@ export function mapSessionVersionStatus(status: string, executeFeedback?: string
     }
 }
 
-function buildTaskTree(tasks) {
+export function buildTaskTree(tasks) {
     let hasTerminated = false
     const newTasks = tasks.map(task => {
         const taskTree = {

@@ -18,6 +18,8 @@
 
 [`../features/`](../features/) — 按 `v{X.Y.Z}/{NNN}-{name}/` 组织,每个功能含 `spec.md` / `design.md` / `tasks.md`(及按需 `testcases.md`,如 F025)。模板见 [`../features/_templates/`](../features/_templates/)。
 
+[Harness 开发与验收索引](../features/v2.7.0/074-harness-subagents/README.md) — F074 当前结论、最新测试、恢复与 Skill 运维、历史报告，以及本地环境停机交接。
+
 ## 对外材料(非开发向)
 
 | 文档 | 内容 |

@@ -25,7 +25,14 @@ import pytest
 
 from bisheng.linsight.domain.services.agent_factory import _build_linsight_system_prompt
 
-PLACEHOLDERS = ("__SKILL_EXEC_LINE__", "__SKILL_DELIVERABLE_LINE__", "__KB_EXEC_LINE__", "__KB_DELEGATE_LINE__")
+PLACEHOLDERS = (
+    "__SKILL_EXEC_LINE__",
+    "__SKILL_DELIVERABLE_LINE__",
+    "__KB_EXEC_LINE__",
+    "__KB_DELEGATE_LINE__",
+    "__SANDBOX_DISCIPLINE_LINE__",
+    "__CODE_INTERPRETER_PARAM_LINE__",
+)
 
 
 @pytest.mark.parametrize("has_kb", [True, False])
@@ -91,9 +98,12 @@ def test_export_fallback_stays_allowed_without_a_code_executor(has_kb):
 
 @pytest.mark.parametrize("has_kb", [True, False])
 @pytest.mark.parametrize("skills_present", [True, False])
-def test_no_template_placeholder_survives(has_kb, skills_present):
+@pytest.mark.parametrize("has_code_interpreter", [True, False])
+def test_no_template_placeholder_survives(has_kb, skills_present, has_code_interpreter):
     """A stale placeholder would ship raw ``__SKILL_EXEC_LINE__`` to the model."""
-    prompt = _build_linsight_system_prompt(has_kb, skills_present=skills_present)
+    prompt = _build_linsight_system_prompt(
+        has_kb, skills_present=skills_present, has_code_interpreter=has_code_interpreter
+    )
     for token in PLACEHOLDERS:
         assert token not in prompt
 

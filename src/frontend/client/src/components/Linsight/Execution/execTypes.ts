@@ -19,7 +19,7 @@
  *   decided purely by the set of distinct subgraph namespaces.
  */
 
-export type ExecStepType = 'tool' | 'thinking' | 'knowledge' | 'subagent' | 'ui_card' | 'call_user_input';
+export type ExecStepType = 'assistant' | 'tool' | 'thinking' | 'knowledge' | 'subagent' | 'ui_card' | 'call_user_input';
 
 /** Raw `task_execute_step.data` frame (contract C1). */
 export interface ExecStepEventData {
@@ -35,6 +35,8 @@ export interface ExecStepEventData {
     extra_info?: Record<string, any> | null;
     /** Second-level int timestamp stamped on every ExecStep (BaseEvent.timestamp). */
     timestamp?: number;
+    /** First delta timestamp retained by lossless snapshot compaction. */
+    started_at?: number;
     /** Locally stamped by the clarify flow (legacy contract kept for Sop view). */
     is_completed?: boolean;
     user_input?: string;

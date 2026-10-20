@@ -17,6 +17,7 @@ from bisheng.api.v1.schemas import UnifiedResponseModel, resp_200
 from bisheng.common.chat.utils import get_input_snapshot
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
 from bisheng.common.dependencies.user_deps import UserPayload
+from bisheng.common.errcode.base import BaseErrorCode
 from bisheng.common.errcode.http_error import NotFoundError, UnAuthorizedError
 from bisheng.common.errcode.linsight import (
     FileUploadError,
@@ -54,9 +55,8 @@ from bisheng.linsight.domain.services.state_message_manager import (
     MessageEventType,
 )
 from bisheng.linsight.domain.services.workbench_impl import LinsightWorkbenchImpl
-from bisheng.share_link.api.dependencies import header_share_token_parser
+from bisheng.share_link.dependencies import header_share_token_parser
 from bisheng.share_link.domain.models.share_link import ShareLink
-from bisheng.utils import util
 
 router = APIRouter()
 
@@ -201,6 +201,9 @@ async def submit_linsight_workbench(
                 "message_session": message_session_model.model_dump(),
                 "linsight_session_version": linsight_session_version_model.model_dump(),
             }
+        except BaseErrorCode as e:
+            yield e.to_sse_event_instance()
+            return
         except Exception as e:
             yield LinsightQuestionError(exception=e).to_sse_event_instance()
             return
@@ -318,11 +321,16 @@ async def continue_conversation(
 
     await MessageSessionDao.touch_session(session_version_model.session_id)
 
-    # Flip back to IN_PROGRESS BEFORE enqueue so the worker's pre-flight
-    # non-terminal guard accepts the continue item.
-    await LinsightSessionVersionDao.batch_update_session_versions_status(
-        [session_version_id], SessionVersionStatusEnum.IN_PROGRESS
-    )
+    from bisheng.linsight.domain.services.recovery_service import RecoveryService
+
+    recoverable = RecoveryService.enabled(session_version_model)
+    if recoverable:
+        if not await RecoveryService().prepare_continue(session_version_id, question):
+            return LinsightSessionVersionRunningError.return_resp()
+    else:
+        await LinsightSessionVersionDao.batch_update_session_versions_status(
+            [session_version_id], SessionVersionStatusEnum.IN_PROGRESS
+        )
 
     try:
         from bisheng.linsight.worker import build_linsight_queue, encode_queue_item
@@ -332,6 +340,9 @@ async def continue_conversation(
         await queue.put(data=encode_queue_item(session_version_id, continue_question=question))
     except Exception as e:
         logger.error(f"Failed to continue the Ideas conversation: {e!s}")
+        if recoverable:
+            # The committed input remains discoverable by the recovery scanner.
+            return resp_200(data=True, message="Follow-up turn accepted for recovery scheduling")
         # Roll back the status flip so the conversation isn't stuck IN_PROGRESS.
         await LinsightSessionVersionDao.batch_update_session_versions_status(
             [session_version_id], SessionVersionStatusEnum.COMPLETED
@@ -466,6 +477,12 @@ async def terminate_execute(
 
     state_message_manager = LinsightStateMessageManager(session_version_id=linsight_session_version_id)
 
+    from bisheng.linsight.domain.services.recovery_service import RecoveryService
+
+    if RecoveryService.enabled(session_version_model):
+        session_version_model = await RecoveryService().terminate(session_version_model.id)
+        if session_version_model.status != SessionVersionStatusEnum.TERMINATED:
+            return InvalidOperationError.return_resp()
     await state_message_manager.set_session_version_info(session_version_model)
 
     # Persist the bot task turn so the terminated state survives a refresh. A task
@@ -553,6 +570,14 @@ async def get_linsight_session_version_list(
     # rate through the shared /liked endpoint and re-highlight on reload (same as
     # the in-conversation task turn).
     version_dumps = [model.model_dump() for model in linsight_session_version_models]
+    for version in version_dumps:
+        if version.get("agent_config") and version.get("user_id") != login_user.user_id:
+            version["agent_config"] = {
+                "subagents": [
+                    {"id": member["id"], "name": member["name"], "description": member["description"]}
+                    for member in version["agent_config"]["subagents"]
+                ]
+            }
     # ChatMessage is tenant-aware too — without the same widening, a cross-tenant
     # share recipient silently loses the like/dislike state.
     with bypass_tenant_filter_if(share_link is not None):
@@ -610,6 +635,7 @@ async def get_execute_task_detail(
 async def task_message_stream(
     websocket: WebSocket,
     session_version_id: str = Query(..., description="Inspiration Conversation VersionID"),
+    after: str | None = Query(None),
     login_user: UserPayload = Depends(UserPayload.get_login_user_from_ws),
 ):
     """
@@ -621,6 +647,29 @@ async def task_message_stream(
     """
     start_time = time.time()
     try:
+        from bisheng.linsight.domain.services.agent_config_service import AgentConfigService
+        from bisheng.linsight.domain.services.event_replay import EventReplayService
+        from bisheng.linsight.domain.services.replay_stream import stream_replay
+
+        version = await AgentConfigService().owned_task(session_version_id, login_user)
+        if version.agent_config:
+            redis = await get_redis_client()
+
+            async def is_terminal():
+                current = await AgentConfigService().owned_task(session_version_id, login_user)
+                return current.status in {
+                    SessionVersionStatusEnum.COMPLETED,
+                    SessionVersionStatusEnum.FAILED,
+                    SessionVersionStatusEnum.TERMINATED,
+                }
+
+            await stream_replay(
+                websocket,
+                EventReplayService(redis.async_connection, version.tenant_id, version.id),
+                after,
+                is_terminal=is_terminal,
+            )
+            return
         message_handler = MessageStreamHandle(websocket=websocket, session_version_id=session_version_id)
 
         await message_handler.connect()
@@ -728,6 +777,7 @@ async def download_md_to_pdf_or_docx(
     file_info: DownloadFilesSchema = Body(..., description="File information"),
     to_type: Literal["pdf", "docx"] = Body(..., description="the target file type of the conversion,pdfORdocx"),
     login_user: UserPayload = Depends(UserPayload.get_login_user),
+    share_link: Union["ShareLink", None] = Depends(header_share_token_parser),
 ):
     """
     InspirationmdTransferpdf or docx Mengunduh
@@ -737,27 +787,14 @@ async def download_md_to_pdf_or_docx(
     :return:
     """
     try:
-        # Call the implementation class to process the file download
-        file_name, file_bytes = await LinsightWorkbenchImpl.download_file(file_info)
+        from bisheng.linsight.domain.services.report_export import ReportExportService
 
-        md_str = file_bytes.decode("utf-8")
-
-        # Filename Removal Extension
-        file_name = os.path.splitext(file_name)[0]
-
-        if to_type == "pdf":
-            from bisheng.common.utils.markdown_cmpnt.md_to_pdf import md_to_pdf_bytes
-
-            converted_bytes = await util.sync_func_to_async(md_to_pdf_bytes)(md_str)
-            file_name = f"{file_name}.pdf"
-            content_type = "application/pdf"
-        else:
-            from bisheng.common.utils.markdown_cmpnt.md_to_docx.markdocx import MarkDocx
-
-            mark_docx = MarkDocx()
-            converted_bytes, _ = await util.sync_func_to_async(mark_docx)(md_str)
-            file_name = f"{file_name}.docx"
-            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        file_name, converted_bytes, _ = await ReportExportService().save_as(file_info, to_type, login_user, share_link)
+        content_type = (
+            "application/pdf"
+            if to_type == "pdf"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
         # Convert to unicode String
         file_name = parse.quote(file_name)
         return StreamingResponse(
@@ -765,9 +802,9 @@ async def download_md_to_pdf_or_docx(
             media_type=content_type,
             headers={"Content-Disposition": f"attachment; filename={file_name}"},
         )
-    except Exception as e:
-        logger.error(f"This content failed to load: {e!s}")
-        return ResourceDownloadError.return_resp(data=str(e))
+    except ValueError as exc:
+        logger.exception("Report export validation failed")
+        raise ResourceDownloadError(msg=str(exc)) from exc
 
 
 @router.get(
@@ -794,3 +831,56 @@ async def get_sop_showcase_result(
         return resp_200(data={"version_info": None, "execute_tasks": []})
     execute_task_models = await LinsightWorkbenchImpl.get_execute_task_detail(linsight_version_id)
     return resp_200(data={"version_info": version_info, "execute_tasks": execute_task_models})
+
+
+@router.get("/workbench/replay-snapshot")
+async def replay_snapshot(
+    session_version_id: str,
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+    compact: bool = False,
+):
+    from bisheng.linsight.domain.services.agent_config_service import AgentConfigService
+    from bisheng.linsight.domain.services.event_replay import EventReplayService
+
+    version = await AgentConfigService().owned_task(session_version_id, login_user)
+    if not version.agent_config:
+        return resp_200({"legacy": True})
+    redis = await get_redis_client()
+    result = await EventReplayService(redis.async_connection, version.tenant_id, version.id).snapshot(compact=compact)
+    result["version"] = version.model_dump()
+    result["terminal"] = version.status in {
+        SessionVersionStatusEnum.COMPLETED,
+        SessionVersionStatusEnum.FAILED,
+        SessionVersionStatusEnum.TERMINATED,
+    }
+    if not result["complete_history"]:
+        result["execute_tasks"] = await LinsightWorkbenchImpl.get_execute_task_detail(version.id)
+    return resp_200(result)
+
+
+@router.get("/workbench/context-usage")
+async def context_usage(session_version_id: str, login_user: UserPayload = Depends(UserPayload.get_login_user)):
+    """F086: live context-usage snapshot of a task run.
+
+    Token counts come from the provider's REAL ``usage_metadata`` folded in by
+    the resilience middleware on every model call (main graph vs subagents kept
+    apart); the composition block is a character-ratio ESTIMATE for proportions.
+    An absent snapshot (still queued / no call yet / older than the 7-day TTL)
+    returns an empty object so the client simply shows nothing.
+    """
+    from bisheng.linsight.domain.services.agent_config_service import AgentConfigService
+    from bisheng.linsight.domain.services.context_usage import ContextUsageRecorder
+
+    version = await AgentConfigService().owned_task(session_version_id, login_user)
+    redis = await get_redis_client()
+    raw = await redis.aget(ContextUsageRecorder(version.id).key)
+    data = None
+    if raw:
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            data = None
+    if data is None and isinstance(version.output_result, dict):
+        # Fallback for any path that embeds the snapshot into the result.
+        data = version.output_result.get("context_usage")
+    return resp_200(data or {})

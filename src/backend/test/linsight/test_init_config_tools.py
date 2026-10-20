@@ -180,3 +180,55 @@ async def test_e2b_file_list_honours_autopush_ceiling(monkeypatch: pytest.Monkey
     assert "./uploads/huge.xlsx" not in pushed
     # LocalExecutor still reaches the big one through the shared directory.
     assert bound_row.extra["config"]["local"]["local_sync_path"] == str(tmp_path)
+
+
+async def test_code_interpreter_preserves_admin_group_configuration(monkeypatch, tmp_path):
+    import json
+
+    group_config = {"type": "e2b", "config": {"e2b": {"type": "official", "api_key": "test-key"}}}
+    group = SimpleNamespace(extra=json.dumps(group_config))
+    row = SimpleNamespace(id=CODE_TOOL_ID, type=9, tool_key="bisheng_code_interpreter", extra=None)
+    monkeypatch.setattr(GptsToolsDao, "aget_tool_by_tool_key", AsyncMock(return_value=row))
+    monkeypatch.setattr(GptsToolsDao, "aget_one_tool_type", AsyncMock(return_value=group))
+    initialize = AsyncMock(return_value=object())
+    monkeypatch.setattr(ToolExecutor, "init_by_tool_id", initialize)
+    await LinsightWorkbenchImpl._init_bisheng_code_tool([CODE_TOOL_ID], str(tmp_path), 42)
+    params = initialize.await_args.kwargs["tool"].extra
+    assert params["type"] == "e2b"
+    assert params["config"]["e2b"]["api_key"] == "test-key"
+    assert params["config"]["e2b"]["local_sync_path"] == str(tmp_path)
+    assert params["config"]["e2b"]["keep_sandbox"] is True
+    assert params["config"]["e2b"]["prewarm_sandbox"] is False
+    assert json.loads(group.extra) == group_config
+
+
+async def test_e2b_file_list_skips_toolchain_trees(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Toolchain trees never enter the E2B copy-in set — or any later walk.
+
+    2026-10-14 docx/npm incident: after ``npm install``, the executor's per-run
+    sandbox walk + local sync burned ~14 minutes of file-API calls on
+    node_modules, and completion harvested 470+ junk files. Pruning starts at
+    the task-start copy-in snapshot.
+    """
+    nm = tmp_path / "node_modules" / "pkg"
+    nm.mkdir(parents=True)
+    (nm / "index.js").write_bytes(b"x")
+    (tmp_path / "uploads").mkdir()
+    (tmp_path / "uploads" / "data.csv").write_bytes(b"a,b\n")
+
+    monkeypatch.setattr(GptsToolsDao, "aget_tool_by_tool_key", AsyncMock(return_value=_fake_code_tool_row()))
+    init_one = AsyncMock(return_value=object())
+    monkeypatch.setattr(ToolExecutor, "init_by_tool_id", init_one)
+    monkeypatch.setattr(ToolExecutor, "init_by_tool_ids", AsyncMock(return_value=[]))
+
+    await LinsightWorkbenchImpl.init_linsight_config_tools(
+        session_version=_session_with_tools([CODE_TOOL_ID]),
+        llm=object(),
+        need_upload=True,
+        file_dir=str(tmp_path),
+    )
+
+    bound_row = init_one.await_args.kwargs["tool"]
+    pushed = {entry.path for entry in bound_row.extra["config"]["e2b"]["file_list"]}
+    assert "./uploads/data.csv" in pushed
+    assert not any("node_modules" in path for path in pushed)

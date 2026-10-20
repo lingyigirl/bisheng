@@ -73,6 +73,40 @@ uv run --frozen --no-sync uvicorn bisheng.main:app --host 0.0.0.0 --port 7860 --
 
 ## 2. 启动命令
 
+### 2.1 一键启动（推荐）
+
+仓库提供了 `scripts/frontend.cmd`，与后端 `scripts/backend.cmd` 同一套约定：
+后台启动、stdout + stderr 合并写入 `.run\logs\<name>.log`、PID 记录在 `.run\pids\<name>.pid`，
+**重复执行 = 全部重启**（会先清理上一轮，包括手工 `pnpm dev` 起来的实例）。
+
+```powershell
+.\scripts\frontend.cmd
+```
+
+| 命令 | 作用 |
+|---|---|
+| `.\scripts\frontend.cmd` | 重启 client + platform |
+| `.\scripts\frontend.cmd -Status` | 查看状态（PID + 端口） |
+| `.\scripts\frontend.cmd -Stop` | 停止全部 dev server |
+| `.\scripts\frontend.cmd -Logs client -Follow` | 跟踪 client 日志 |
+| `.\scripts\frontend.cmd -Only client` | 只启动一个（`client` / `platform` / `ui`） |
+| `.\scripts\frontend.cmd -Only ui` | 只启动文档站（`ui` 不在默认集合里） |
+| `.\scripts\frontend.cmd -DryRun` | 只打印将要执行的命令 |
+
+**说明**：
+
+- 脚本通过 `corepack pnpm` 调用，遵循根 `package.json` 的 `packageManager`（9.15.9）。
+  本机 PATH 上独立安装的 `pnpm` shim 会尝试联网下载 pnpm 12.11.2（公司 npm 代理已失效），
+  不要直接依赖它；脚本已规避。
+- 就绪判据：client `http://127.0.0.1:4001/workspace/`、platform `http://127.0.0.1:3001/` 返回 200。
+  超时默认 300 秒（首次启动要先跑 locales 构建，明显更慢）。
+- 后端 `:7860` 不可达时**只告警、不中止**：dev server 能正常启动，但页面里的 `/api` 请求会 502。
+  加 `-SkipBackendCheck` 可跳过该检查。
+- 两个 dev server 的启动日志在 `.run\logs\client.log` / `.run\logs\platform.log`，
+  启动失败时先看这两个文件。
+
+### 2.2 手工启动（脚本内部执行的就是这两条）
+
 两个 app 都在 **workspace 根 `src/frontend/`** 下用根 `package.json` 的脚本启动：
 
 ```bash
@@ -247,4 +281,5 @@ PY
 
 | 日期 | 变更 |
 |---|---|
+| 2026-10-19 | 新增一键启动脚本 `scripts/frontend.cmd`（§2.1）：后台启动 client + platform、PID/日志落在 `.run\`、支持 `-Stop/-Status/-Logs/-Only/-DryRun`；同时修复 `-Status` 读取 PID 文件时的空路径 bug |
 | 2026-10-14 | 首次编写。修正 §3.3 的两个 MinIO 代理目标（`127.0.0.1:9100` → `http://172.19.70.108:9000/`）。实测通过：后端 `/health` 200、两个前端页面 200、两条代理链路 200、经 `:4001` 与 `:3001` 代理的 MinIO 预签名 URL 校验通过（真实对象 200 且字节一致，不存在对象返回 `NoSuchKey` 而非 `SignatureDoesNotMatch`） |

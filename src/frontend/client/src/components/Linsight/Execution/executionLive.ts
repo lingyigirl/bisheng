@@ -19,3 +19,24 @@ export const ExecutionLiveContext = createContext(true);
 
 /** True while the surrounding execution turn is still live (status Running). */
 export const useExecutionLive = (): boolean => useContext(ExecutionLiveContext);
+
+/**
+ * ExecutionTurnLiveContext — TURN-level liveness for subagent cards.
+ *
+ * Separate from ExecutionLiveContext on purpose. That flag doubles as the
+ * "planning phase is over" signal (false once the task list exists), which is
+ * correct for collapsing the session-level thinking groups but wrong for a
+ * subagent card: a delegation step routinely streams in the session-level
+ * timeline while tasks already exist, so gating the card on the planning flag
+ * rendered a RUNNING subagent as "已停止 · Ns" (reported 2026-10-14, again
+ * 2026-10-15 with a live 资料研究员). Cards read THIS context instead: true
+ * while the turn is running and not parked on ask_user; a historical round and
+ * a finished task re-provide false so a dangling step frame still collapses to
+ * "已停止".
+ *
+ * Default = true so an unwrapped render preserves the raw step.running behavior.
+ */
+export const ExecutionTurnLiveContext = createContext(true);
+
+/** True while the surrounding turn (or task row) is still actually running. */
+export const useExecutionTurnLive = (): boolean => useContext(ExecutionTurnLiveContext);

@@ -1,3 +1,4 @@
+import type { AgentConfig } from "~/types/harness";
 /**
  * Core chat state hook — manages messages, submission, and SSE lifecycle.
  * Uses useState/useRef for local state, Recoil only for shared atoms (chatModel, kbs, searchType).
@@ -203,7 +204,7 @@ export default function useAiChat(initialConversationId: string = "new", isLings
 
     // --- Send a message ---
     const sendMessage = useCallback(
-        (text: string, files?: any[] | null, opts?: { taskMode?: boolean }) => {
+        (text: string, files?: any[] | null, opts?: { taskMode?: boolean; agentConfig?: AgentConfig }) => {
             if (!text.trim() || isStreaming) return;
             const taskMode = !!opts?.taskMode;
 
@@ -309,6 +310,7 @@ export default function useAiChat(initialConversationId: string = "new", isLings
                 // F035 Track J (TJ-6): route this turn to the linsight task kernel
                 // via the SAME unified entry. Backend replies with a handoff event.
                 task_mode: taskMode,
+                agent_config: taskMode ? opts?.agentConfig : undefined,
                 // F035 Track H: send the picked skill names on task-mode turns so
                 // the backend materializes exactly those (empty = none). Omitted
                 // outside task mode (the daily chain ignores it).

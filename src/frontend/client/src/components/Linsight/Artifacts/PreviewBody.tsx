@@ -160,7 +160,10 @@ interface PreviewBodyProps {
 export function PreviewBody({ file, versionId, fileList, onArtifactPreview }: PreviewBodyProps) {
     const localize = useLocalize();
     const { showToast } = useToastContext();
-    const { loading, error, text, imageUrl, resolvedUrl } = usePreviewSource(file, versionId);
+    // The workspace panel aggregates every task turn; a file carrying its own
+    // versionId must resolve against THAT session version, not the panel's.
+    const previewVersionId = file.versionId || versionId;
+    const { loading, error, text, imageUrl, resolvedUrl } = usePreviewSource(file, previewVersionId);
     const kind = getArtifactPreviewKind(file);
     // The rendered markdown container — MarkdownOutline reads its headings back
     // out of the DOM (rehype-slug has already stamped the anchor ids).
@@ -180,12 +183,13 @@ export function PreviewBody({ file, versionId, fileList, onArtifactPreview }: Pr
     const imageUrlCacheRef = useRef<Map<string, string>>(new Map());
     const resolveImageSrc = useCallback(async (src: string): Promise<string | null> => {
         if (!src || isAbsoluteImageSrc(src)) return null;
-        const vid = versionIdRef.current;
+        const entry = matchArtifactByRelPath(fileListRef.current, src);
+        if (!entry) return null;
+        // Resolve the entry against its OWN round's version when it has one.
+        const vid = entry.versionId || versionIdRef.current;
         const key = `${vid}::${src}`;
         const hit = imageUrlCacheRef.current.get(key);
         if (hit) return hit;
-        const entry = matchArtifactByRelPath(fileListRef.current, src);
-        if (!entry) return null;
         try {
             const url = await resolveArtifactUrl(entry.file_url, vid);
             imageUrlCacheRef.current.set(key, url);
@@ -216,7 +220,7 @@ export function PreviewBody({ file, versionId, fileList, onArtifactPreview }: Pr
 
     const handleDownloadToView = async () => {
         try {
-            await downloadArtifactFile(file, versionId);
+            await downloadArtifactFile(file, previewVersionId);
         } catch (e) {
             console.error('artifact download failed:', e);
             showToast?.({ message: localize('com_linsight_download_failed'), severity: NotificationSeverity.ERROR });

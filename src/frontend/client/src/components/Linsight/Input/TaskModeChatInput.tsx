@@ -1,3 +1,4 @@
+import type { AgentConfig } from "~/types/harness";
 /**
  * F035 Track H: task-mode landing input.
  *
@@ -77,7 +78,7 @@ export function TaskModeChatInput({ conversationId = 'new' }: TaskModeChatInputP
     }, [bsConfig, setContext]);
 
     const handleSend = useCallback(
-        (text: string, files?: any[] | null) => {
+        (text: string, files?: any[] | null, agentConfig?: AgentConfig) => {
             const trimmed = text.trim();
             const fileList = files || [];
             if (!trimmed && !fileList.length) return;
@@ -140,6 +141,7 @@ export function TaskModeChatInput({ conversationId = 'new' }: TaskModeChatInputP
                 // Model selector value rides along with the submission (F035).
                 model,
                 skills: skills.map((s) => s.name),
+                agent_config: agentConfig,
                 enableWebSearch: false,
                 // A knowledge space on its own is still "knowledge in play"; the
                 // org tier is the one part that is a state, not an entry.

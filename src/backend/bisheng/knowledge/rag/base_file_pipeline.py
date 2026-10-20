@@ -156,10 +156,7 @@ class BaseFilePipeline(BasePipeline):
     def _init_excel_loader(self) -> BaseBishengLoader:
         return ExcelLoader(
             **self._get_loader_common_params(),
-            header_rows=[
-                self.file_split_rule.excel_rule.header_start_row,
-                self.file_split_rule.excel_rule.header_end_row,
-            ],
+            header_rows=self._excel_header_indices(),
             data_rows=self.file_split_rule.excel_rule.slice_length,
             append_header=self.file_split_rule.excel_rule.append_header,
         )
@@ -198,13 +195,16 @@ class BaseFilePipeline(BasePipeline):
         return XinChuangFormatterLoader(
             **self._get_loader_common_params(),
             retain_images=self.file_split_rule.retain_images == 1,
-            header_rows=[
-                self.file_split_rule.excel_rule.header_start_row,
-                self.file_split_rule.excel_rule.header_end_row,
-            ],
+            header_rows=self._excel_header_indices(),
             data_rows=self.file_split_rule.excel_rule.slice_length,
             append_header=self.file_split_rule.excel_rule.append_header,
         )
+
+    def _excel_header_indices(self) -> list[int]:
+        # API/UI row numbers are one-based; both loaders consume zero-based
+        # inclusive indices. Keep conversion at this boundary, once for both.
+        rule = self.file_split_rule.excel_rule
+        return [max(0, (row or 1) - 1) for row in (rule.header_start_row, rule.header_end_row)]
 
     def _build_pdf_loader(self, file_path: str, file_extension: str) -> BaseBishengLoader:
         """Select and build the PDF loader for ``file_path`` (single source of truth).

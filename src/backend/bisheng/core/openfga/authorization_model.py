@@ -1,8 +1,9 @@
 """Static OpenFGA authorization model for BiSheng v2.5.1.
 
-Defines 18 types: user, system, tenant, department, user_group,
+Defines 19 types: user, system, tenant, department, user_group,
 knowledge_space, knowledge_library, folder, knowledge_file, channel, workflow,
-assistant, tool, dashboard, llm_server, llm_model, db_datasource, managed_agent.
+assistant, tool, dashboard, llm_server, llm_model, db_datasource, managed_agent,
+linsight_skill.
 
 Permission pyramid: owner > manager(can_manage) > editor(can_edit) > viewer(can_read)
 can_delete: owner (top-level) or owner|can_manage from parent (hierarchical)
@@ -38,14 +39,15 @@ import copy
 # v2.0.2 — user_group#admin now implies user_group#member and can manage
 # legacy groupresource-managed resources.
 # v2.0.3 — db_datasource resource type added (F061).
-# v2.0.4 — managed_agent resource type added (F078).
+# v2.0.4 — managed_agent (F078) + tenant-local linsight_skill added on separate lines.
+# v2.0.5 — both resource types merged into one DSL.
 #
 # The version is informational and is printed by the one-off migration scripts.
 # A running instance does NOT reload on this string: OpenFGA models are
 # immutable per store, and FGAManager keeps the model_id it resolved at startup
-# (or adopts the newest existing model). Existing stores therefore need
-# scripts/migrate_fga_add_<feature>_type.py to write the new model once.
-MODEL_VERSION = "v2.0.4"
+# (or adopts the newest existing model). Existing stores therefore need an
+# explicit migration script to write the new model once.
+MODEL_VERSION = "v2.0.5"
 
 
 def _user_types():
@@ -59,7 +61,11 @@ def _user_types():
 
 
 def _standard_resource_type(
-    type_name: str, *, has_parent: bool = False, parent_types: list = None, viewer_includes_tenant_shared: bool = True
+    type_name: str,
+    *,
+    has_parent: bool = False,
+    parent_types: list | None = None,
+    viewer_includes_tenant_shared: bool = True,
 ) -> dict:
     """Build a standard resource type with owner/manager/editor/viewer pyramid + can_delete.
 
@@ -317,10 +323,12 @@ AUTHORIZATION_MODEL: dict = {
         # (spec AC-43). No parent: datasources are not nested under knowledge
         # spaces and carry no department-ownership semantics (spec AC-47).
         _standard_resource_type("db_datasource"),
-        # F078 (v2.0.4): a managed agent (native projection or third-party) is
+        # F078 (v2.0.5): a managed agent (native projection or third-party) is
         # a tenant-scoped resource with the standard owner/manager/editor/
         # viewer pyramid. No parent: registry entries are not nested.
         _standard_resource_type("managed_agent"),
+        # Skills remain tenant-local; no cross-tenant shared_with relation.
+        _standard_resource_type("linsight_skill", viewer_includes_tenant_shared=False),
     ],
 }
 

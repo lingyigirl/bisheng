@@ -7,24 +7,65 @@ export async function getOperatorsApi(): Promise<[]> {
     return await axios.get('/api/v1/audit/operators')
 }
 
-// 分页获取审计列表
-export async function getLogsApi({ page, pageSize, userIds, groupId = '', start, end, moduleId = '', action = '' }: {
-    page: number,
-    pageSize: number,
+// /api/v1/audit 返回的审计行（兼容 legacy 字段与 v2 结构化字段）。
+export interface AuditLogRecord {
+    id?: string
+    operator_id?: number
+    operator_name?: string | null
+    create_time?: string | null
+    system_id?: string | null
+    event_type?: string | null
+    object_type?: string | null
+    object_name?: string | null
+    ip_address?: string | null
+    note?: string | null
+    action?: string | null
+    target_type?: string | null
+    target_id?: string | null
+    [key: string]: unknown
+}
+
+type AuditLogsQuery = {
     userIds?: number[],
     groupId?: string,
     start?: string,
     end?: string,
     moduleId?: string,
     action?: string
-}): Promise<{ data: any[], total: number }> {
+}
+
+const buildAuditLogsUrl = ({ page, pageSize, userIds, groupId = '', start, end, moduleId = '', action = '' }: AuditLogsQuery & {
+    page: number,
+    pageSize: number
+}): string => {
     const uids = userIds?.reduce((pre, val) => `${pre}&operator_ids=${val}`, '') || ''
     const startStr = start ? `&start_time=${start}` : ''
     const endStr = end ? `&end_time=${end}` : ''
-    return await axios.get(
-        `/api/v1/audit?page=${page}&limit=${pageSize}&group_ids=${groupId}${uids}` +
+    return `/api/v1/audit?page=${page}&limit=${pageSize}&group_ids=${groupId}${uids}` +
         `&system_id=${moduleId}&event_type=${action}` + startStr + endStr
-    )
+}
+
+// 分页获取审计列表
+export async function getLogsApi({ page, pageSize, ...filters }: AuditLogsQuery & {
+    page: number,
+    pageSize: number
+}): Promise<{ data: AuditLogRecord[], total: number }> {
+    return await axios.get(buildAuditLogsUrl({ ...filters, page, pageSize }))
+}
+
+// 导出用：循环分页拉取筛选命中的全部审计日志。
+// 复用 /api/v1/audit 的权限与筛选逻辑，避免前后端两套口径。
+export async function exportAuditLogsApi(filters: AuditLogsQuery): Promise<AuditLogRecord[]> {
+    const pageSize = 1000
+    const logs: AuditLogRecord[] = []
+    for (let page = 1; ; page++) {
+        const res = await axios.get(buildAuditLogsUrl({ ...filters, page, pageSize }))
+        const batch = res?.data || []
+        logs.push(...batch)
+        // 少于一页说明已到末尾；total 兜底防止 count 与分页不一致时死循环。
+        if (batch.length < pageSize || logs.length >= (res?.total ?? 0)) break
+    }
+    return logs
 }
 
 // 系统模块

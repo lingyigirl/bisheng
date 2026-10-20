@@ -1,3 +1,5 @@
+import type { AgentConfig, HarnessOptions } from "~/types/harness";
+import { SubagentPicker } from "./SubagentPicker";
 /**
  * F035 Track H (P2): unified task-mode input shell (spec §1).
  * Layout: textarea on top; toolbar below —
@@ -14,7 +16,8 @@ import { Square } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useRecoilState, useRecoilValue } from 'recoil';
-import { checkFileParseStatus } from '~/api/linsight';
+import { useQuery } from '@tanstack/react-query';
+import { checkFileParseStatus, listSavedMembers } from '~/api/linsight';
 import { File_Accept, NotificationSeverity } from '~/common';
 import DragDropOverlay from '~/components/Chat/Input/Files/DragDropOverlay';
 import { TextareaAutosize } from '~/components/ui';
@@ -45,6 +48,7 @@ import {
 } from '~/store/linsight';
 import { cn, removeFocusRings } from '~/utils';
 import { ContextChips, type ContextAttachmentFile } from './ContextChips';
+import { defaultDraftFromLibrary } from './collaboratorUtils';
 import { KnowledgeSpaceSelect } from './KnowledgeSpaceSelect';
 import { ModelSelector } from './ModelSelector';
 import { PlusMenu } from './PlusMenu';
@@ -52,6 +56,7 @@ import { TaskModeToggle } from './TaskModeToggle';
 import { ToolsSelect } from './ToolsSelect';
 
 interface TaskModeInputProps {
+    agentConfig?: AgentConfig | null;
     /** Session key for per-session memory; 'new' for a fresh task. */
     conversationId?: string;
     disabled?: boolean;
@@ -72,7 +77,26 @@ interface TaskModeInputProps {
     onStop?: () => void;
 }
 
-export function TaskModeInput({ conversationId = 'new', disabled = false, onFollowUp, running = false, onStop }: TaskModeInputProps) {
+export function TaskModeInput({ agentConfig, conversationId = 'new', disabled = false, onFollowUp, running = false, onStop }: TaskModeInputProps) {
+    const [memberDraft, setMemberDraft] = useState<AgentConfig>({ schema_version: 1, subagents: [] });
+    // F087: carry the user's starred members into every NEW task. Seeds once,
+    // only while the draft is empty and no config is attached, so it can never
+    // fight the user's own edits. Shares the picker's react-query cache key.
+    const seededCollaboratorsRef = useRef(false);
+    const { data: savedMembers } = useQuery({
+        queryKey: ['linsight', 'savedMembers'],
+        queryFn: listSavedMembers,
+        staleTime: 30_000,
+    });
+    useEffect(() => {
+        if (seededCollaboratorsRef.current || agentConfig || memberDraft.subagents.length || !savedMembers?.length) {
+            return;
+        }
+        const seeded = defaultDraftFromLibrary(savedMembers);
+        if (!seeded) return;
+        seededCollaboratorsRef.current = true;
+        setMemberDraft(seeded);
+    }, [savedMembers, agentConfig, memberDraft.subagents.length]);
     const localize = useLocalize();
     // Collapse toolbar labels to icons when the toolbar's own width (not the
     // viewport's) runs short — e.g. once the sidebar opens on a mid-size screen.
@@ -237,6 +261,7 @@ export function TaskModeInput({ conversationId = 'new', disabled = false, onFoll
             // Model selector value rides along with the submission (F035).
             model,
             skills: skills.map((s) => s.name),
+            agent_config: memberDraft,
             enableWebSearch: false,
             useKnowledgeBase: pickedKnowledge,
             // F035: continue the current session on follow-up rounds. conversationId
@@ -251,7 +276,7 @@ export function TaskModeInput({ conversationId = 'new', disabled = false, onFoll
         if (textAreaRef.current) textAreaRef.current.style.height = 'auto';
         if (!location.pathname.includes('/linsight')) navigate('/linsight/new');
     }, [
-        text, context, disabled, fileUploading, filesParsing, model, skills,
+        text, context, disabled, fileUploading, filesParsing, model, skills, memberDraft,
         localize, location.pathname, navigate, setContext, setLinsightSubmission, conversationId,
         onFollowUp, clearInputAfterSend,
     ]);
@@ -358,6 +383,7 @@ export function TaskModeInput({ conversationId = 'new', disabled = false, onFoll
                 {/* Toolbar */}
                 <div className="flex h-8 min-h-8 w-full min-w-0 items-center justify-between gap-1">
                     <div ref={toolbarRef} className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+                        <SubagentPicker value={agentConfig || memberDraft} options={(bsConfig || {}) as HarnessOptions} disabled={!!onFollowUp || disabled || running} onChange={setMemberDraft} />
                         <PlusMenu
                             disabled={disabled}
                             onUploadFile={() => inputFilesRef.current?.openPicker?.()}

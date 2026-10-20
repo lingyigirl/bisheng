@@ -109,7 +109,7 @@ class TestUnpackZip:
         assert set(files) == {SKILL_MD}
 
     def test_missing_skill_md_raises(self):
-        with pytest.raises(ValueError, match="SKILL.md"):
+        with pytest.raises(ValueError, match=r"SKILL\.md"):
             unpack_zip_bytes(_zip_bytes({"readme.md": b"x"}))
 
     def test_bad_zip_raises(self):
@@ -122,28 +122,24 @@ class TestSkillStore:
     def store(self, tmp_path):
         return SkillStore(root=tmp_path)
 
-    def test_write_read_list_delete(self, store):
-        size = store.write_bundle(1, "demo-skill", {SKILL_MD: SKILL_MD_TEXT.encode(), "scripts/a.py": b"print(1)"})
-        assert size == len(SKILL_MD_TEXT.encode()) + len(b"print(1)")
-        assert store.exists(1, "demo-skill")
-        assert store.read_text(1, "demo-skill").startswith("---")
-        files = store.list_files(1, "demo-skill")
-        assert files[0]["path"] == SKILL_MD  # SKILL.md always first
-        assert {f["path"] for f in files} == {SKILL_MD, "scripts/a.py"}
-        assert store.object_path(1, "demo-skill") == "data/skills/1/demo-skill"
-        assert store.delete(1, "demo-skill")
-        assert not store.exists(1, "demo-skill")
+    def test_write_read_list(self, store):
+        ref = store.write_bundle(1, "demo-skill", {SKILL_MD: SKILL_MD_TEXT.encode(), "scripts/a.py": b"print(1)"})
+        assert ref.size == len(SKILL_MD_TEXT.encode()) + len(b"print(1)")
+        assert store.exists(1, "demo-skill", ref.content_hash)
+        assert store.read_text(1, "demo-skill", content_hash=ref.content_hash).startswith("---")
+        assert {f["path"] for f in store.list_files(1, "demo-skill", ref.content_hash)} == {SKILL_MD, "scripts/a.py"}
+        assert ref.object_key == f"linsight/skills/1/demo-skill/{ref.content_hash}.zip"
 
-    def test_overwrite_removes_stale_assets(self, store):
-        store.write_bundle(1, "demo-skill", {SKILL_MD: b"v1", "old.txt": b"stale"})
-        store.write_bundle(1, "demo-skill", {SKILL_MD: b"v2"})
-        assert {f["path"] for f in store.list_files(1, "demo-skill")} == {SKILL_MD}
-        assert store.read_text(1, "demo-skill") == "v2"
+    def test_new_version_has_no_stale_assets(self, store):
+        old = store.write_bundle(1, "demo-skill", {SKILL_MD: b"v1", "old.txt": b"stale"})
+        new = store.write_bundle(1, "demo-skill", {SKILL_MD: b"v2"})
+        assert {f["path"] for f in store.list_files(1, "demo-skill", new.content_hash)} == {SKILL_MD}
+        assert store.read_text(1, "demo-skill", content_hash=old.content_hash) == "v1"
 
-    def test_tenant_isolation_by_path(self, store):
-        store.write_bundle(1, "demo-skill", {SKILL_MD: b"t1"})
-        assert not store.exists(2, "demo-skill")
-        assert store.list_files(2, "demo-skill") == []
+    def test_tenant_isolation(self, store):
+        ref = store.write_bundle(1, "demo-skill", {SKILL_MD: b"t1"})
+        assert not store.exists(2, "demo-skill", ref.content_hash)
+        assert store.list_files(2, "demo-skill", ref.content_hash) == []
 
     @pytest.mark.parametrize("evil", ["../evil.md", "/abs.md", "a/../../evil.md"])
     def test_traversal_rejected_on_write(self, store, evil):
@@ -151,10 +147,10 @@ class TestSkillStore:
             store.write_bundle(1, "demo-skill", {SKILL_MD: b"x", evil: b"boom"})
 
     def test_traversal_rejected_on_read(self, store):
-        store.write_bundle(1, "demo-skill", {SKILL_MD: b"x"})
+        ref = store.write_bundle(1, "demo-skill", {SKILL_MD: b"x"})
         with pytest.raises(ValueError, match="illegal bundle path"):
-            store.read_text(1, "demo-skill", "../../../etc/passwd")
+            store.read_text(1, "demo-skill", "../../../etc/passwd", ref.content_hash)
 
     def test_bundle_requires_skill_md(self, store):
-        with pytest.raises(ValueError, match="SKILL.md"):
+        with pytest.raises(ValueError, match=r"SKILL\.md"):
             store.write_bundle(1, "demo-skill", {"other.md": b"x"})

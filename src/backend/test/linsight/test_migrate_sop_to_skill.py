@@ -71,7 +71,7 @@ class TestMigrateTenant:
         assert entry["display_name"] == "标书撰写流程"
         row = FakeSkillDao.rows["biao-shu-zhuan-xie-liu-cheng"]
         assert row.source == "sop_migrated" and row.enabled
-        meta, body = parse_skill_md(env.read_text(TENANT, row.name))
+        meta, body = parse_skill_md(env.read_text(TENANT, row.name, content_hash=row.content_hash))
         assert meta["metadata"]["sop-id"] == "17"
         assert meta["metadata"]["display-name"] == "标书撰写流程"
         assert body.strip() == "# SOP 正文"

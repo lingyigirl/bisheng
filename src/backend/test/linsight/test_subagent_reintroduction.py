@@ -204,6 +204,58 @@ def test_researcher_subagent_prompt_tracks_kb_tool_presence():
     assert "search_knowledge_base" not in spec_without["system_prompt"]
 
 
+def test_artifact_contract_and_background_jobs_are_prompted():
+    """T1 + T2 (2026-10-16): one artifact channel + background delegation.
+
+    T1: the parent names target paths in ``description`` and every collaborator
+    closes with a `产物:` line — the only channel carrying artifact awareness
+    (no workspace-diff injection into the task result; dsh's boundary rule).
+    T2: background delegation is taught explicitly (run_in_background → job id;
+    collect with job_output / job_kill / job_list before finishing).
+    """
+    from bisheng.linsight.domain.services.agent_factory import (
+        SUBAGENT_ARTIFACT_REPORT_CONTRACT,
+        _build_linsight_system_prompt,
+        _build_researcher_prompt,
+    )
+
+    main = _build_linsight_system_prompt(False)
+    assert "产物:" in main  # parent tells the child which paths to report
+    assert "run_in_background" in main
+    assert "job_output" in main and "job_kill" in main and "job_list" in main
+    # The deliverable-assembly boundary stays where it was.
+    assert "不得委派最终交付物撰写" in main
+    # 2026-10-16: delegation is a DEFAULT for isolatable work (a live run
+    # researched with 8 web_search calls alone and never delegated), and format polishing
+    # must converge (a live run re-wrote the same docx build script for 10
+    # minutes in a read→code→convert cycle until the user stopped it).
+    assert "【委派优先，默认自己做是错的】" in main
+    assert "先用 task 委派" in main
+    assert "【转换/美化类操作必须收敛】" in main
+    assert "最多迭代 2 轮" in main
+    # 2026-10-16 (live run bdffc2b2): the main agent ran 40+ web_search calls
+    # instead of delegating; a retrieval budget line plus the breaker's
+    # search-budget rule bound that loop. Locked so the guidance cannot
+    # silently disappear.
+    assert "【检索有预算，重复即停】" in main
+    assert "禁止继续换关键词重搜" in main
+    # 2026-10-16 (live run 7336135b): when a delegated member reports missing
+    # tools, the parent must stop re-delegating equivalent tasks — self-execute
+    # or retry once with a built-in role. Locked so the stop-loss policy cannot
+    # silently disappear.
+    assert "止损策略" in main
+    assert "不要反复委派同类任务的等价描述" in main
+    # Citation discipline: only cite what was actually read; snippet-only search
+    # results must not be dressed up with precise file names / dates / clause
+    # numbers (live run produced unverifiable citations from snippets).
+    assert "只写你" in main and "实际读到" in main
+    assert "snippet" in main
+
+    for has_kb in (True, False):
+        researcher = _build_researcher_prompt(has_kb)
+        assert SUBAGENT_ARTIFACT_REPORT_CONTRACT.strip() in researcher
+
+
 # --------------------------------------------------------------------------
 # 3. stream mapper drops a subagent's namespaced write_todos (design §5.2a)
 # --------------------------------------------------------------------------

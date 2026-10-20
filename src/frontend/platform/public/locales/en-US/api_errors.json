@@ -162,6 +162,7 @@
   "11059": "Skill bundle contents exceed the 100MB unpacked size limit. Trim it and upload again.",
   "11060": "Manual search failed. Both vector and keyword search unavailable",
   "11070": "Manual search failed",
+  "11071": "Collaborator configuration is invalid or unavailable",
   "11080": "Failed to initialize workspace tools",
   "11090": "$t(bisheng) LLM error",
   "11100": "Failed to generate SOP content",
@@ -491,6 +492,6 @@
   "24005": "Invalid quota_config or department_id value",
   "90001": "You do not have permission to access the admin backend. Please contact the administrator to request access if needed.",
   "90002": "Your current role does not have permission to access the workbench. Please contact the administrator if needed.",
-  "fallback": "The operation failed. Please try again later.",
-  "personIdAlreadyExists": "Person ID already exists"
+  "personIdAlreadyExists": "Person ID already exists",
+  "fallback": "The operation failed. Please try again later."
 }

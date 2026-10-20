@@ -90,6 +90,19 @@ class ToolExecutor(BaseTool):
     args_schema: Annotated[ArgsSchema | None, SkipValidation()] = Field(default=None, description="The tool schema.")
     tool_instance: BaseTool = Field(..., description="Langchain Tool Instance")
 
+    def close(self) -> None:
+        """Release resources owned by wrapped tools, including E2B sandboxes."""
+        close = getattr(self.tool_instance, "close", None)
+        if callable(close):
+            close()
+
+    def _parse_input(self, tool_input: str | dict, tool_call_id: str | None):
+        from bisheng_langchain.gpts.tools.code_interpreter.tool import CodeInterpreterTool
+
+        if isinstance(self.tool_instance, CodeInterpreterTool):
+            return self.tool_instance._parse_input(tool_input, tool_call_id)
+        return super()._parse_input(tool_input, tool_call_id)
+
     @staticmethod
     def _build_permission_user(user_id: int) -> UserPayload:
         return UserPayload(user_id=user_id, user_name="", user_role=[])

@@ -22,6 +22,23 @@ from bisheng.linsight.domain.task_exec import LinsightWorkflowTask
 
 logger = logging.getLogger(__name__)
 
+
+async def initialize_worker_permissions():
+    """Register OpenFGA in the standalone worker's own event loop."""
+    if not settings.openfga.enabled:
+        return
+    from bisheng.core.context.manager import app_context
+    from bisheng.core.openfga.manager import FGAManager
+
+    try:
+        context = app_context.get_context("openfga")
+    except KeyError:
+        context = FGAManager(openfga_config=settings.openfga)
+        app_context.register_context(context)
+    # Fail startup rather than silently rejecting explicitly granted tools.
+    await context.async_get_instance()
+
+
 # Session-version statuses that are terminal: a queue item pointing at such a
 # session must be discarded (never run / never resumed). Used by the worker's
 # pre-flight non-terminal guard so a stale resume payload cannot revive a task
@@ -69,12 +86,15 @@ def parse_queue_item(raw: Any) -> dict:
     format) is treated as a new task (``resume=False``).
     """
     if isinstance(raw, dict):
-        return {
+        parsed = {
             "session_version_id": raw.get("session_version_id"),
             "resume": bool(raw.get("resume", False)),
             "user_input": raw.get("user_input"),
             "continue_question": raw.get("continue_question"),
         }
+        if raw.get("recover"):
+            parsed["recover"] = True
+        return parsed
     # Legacy bare-string item == new task.
     return {"session_version_id": raw, "resume": False, "user_input": None, "continue_question": None}
 
@@ -268,6 +288,8 @@ class ScheduleCenterProcess(Process):
     def handle_task_result(self, task: asyncio.Task, session_version_id: str | None = None):
         try:
             task.result()  # If there is an exception, it will be thrown here
+        except asyncio.CancelledError:
+            logger.info("Execution cancelled without stale failure write: %s", session_version_id)
         except Exception as e:
             logger.error(f"Task failed with exception: {e}", exc_info=True)
             # task_exec owns the normal failure path; reaching here means it could
@@ -297,6 +319,14 @@ class ScheduleCenterProcess(Process):
             with bypass_tenant_filter():
                 session = await LinsightSessionVersionDao.get_by_id(session_version_id)
                 if session is None or session.status in _TERMINAL_SESSION_STATUSES:
+                    return
+                if (
+                    isinstance(getattr(session, "agent_config", None), dict)
+                    and session.agent_config.get("recovery_protocol") == 1
+                ):
+                    # Only a leased executor may write recovery task terminal state.
+                    # The scanner retries infrastructure failures with a bounded budget.
+                    logger.warning("Leaving recovery-enabled task %s for fenced takeover", session_version_id)
                     return
                 try:
                     from bisheng.common.services.llm_error_classifier import classify_for_event
@@ -340,6 +370,7 @@ class ScheduleCenterProcess(Process):
         """
         with bypass_tenant_filter():
             session = await LinsightSessionVersionDao.get_by_id(session_version_id)
+        self._selected_session = session
         if session is None:
             return None
         return session.status in _TERMINAL_SESSION_STATUSES
@@ -380,6 +411,14 @@ class ScheduleCenterProcess(Process):
             logger.info(f"Queue item for terminal session {session_version_id} discarded")
             self._release_semaphore()
             return False
+
+        from bisheng.linsight.domain.services.recovery_service import RecoveryService
+
+        session = getattr(self, "_selected_session", None)
+        if RecoveryService.enabled(session):
+            task = asyncio.create_task(RecoveryService().run(session, item, LinsightWorkflowTask(), node_manager))
+            task.add_done_callback(partial(self.handle_task_result, session_version_id=session_version_id))
+            return True
 
         # Register task ownership
         await node_manager.register_task_ownership(session_version_id)
@@ -442,10 +481,14 @@ class ScheduleCenterProcess(Process):
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        loop.run_until_complete(initialize_worker_permissions())
 
         # 启动心跳
         self.node_manager = NodeManager.get_instance(self.node_id.value)
         loop.create_task(self.node_manager.start_heartbeat())
+        from bisheng.linsight.domain.services.recovery_service import RecoveryService
+
+        self.recovery_monitor = loop.create_task(RecoveryService().monitor(self.queue))
 
         # 启动主逻辑
         for _ in range(10000):  # 你的原始逻辑

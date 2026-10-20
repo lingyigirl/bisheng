@@ -62,7 +62,10 @@ def test_keep_raw_extension_gate():
     assert Impl._should_keep_raw("报告.PDF")  # case-insensitive
     assert Impl._should_keep_raw("spec.docx")
     assert not Impl._should_keep_raw("notes.md")
-    assert not Impl._should_keep_raw("photo.png")  # images stay single-track
+    # Images are NOT document-raw: they carry under their own rule with their own
+    # ceiling (the picture is the model's reading view, see
+    # test_image_original_lands_next_to_markdown).
+    assert not Impl._should_keep_raw("photo.png")
     assert not Impl._should_keep_raw("clip.mp4")
     assert not Impl._should_keep_raw("")
 
@@ -97,15 +100,47 @@ async def test_original_lands_next_to_markdown():
     assert used == {"销售数据.md", "销售数据.xlsx"}
 
 
-async def test_non_whitelisted_type_stays_single_track():
-    entry = entry_for("photo.png")
+async def test_non_whitelisted_non_image_stays_single_track():
+    entry = entry_for("clip.mp4")
     minio = make_minio(entry)
 
     await Impl._write_attachment_to_workspace(entry, "chat1", minio, used_names=set())
 
-    assert entry["workspace_path"] == "/uploads/photo.md"
+    assert entry["workspace_path"] == "/uploads/clip.md"
     assert "raw_workspace_path" not in entry
-    assert "workspace/chat1/uploads/photo.png" not in minio.puts
+    assert "workspace/chat1/uploads/clip.mp4" not in minio.puts
+
+
+async def test_image_original_lands_next_to_markdown():
+    """Uploaded pictures ARE carried into the workspace.
+
+    The original is the model's own reading view: ``read_file`` returns it as a
+    real image block (the adapter forwards it as such), so the picture must sit
+    next to its (OCR) markdown view instead of staying out of reach.
+    """
+    entry = entry_for("photo.png")
+    minio = make_minio(entry, raw_bytes=b"\x89PNG\r\n\x1a\nimage")
+
+    await Impl._write_attachment_to_workspace(entry, "chat1", minio, used_names=set())
+
+    assert entry["workspace_path"] == "/uploads/photo.md"
+    assert entry["raw_workspace_path"] == "/uploads/photo.png"
+    assert entry["raw_filename"] == "photo.png"
+    raw_body, raw_ct = minio.puts["workspace/chat1/uploads/photo.png"]
+    assert raw_body == b"\x89PNG\r\n\x1a\nimage"
+    assert raw_ct == "image/png"
+
+
+async def test_oversized_image_stays_single_track():
+    """Past the image carry ceiling (sandbox auto-push / interpreter reach) the
+    copy would only cost storage — the markdown view remains the fallback."""
+    entry = entry_for("huge.png")
+    minio = make_minio(entry, raw_bytes=b"\x89PNG" + b"x" * Impl._IMAGE_CARRY_MAX_BYTES)
+
+    await Impl._write_attachment_to_workspace(entry, "chat1", minio, used_names=set())
+
+    assert entry["workspace_path"] == "/uploads/huge.md"
+    assert "raw_workspace_path" not in entry
 
 
 async def test_no_original_persisted_stays_single_track():
@@ -194,6 +229,57 @@ async def test_pointer_block_stays_lean_without_raw():
     # No dual-track guidance paragraph when there is nothing dual about it.
     assert "bisheng_code_interpreter" not in block
     assert "raw:" not in block
+    assert "image:" not in block
+
+
+async def test_pointer_block_guides_image_read_file():
+    """An image is announced under its own key with its own route: read_file
+    shows the picture itself — the opposite of the document rule below."""
+    files = [
+        {
+            "valid": True,
+            "original_filename": "photo.png",
+            "workspace_path": "/uploads/photo.md",
+            "raw_workspace_path": "/uploads/photo.png",
+            "line_count": 0,
+            "image_count": 0,
+        }
+    ]
+    block = (await Impl.prepare_file_list(session_with(files), has_code_interpreter=True))[0]
+
+    assert "image: uploads/photo.png" in block
+    assert "直接用 read_file 读取该路径即可看到画面本身" in block
+    # The document guidance ("raw is data, do NOT read_file it") must not leak
+    # onto an image — it would send the model away from the one route that works.
+    assert "不要 read_file 原件" not in block
+    assert "raw:" not in block
+
+
+async def test_pointer_block_keeps_document_and_image_guidance_separate():
+    files = [
+        {
+            "valid": True,
+            "original_filename": "销售数据.xlsx",
+            "workspace_path": "/uploads/销售数据.md",
+            "raw_workspace_path": "/uploads/销售数据.xlsx",
+            "line_count": 40,
+            "image_count": 0,
+        },
+        {
+            "valid": True,
+            "original_filename": "photo.png",
+            "workspace_path": "/uploads/photo.md",
+            "raw_workspace_path": "/uploads/photo.png",
+            "line_count": 0,
+            "image_count": 0,
+        },
+    ]
+    block = (await Impl.prepare_file_list(session_with(files), has_code_interpreter=True))[0]
+
+    assert "raw: uploads/销售数据.xlsx" in block
+    assert "image: uploads/photo.png" in block
+    assert "不要 read_file 原件" in block  # document advice intact
+    assert "直接用 read_file 读取该路径即可看到画面本身" in block  # image advice intact
 
 
 async def test_unparsed_file_announced_instead_of_hidden():
