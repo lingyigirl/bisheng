@@ -114,11 +114,6 @@ async def _assert_tenant_active(tenant_id: int | None) -> None:
     """
     if not tenant_id:
         raise OpenApiTenantDisabledError()
-    if tenant_id == DEFAULT_TENANT_ID:
-        # Root tenant: `TenantService._guard_default_tenant` forbids disabling
-        # it, and the middleware already checks the root tenant for key-based
-        # requests. Avoid an extra DB round-trip on the default-tenant path.
-        return
 
     from bisheng.tenant.domain.services.tenant_service import DISABLED_TENANT_KEY
 
@@ -132,6 +127,12 @@ async def _assert_tenant_active(tenant_id: int | None) -> None:
         # Redis unavailable: fall through to the DB below. This is a security
         # check, so an infrastructure error must not turn into an allow.
         logger.warning("open_api: tenant status Redis check failed for tenant {}; falling back to DB", tenant_id)
+
+    if tenant_id == DEFAULT_TENANT_ID:
+        # Root tenant: `TenantService._guard_default_tenant` forbids disabling
+        # it, and the middleware already checks the root blacklist. We still
+        # honored the blacklist above; skip only the extra DB round-trip.
+        return
 
     from bisheng.core.context.tenant import bypass_tenant_filter
     from bisheng.database.models.tenant import TenantDao
