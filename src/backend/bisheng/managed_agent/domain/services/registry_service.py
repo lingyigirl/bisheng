@@ -401,7 +401,9 @@ async def transition(user, agent_id: int, action: str) -> ManagedAgent:
     updated = await ManagedAgentDao.aget(current.id)
     if updated is None:
         raise ManagedAgentNotFoundError()
-    await _audit(user, audit, updated, action=action)
+    # `action` is already the positional audit action; record the transition
+    # name under a different metadata key to avoid a duplicate-argument error.
+    await _audit(user, audit, updated, transition=action)
     return updated
 
 
