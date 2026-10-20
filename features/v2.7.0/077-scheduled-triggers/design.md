@@ -8,7 +8,7 @@
 >
 > **本文的产生方式**：3 面并行起草（调度内核决策 / 身份权限与接口决策 / 现状·坑·测试）→ **2 路对抗审查**（接手可用性 / spec 与契约合规）→ 主会话裁定 16 处跨节冲突后装配。裁定结论已直接写进下文（不再保留两套口径）。
 
-**关联**: [spec.md](./spec.md)（59 条 AC，已过 ★） · [discovery.md](./discovery.md)（调研与 19 项决策） · [release-contract.md](../release-contract.md)（归属 / INV-25 / 119 段） · tasks.md（待建）
+**关联**: [spec.md](./spec.md)（59 条 AC，已过 ★） · [discovery.md](./discovery.md)（调研与 19 项决策） · [release-contract.md](../release-contract.md)（归属 / INV-25 / 119 段） · tasks.md（已拆解）
 **版本**: v2.7.0 ｜ **特性**: 077-scheduled-triggers ｜ **最后更新**: 2026-10-16（初版）
 
 ---
@@ -434,7 +434,7 @@
 
 ## 7.1 手工验收修复（2026-10-20）
 
-针对 [`docs/v2.7.0-manual-2026-10-19/report.md`](../../../docs/v2.7.0-manual-2026-10-19/report.md) 的验收缺口，实现期修正如下（不改变对客契约）：
+针对 [`docs/v2.7.0-manual-2026-10-19/report.md`](../../../docs/v2.7.0-manual-2026-10-19/report.md)（**本地证据，不入库**）的验收缺口，实现期修正如下（不改变对客契约）：
 
 1. **`last_run_at` 写入点 = claim**：此前只有 `run_started_at`，`_finalize` 依赖 `last_run_at` 导致耗时恒 NULL。claim 后各路径（计划轮次、立即运行、事件触发、助手 worker、observe）统一重读任务，终态耗时由 `last_run_at/run_started_at` 计算；`afinalize` 总是写 `last_duration_ms`（含显式 NULL），避免旧值残留。**口径**：列表耗时 = claim 到终态（含队列等待）；监控 `process_time` 从 worker 实际执行开始，两者可能不同。
 2. **系统处置留痕统一落 `schedule.run`**：计划轮次失败、租约超时、达阈值/应用删除/一次性终态自动停用均以 `operator_id=0`（system）留痕，不新增 `schedule.task.disable` 行（保持不进审计页白名单）。轮次内的系统审计累积后**锁外批量**写，避免 15s 派发锁被逐条 commit 拉长。
