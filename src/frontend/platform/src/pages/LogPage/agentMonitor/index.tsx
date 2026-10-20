@@ -2,17 +2,25 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import FilterByApp from "@/components/bs-comp/filterTableDataComponent/FilterByApp";
 import FilterByDate from "@/components/bs-comp/filterTableDataComponent/FilterByDate";
+import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
 import { Button } from "@/components/bs-ui/button";
 import { Input } from "@/components/bs-ui/input";
 import AutoPagination from "@/components/bs-ui/pagination/autoPagination";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/bs-ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/bs-ui/table";
+import { toast } from "@/components/bs-ui/toast/use-toast";
 import { LoadingIcon } from "@/components/bs-icons/loading";
-import { AgentTransactionRecord, getAgentTransactionsApi } from "@/controllers/API/log";
+import {
+    AgentTransactionRecord,
+    ExportFeedback,
+    exportAgentTransactionsApi,
+    getAgentTransactionsApi,
+} from "@/controllers/API/log";
 import { formatDate } from "@/util/utils";
 import { TransactionDetail } from "./TransactionDetail";
 
 const APP_TYPES = ["workflow", "assistant", "workstation", "linsight"] as const;
+const FEEDBACK_MODES: ExportFeedback[] = ["exclude_disliked", "liked", "all"];
 
 interface MonitorFilters {
     appId: string;
@@ -20,9 +28,45 @@ interface MonitorFilters {
     status: string;
     keyword: string;
     dateRange: [Date | null, Date | null];
+    // 6.3 仅作用于导出，不影响运行列表查询
+    feedback: ExportFeedback;
 }
 
-const INIT_FILTERS: MonitorFilters = { appId: "", appType: "", status: "", keyword: "", dateRange: [null, null] };
+const INIT_FILTERS: MonitorFilters = {
+    appId: "",
+    appType: "",
+    status: "",
+    keyword: "",
+    dateRange: [null, null],
+    feedback: "exclude_disliked",
+};
+
+function downloadBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+// 导出失败时后端返回 JSON 错误体（被 responseType=blob 包成 Blob），
+// 取出 detail 才能把"超过上限，请缩小时间范围"这类信息展示给用户。
+async function readExportError(error: unknown): Promise<string> {
+    const data = (error as { response?: { data?: unknown } })?.response?.data;
+    if (data instanceof Blob) {
+        try {
+            const body = JSON.parse(await data.text());
+            if (typeof body?.detail === "string") return body.detail;
+        } catch {
+            // 非 JSON 错误体，退回通用信息
+        }
+    }
+    if (error instanceof Error) return error.message;
+    return String(error);
+}
 
 function toEpochSeconds(date: Date | null, endOfDay: boolean): number | undefined {
     if (!date) return undefined;
@@ -50,6 +94,7 @@ export function AgentMonitor() {
     const [filters, setFilters] = useState<MonitorFilters>(INIT_FILTERS);
     const [applied, setApplied] = useState<MonitorFilters>(INIT_FILTERS);
     const [current, setCurrent] = useState<AgentTransactionRecord | null>(null);
+    const [exporting, setExporting] = useState(false);
 
     const load = useCallback(
         (p: number, f: MonitorFilters) => {
@@ -91,6 +136,40 @@ export function AgentMonitor() {
         setFilters(INIT_FILTERS);
         setPage(1);
         setApplied(INIT_FILTERS);
+    };
+
+    const handleExport = () => {
+        bsConfirm({
+            title: t("log.monitorExportTitle"),
+            desc: t("log.monitorExportConfirm"),
+            okTxt: t("log.monitorExportConfirmOk"),
+            onOk: async (next) => {
+                next();
+                const [start, end] = applied.dateRange;
+                setExporting(true);
+                try {
+                    const blob = await exportAgentTransactionsApi({
+                        app_id: applied.appId || undefined,
+                        app_type: applied.appType || undefined,
+                        status: applied.status || undefined,
+                        keyword: applied.keyword || undefined,
+                        start_time: toEpochSeconds(start, false),
+                        end_time: toEpochSeconds(end, true),
+                        // feedback 只影响导出口径，不参与列表查询，直接取当前选择
+                        feedback: filters.feedback,
+                    });
+                    downloadBlob(blob, `agent_finetune_${formatDate(new Date(), "yyyyMMdd_HHmmss")}.json`);
+                } catch (error) {
+                    toast({
+                        title: t("prompt"),
+                        variant: "error",
+                        description: await readExportError(error),
+                    });
+                } finally {
+                    setExporting(false);
+                }
+            },
+        });
     };
 
     const statusClass = (status: string) =>
@@ -162,6 +241,30 @@ export function AgentMonitor() {
                     <Button variant="outline" onClick={() => load(page, applied)}>
                         {t("log.monitorRefresh")}
                     </Button>
+                    <div className="ml-auto flex items-center gap-2">
+                        <Select
+                            value={filters.feedback}
+                            onValueChange={(value) =>
+                                setFilters({ ...filters, feedback: value as ExportFeedback })
+                            }
+                        >
+                            <SelectTrigger className="w-[170px]">
+                                <SelectValue placeholder={t("log.monitorFeedback")} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectGroup>
+                                    {FEEDBACK_MODES.map((mode) => (
+                                        <SelectItem value={mode} key={mode}>
+                                            {t(`log.monitorFeedbackEnum.${mode}`)}
+                                        </SelectItem>
+                                    ))}
+                                </SelectGroup>
+                            </SelectContent>
+                        </Select>
+                        <Button variant="outline" onClick={handleExport} disabled={exporting}>
+                            {exporting ? t("log.monitorExporting") : t("log.monitorExport")}
+                        </Button>
+                    </div>
                 </div>
                 <Table className="mb-[50px]">
                     <TableHeader>

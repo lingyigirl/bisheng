@@ -402,3 +402,24 @@ export async function getTransactionNodesApi(traceId: string): Promise<{ trace_i
 export async function getTransactionModelCallsApi(traceId: string): Promise<{ trace_id: string; records: ModelCallRecord[] }> {
     return await axios.get(`/api/v1/telemetry/agent-transactions/${traceId}/model-calls`)
 }
+
+export type ExportFeedback = "all" | "liked" | "exclude_disliked";
+
+// 6.3 导出：当前筛选命中的运行 -> 单轮「问题-答案」微调 JSON。
+// silent 交给页面读取 Blob 错误体（超限时后端返回 detail），避免全局提示
+// 只显示 "Request failed with status code 400"。
+export async function exportAgentTransactionsApi(params: {
+    app_id?: string;
+    app_type?: string;
+    status?: string;
+    keyword?: string;
+    start_time?: number;
+    end_time?: number;
+    feedback: ExportFeedback;
+    limit?: number;
+}): Promise<Blob> {
+    // `silent` is read by our request interceptor but is not part of the axios
+    // config type; assigning the config to a variable skips excess-property checks.
+    const config = { params, responseType: 'blob' as const, silent: true }
+    return await axios.get('/api/v1/telemetry/agent-transactions/export', config)
+}

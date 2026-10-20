@@ -5,11 +5,15 @@ call-logs endpoint (login-only); the log-menu permission check for non-admins
 lives in the service (AC-18).
 """
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from bisheng.api.v1.schemas import resp_200
 from bisheng.common.dependencies.user_deps import UserPayload
-from bisheng.telemetry_search.domain.schemas.agent_transactions import AgentTransactionQuery
+from bisheng.telemetry_search.domain.schemas.agent_transactions import (
+    AgentTransactionExportQuery,
+    AgentTransactionQuery,
+    ExportFeedback,
+)
 from bisheng.telemetry_search.domain.services.agent_transactions import AgentTransactionsService
 
 router = APIRouter(prefix="/agent-transactions", tags=["TelemetryAgentTransactions"])
@@ -40,6 +44,41 @@ async def list_agent_transactions(
     )
     result = await AgentTransactionsService.query_transactions(login_user, query)
     return resp_200(data=result)
+
+
+@router.get("/export", summary="Export filtered runs as fine-tuning JSON")
+async def export_agent_transactions(
+    request: Request,
+    app_id: str = Query(default=None),
+    app_type: str = Query(default=None),
+    status: str = Query(default=None, description="success | failed"),
+    keyword: str = Query(default=None, description="Search in the run input snapshot"),
+    start_time: int = Query(default=None, description="Epoch seconds, inclusive"),
+    end_time: int = Query(default=None, description="Epoch seconds, exclusive"),
+    feedback: ExportFeedback = Query(
+        default="exclude_disliked",
+        description="all | liked | exclude_disliked",
+    ),
+    limit: int = Query(default=5000, ge=1, le=5000, description="Hard cap on exported runs"),
+    login_user: UserPayload = Depends(UserPayload.get_login_user),
+):
+    query = AgentTransactionExportQuery(
+        app_id=app_id,
+        app_type=app_type,
+        status=status,
+        keyword=keyword,
+        start_time=start_time,
+        end_time=end_time,
+        feedback=feedback,
+        limit=limit,
+    )
+    content, _ = await AgentTransactionsService.export_finetune_dataset(login_user, query)
+    filename = f"agent_finetune_{query.start_time}_{query.end_time}.json"
+    return Response(
+        content=content,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{trace_id}/nodes", summary="Node execution records of one run (merged start/end)")
