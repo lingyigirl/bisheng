@@ -206,10 +206,20 @@ def test_unified_invoke_rejects_extra_fields(client, state):
     resp = client.post(
         f"{V2_BASE}/managed-agent/invoke",
         headers={"Authorization": f"Bearer {state.key}"},
-        json={"agent_id": state.agent_id, "input": {"query": "hi"}, "user_id": 1},
+        json={"agent_id": state.agent_id, "input": {"query": "hi"}, "unexpected": True},
     )
     assert resp.status_code == 400
     assert resp.json()["status_code"] == 12114
+
+    # A bare identity is caught by F076's dependency before the endpoint's
+    # strict whitelist, so the observable code is 11817 (documented in invoke.py).
+    resp = client.post(
+        f"{V2_BASE}/managed-agent/invoke",
+        headers={"Authorization": f"Bearer {state.key}"},
+        json={"agent_id": state.agent_id, "input": {"query": "hi"}, "user_id": 1},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["status_code"] == 11817
 
 
 def test_unified_invoke_success(client, state):
