@@ -15,7 +15,8 @@ import { getWorkspaceClientUrl } from "@/utils/workspaceUrl";
 
 // 异步加载页面组件
 const Templates = lazy(() => import("@/pages/BuildPage/appTemps"));
-const Apps = lazy(() => import("@/pages/BuildPage/apps"));
+const Apps = lazy(() => import("@/pages/BuildPage/apps"))
+const ManagedAgentsPage = lazy(() => import("@/pages/BuildPage/managedAgents"));
 const EditAssistantPage = lazy(() => import("@/pages/BuildPage/assistant/editAssistant"));
 const WorkBenchPage = lazy(() => import("@/pages/BuildPage/bench/DialogueWork"));
 const FlowPage = lazy(() => import("@/pages/BuildPage/flow"));
@@ -104,6 +105,7 @@ const privateRouter = [
       // same population — the sidebar entry below gates on the same two flags.
       { path: "datasource", element: <DatasourcePage />, permission: 'sys', },
       { path: "build/apps", element: <Apps />, permission: 'build', },
+      { path: "build/managed-agents", element: <ManagedAgentsPage />, permission: 'build', },
       // @ts-ignore
       { path: "build/tools", element: <SkillToolsPage />, permission: 'build', },
       { path: "build/client", element: <WorkBenchPage />, permission: 'workstation' },

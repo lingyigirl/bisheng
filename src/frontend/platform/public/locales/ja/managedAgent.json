@@ -1,0 +1,100 @@
+{
+  "title": "管理対象エージェント",
+  "subtitle": "本プラットフォームとサードパーティエージェントを統一的に登録し、接続・スケジュール・分類を管理",
+  "create": "エージェントを登録",
+  "taxonomyButton": "分類管理",
+  "searchPlaceholder": "名前で検索",
+  "refresh": "更新",
+  "noData": "管理対象エージェントはありません",
+  "deleteTitle": "管理対象エージェントを削除",
+  "deleteDesc": "「{{name}}」を削除しますか？呼び出し履歴は保持されますが、呼び出せなくなります。",
+  "pagination": "{{page}} / {{total}} ページ",
+  "source": {
+    "all": "すべてのソース",
+    "native": "本プラットフォーム",
+    "low_code": "ローコード",
+    "high_code": "ハイコード"
+  },
+  "status": {
+    "all": "すべての状態",
+    "draft": "下書き",
+    "online": "オンライン",
+    "offline": "オフライン",
+    "disabled": "無効"
+  },
+  "health": {
+    "unknown": "不明",
+    "healthy": "正常",
+    "unhealthy": "異常"
+  },
+  "columns": {
+    "name": "名前",
+    "source": "ソース / プロトコル",
+    "status": "状態",
+    "health": "ヘルス",
+    "classification": "シーン / 業界",
+    "lastCall": "最終呼び出し",
+    "actions": "操作"
+  },
+  "actions": {
+    "publish": "公開",
+    "offline": "オフライン",
+    "disable": "無効化",
+    "healthCheck": "ヘルスチェック",
+    "edit": "編集",
+    "delete": "削除"
+  },
+  "form": {
+    "editTitle": "管理対象エージェントを編集",
+    "createTitle": "管理対象エージェントを登録",
+    "name": "名前",
+    "description": "説明",
+    "sourceKind": "ソース",
+    "protocol": "プロトコル",
+    "nativeAppId": "プラットフォームアプリID",
+    "nativeAppType": "アプリ種別",
+    "assistant": "アシスタント",
+    "workflow": "ワークフロー",
+    "endpoint": "接続先",
+    "modelName": "モデル名",
+    "version": "バージョン",
+    "scenario": "シーン",
+    "industry": "業界",
+    "healthMethod": "ヘルスチェック方式",
+    "testInvoke": "テスト呼び出し",
+    "healthUrl": "ヘルスURL",
+    "credentialType": "認証方式",
+    "credentialSecret": "シークレット",
+    "secretUnchanged": "空欄は変更なし",
+    "credentialHeaders": "固定ヘッダー（JSON）",
+    "agentCard": "Agent Card（JSON）",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "none": "設定しない"
+  },
+  "taxonomy": {
+    "title": "シーン / 業界分類",
+    "kind": "種別",
+    "scenario": "シーン",
+    "industry": "業界",
+    "code": "分類コード",
+    "nameZh": "中国語名",
+    "nameEn": "英語名",
+    "nameJa": "日本語名",
+    "add": "追加",
+    "disabled": "無効",
+    "deleteTitle": "分類を削除",
+    "deleteDesc": "「{{name}}」を削除しますか？エージェントが参照している場合は拒否されます。"
+  },
+  "schedule": {
+    "title": "定期タスク"
+  },
+  "common": {
+    "confirm": "確認",
+    "cancel": "キャンセル",
+    "delete": "削除",
+    "close": "閉じる",
+    "prev": "前へ",
+    "next": "次へ"
+  }
+}

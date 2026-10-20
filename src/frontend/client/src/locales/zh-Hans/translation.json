@@ -2088,5 +2088,20 @@
   "com_suggestion_keywords": "场景热词",
   "com_suggestion_questions": "你可能还想问",
   "com_notifications_action_scheduled_task_failed": "定时任务运行失败",
-  "com_notifications_action_scheduled_task_needs_input": "定时任务等待人工输入"
+  "com_notifications_action_scheduled_task_needs_input": "定时任务等待人工输入",
+  "com_managed_agents_tab_native": "应用广场",
+  "com_managed_agents_tab_managed": "第三方智能体",
+  "com_managed_agents_search": "搜索智能体",
+  "com_managed_agents_scenario": "场景",
+  "com_managed_agents_all_scenarios": "全部场景",
+  "com_managed_agents_industry": "行业",
+  "com_managed_agents_all_industries": "全部行业",
+  "com_managed_agents_empty": "暂无已上线的第三方智能体",
+  "com_managed_agents_source": "来源",
+  "com_managed_agents_protocol": "协议",
+  "com_managed_agents_health": "健康状态",
+  "com_managed_agents_preview_only": "预览模式：如需调用请联系管理员配置权限。",
+  "com_managed_agents_source_native": "本平台",
+  "com_managed_agents_source_low_code": "低代码",
+  "com_managed_agents_source_high_code": "高代码"
 }

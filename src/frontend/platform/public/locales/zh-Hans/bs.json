@@ -1186,7 +1186,8 @@
     "unsavedChangesLeave": "您有未保存的更改,确定要离开吗?",
     "leaveAndSave": "离开并保存",
     "leaveWithoutSave": "不保存,直接退出",
-    "selectModel": "选择一个模型"
+    "selectModel": "选择一个模型",
+    "managedAgents": "智能体纳管"
   },
   "bench": {
     "daily": "日常",
@@ -1327,7 +1328,8 @@
       "llm": "模型管理",
       "approval": "审批管理",
       "docExtract": "文档抽取",
-      "schedule": "定时任务"
+      "schedule": "定时任务",
+      "managedAgent": "智能体纳管"
     },
     "eventTypeEnum": {
       "createChat": "新建会话",
@@ -1411,7 +1413,13 @@
       "scheduleTaskEnable": "启用定时任务",
       "scheduleTaskDisable": "停用定时任务",
       "scheduleTaskDelete": "删除定时任务",
-      "scheduleTaskRunNow": "立即运行定时任务"
+      "scheduleTaskRunNow": "立即运行定时任务",
+      "managedAgentCreate": "新建纳管智能体",
+      "managedAgentUpdate": "编辑纳管智能体",
+      "managedAgentDelete": "删除纳管智能体",
+      "managedAgentEnable": "启用纳管智能体",
+      "managedAgentDisable": "停用纳管智能体",
+      "managedAgentHealthCheck": "健康检查"
     },
     "objectTypeEnum": {
       "none": "无",

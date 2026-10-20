@@ -2082,5 +2082,20 @@
   "com_suggestion_keywords": "関連キーワード",
   "com_suggestion_questions": "こんな質問もできます",
   "com_notifications_action_scheduled_task_failed": "定期タスクの実行に失敗しました",
-  "com_notifications_action_scheduled_task_needs_input": "定期タスクが手動入力を待っています"
+  "com_notifications_action_scheduled_task_needs_input": "定期タスクが手動入力を待っています",
+  "com_managed_agents_tab_native": "アプリ広場",
+  "com_managed_agents_tab_managed": "サードパーティエージェント",
+  "com_managed_agents_search": "エージェントを検索",
+  "com_managed_agents_scenario": "シーン",
+  "com_managed_agents_all_scenarios": "すべてのシーン",
+  "com_managed_agents_industry": "業界",
+  "com_managed_agents_all_industries": "すべての業界",
+  "com_managed_agents_empty": "オンラインのサードパーティエージェントはありません",
+  "com_managed_agents_source": "ソース",
+  "com_managed_agents_protocol": "プロトコル",
+  "com_managed_agents_health": "ヘルス",
+  "com_managed_agents_preview_only": "プレビューのみ。呼び出し権限は管理者にご連絡ください。",
+  "com_managed_agents_source_native": "本プラットフォーム",
+  "com_managed_agents_source_low_code": "ローコード",
+  "com_managed_agents_source_high_code": "ハイコード"
 }

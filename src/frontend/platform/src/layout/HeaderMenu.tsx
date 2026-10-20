@@ -21,7 +21,7 @@ export default function HeaderMenu({ }) {
         || Boolean(user.web_menu?.includes('create_app'))
     const canManageWorkbench = canManageWorkbenchConfig(user)
 
-    if (['/build/apps', '/build/tools', '/build/client'].includes(location.pathname.replace(__APP_ENV__.BASE_URL, ''))) {
+    if (['/build/apps', '/build/tools', '/build/client', '/build/managed-agents'].includes(location.pathname.replace(__APP_ENV__.BASE_URL, ''))) {
         return <div className="build-tab flex justify-center h-[65px] items-center relative">
             {/* <div className="px-4">
                 <NavLink to={'build/assist'} className="group flex gap-2 items-center px-8 py-2 rounded-md navlink">
@@ -39,6 +39,12 @@ export default function HeaderMenu({ }) {
                 <NavLink to={'build/tools'} className="group flex gap-2 items-center px-8 py-2 rounded-md navlink">
                     <TabIcon className="text-muted-foreground group-hover:text-primary dark:group-hover:text-[#fff]"></TabIcon>
                     <span className="text-sm font-bold text-muted-foreground group-hover:text-primary dark:group-hover:text-[#fff]">{t('build.tools')}</span>
+                </NavLink>
+            </div>}
+            {canOpenBuild && <div className="px-4">
+                <NavLink to={'build/managed-agents'} className="group flex gap-2 items-center px-8 py-2 rounded-md navlink">
+                    <TabIcon className="text-muted-foreground group-hover:text-primary dark:group-hover:text-[#fff]"></TabIcon>
+                    <span className="text-sm font-bold text-muted-foreground group-hover:text-primary dark:group-hover:text-[#fff]">{t('build.managedAgents')}</span>
                 </NavLink>
             </div>}
             {canManageWorkbench && <div className="px-4">

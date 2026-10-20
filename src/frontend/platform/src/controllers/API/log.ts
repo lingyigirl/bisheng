@@ -55,6 +55,10 @@ export async function getModulesApi(): Promise<{ data: any[] }> {
             // `_V2_NAMESPACE_TO_ACTION_PREFIX` (database/models/audit_log.py);
             // the backend lockstep test asserts both sides agree.
             { name: 'log.systemIdEnum.schedule', value: 'schedule' },
+            // F078: managed-agent lifecycle. Mirrors the 'managed_agent' entry
+            // in `_V2_NAMESPACE_TO_ACTION_PREFIX`; the backend lockstep test
+            // asserts both sides agree.
+            { name: 'log.systemIdEnum.managedAgent', value: 'managed_agent' },
         ],
 
     }
@@ -134,6 +138,14 @@ const actions = [
     { name: 'log.eventTypeEnum.scheduleTaskDisable', value: 'schedule.task.disable' },
     { name: 'log.eventTypeEnum.scheduleTaskDelete', value: 'schedule.task.delete' },
     { name: 'log.eventTypeEnum.scheduleTaskRunNow', value: 'schedule.task.run_now' },
+    // F078: managed-agent management actions. `managed_agent.invoke` is
+    // deliberately absent (forensics only, like schedule.run).
+    { name: 'log.eventTypeEnum.managedAgentCreate', value: 'managed_agent.create' },
+    { name: 'log.eventTypeEnum.managedAgentUpdate', value: 'managed_agent.update' },
+    { name: 'log.eventTypeEnum.managedAgentDelete', value: 'managed_agent.delete' },
+    { name: 'log.eventTypeEnum.managedAgentEnable', value: 'managed_agent.enable' },
+    { name: 'log.eventTypeEnum.managedAgentDisable', value: 'managed_agent.disable' },
+    { name: 'log.eventTypeEnum.managedAgentHealthCheck', value: 'managed_agent.health_check' },
 ];
 
 // 全部操作行为
@@ -158,6 +170,7 @@ export async function getActionsByModuleApi(moduleId) {
         // F058 起就缺的这一档：模块能选、动作下拉却为空（后端白名单与镜像表
         // 都对得上，唯独这里没有分支）。F077 补 case 时顺手补齐。
         case 'doc_extract': return actions.filter(a => a.value.startsWith('doc_extract.'))
+        case 'managed_agent': return actions.filter(a => a.value.startsWith('managed_agent.'))
     }
 }
 
