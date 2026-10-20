@@ -77,14 +77,48 @@ async def test_disabled_skill_is_rejected(service):
 async def test_existing_but_unauthorized_connector_is_rejected(service, monkeypatch):
     service.repository.tools.return_value = [SimpleNamespace(id=42, type=8, is_delete=0)]
     service.repository.tool_types.return_value = [SimpleNamespace(id=8, is_delete=0, is_preset=2)]
-    permission = AsyncMock(return_value=False)
+    permission = AsyncMock(return_value={"8": set()})
     monkeypatch.setattr(
-        "bisheng.linsight.domain.services.agent_config_service.ToolPermissionService.has_any_permission_async",
+        "bisheng.linsight.domain.services.agent_config_service.ToolPermissionService.get_tool_permission_map_async",
         permission,
     )
     with pytest.raises(LinsightAgentConfigurationError):
         await service.resolve(config(connector_refs=[42]), SimpleNamespace(user_id=1), 1, "7")
-    permission.assert_awaited_once()
+    permission.assert_awaited_once_with(SimpleNamespace(user_id=1), ["8"], ["use_tool"])
+
+
+async def test_resolve_batches_models_tools_groups_and_permissions(service, monkeypatch):
+    two_members = AgentConfig(
+        subagents=[
+            {"id": "first", "name": "First", "description": "First member", "model_id": "7", "connector_refs": [42]},
+            {"id": "second", "name": "Second", "description": "Second member", "model_id": "7", "connector_refs": [43]},
+        ]
+    )
+    service.repository.tools.return_value = [
+        SimpleNamespace(id=42, type=8, is_delete=0),
+        SimpleNamespace(id=43, type=9, is_delete=0),
+    ]
+    service.repository.tool_types.return_value = [
+        SimpleNamespace(id=8, is_delete=0, is_preset=0),
+        SimpleNamespace(id=9, is_delete=0, is_preset=2),
+    ]
+    permission = AsyncMock(return_value={"8": {"use_tool"}, "9": {"use_tool"}})
+    model = AsyncMock(return_value=SimpleNamespace(online=True, model_type="llm"))
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.agent_config_service.ToolPermissionService.get_tool_permission_map_async",
+        permission,
+    )
+    monkeypatch.setattr(
+        "bisheng.linsight.domain.services.agent_config_service.LLMService.get_model_for_call",
+        model,
+    )
+
+    await service.resolve(two_members, SimpleNamespace(user_id=1), 1, "7")
+
+    model.assert_awaited_once_with(7)
+    service.repository.tools.assert_awaited_once_with([42, 43])
+    service.repository.tool_types.assert_awaited_once_with([8, 9])
+    permission.assert_awaited_once_with(SimpleNamespace(user_id=1), ["8", "9"], ["use_tool"])
 
 
 async def test_runtime_revocation_prevents_tool_execution(service):

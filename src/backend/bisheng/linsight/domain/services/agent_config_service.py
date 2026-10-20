@@ -71,24 +71,90 @@ class AgentConfigService:
         default = main_model or (await LLMService.get_workbench_llm(tenant_id=tenant_id)).linsight_default_model_id
         if not default:
             raise LinsightAgentConfigurationError(msg="No task model is configured")
+        snapshot = config.model_dump()
+        members = snapshot["subagents"]
         enabled = (
             {skill.name: skill for skill in await self.repository.enabled_skills()}
-            if any(member.skill_names for member in config.subagents)
+            if any(member["skill_names"] for member in members)
             else {}
         )
-        snapshot = config.model_dump()
+        for member in members:
+            member["model_id"] = str(member["model_id"] or default)
+
+        model_ids = sorted({member["model_id"] for member in members})
+        tool_ids = sorted(
+            {tool_id for member in members for tool_id in [*member["tool_refs"], *member["connector_refs"]]}
+        )
+
+        async def _load_models():
+            return await asyncio.gather(
+                *(LLMService.get_model_for_call(int(model_id)) for model_id in model_ids),
+                return_exceptions=True,
+            )
+
+        async def _load_tools():
+            if not tool_ids:
+                return []
+            try:
+                return await self.repository.tools(tool_ids)
+            except Exception as exc:  # preserve the read error until member-order validation
+                return exc
+
+        model_results, tool_result = await asyncio.gather(
+            _load_models(),
+            _load_tools(),
+        )
+        models = dict(zip(model_ids, model_results, strict=True))
+        tool_error = tool_result if isinstance(tool_result, Exception) else None
+        tool_rows = [] if tool_error else tool_result
+
+        group_ids = sorted({row.type for row in tool_rows})
+        try:
+            group_rows = await self.repository.tool_types(group_ids) if group_ids else []
+            group_error = None
+        except Exception as exc:
+            group_rows = []
+            group_error = exc
+        groups = {row.id: row for row in group_rows}
+
+        non_preset_group_ids = sorted(
+            {str(group.id) for group in group_rows if group.is_preset != ToolPresetType.PRESET.value}
+        )
+        try:
+            permission_map = (
+                await ToolPermissionService.get_tool_permission_map_async(
+                    user,
+                    non_preset_group_ids,
+                    ["use_tool"],
+                )
+                if non_preset_group_ids
+                else {}
+            )
+            permission_error = None
+        except Exception as exc:
+            permission_map = {}
+            permission_error = exc
+
         digests = {}
         computed = {}
-        for member in snapshot["subagents"]:
-            member["model_id"] = str(member["model_id"] or default)
-            model = await LLMService.get_model_for_call(int(member["model_id"]))
+        for member in members:
+            model = models[member["model_id"]]
+            if isinstance(model, Exception):
+                raise model
             if not model.online or model.model_type != "llm":
                 raise LinsightAgentConfigurationError(msg="Selected model is unavailable for chat")
             ids = member["tool_refs"] + member["connector_refs"]
-            rows = await self.repository.tools(ids)
+            if tool_error is not None:
+                raise tool_error
+            rows = [row for row in tool_rows if row.id in ids]
             if set(ids) != {row.id for row in rows if not row.is_delete}:
                 raise LinsightAgentConfigurationError(msg="Selected tool is unavailable")
-            groups = {row.id: row for row in await self.repository.tool_types(list({row.type for row in rows}))}
+            if group_error is not None:
+                raise group_error
+            if permission_error is not None and any(
+                groups.get(row.type) and groups[row.type].is_preset != ToolPresetType.PRESET.value for row in rows
+            ):
+                raise permission_error
             for tool in rows:
                 group = groups.get(tool.type)
                 if group is None or group.is_delete:
@@ -96,8 +162,7 @@ class AgentConfigService:
                 if tool.id in member["connector_refs"] and group.is_preset == ToolPresetType.PRESET.value:
                     raise LinsightAgentConfigurationError(msg="A connector must reference an API or MCP action")
                 if group.is_preset != ToolPresetType.PRESET.value:
-                    allowed = await ToolPermissionService.has_any_permission_async(user, str(group.id), ["use_tool"])
-                    if not allowed:
+                    if "use_tool" not in permission_map.get(str(group.id), set()):
                         raise LinsightAgentConfigurationError(msg="Selected tool is not authorized")
             if not set(member["skill_names"]).issubset(enabled):
                 raise LinsightAgentConfigurationError(msg="Selected skill is unavailable")
