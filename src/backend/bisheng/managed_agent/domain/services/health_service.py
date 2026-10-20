@@ -127,6 +127,10 @@ async def run_health_check(user, agent_id: int):
 
 async def scan_once(*, limit: int = 500) -> dict:
     """One beat round: check online agents across tenants."""
+    if not _conf().enabled:
+        # The beat entry stays registered so enabling the feature does not need
+        # a beat restart; the tick is simply a no-op while disabled.
+        return {"checked": 0, "failed": 0, "total": 0}
     with bypass_tenant_filter():
         agents = await ManagedAgentDao.alist_health_scan(limit=limit)
     checked = 0

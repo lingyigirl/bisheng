@@ -33,3 +33,12 @@ _REAL = _load_real_celery_schedules()
 def _real_crontab_shim(monkeypatch):
     monkeypatch.setattr(cron_schedule_module, "crontab", _REAL.crontab)
     monkeypatch.setattr(cron_schedule_module, "ParseException", _REAL.ParseException)
+
+
+@pytest.fixture(autouse=True)
+def _enable_managed_agent(monkeypatch):
+    """Most F078 tests exercise the enabled path; the flag-specific tests
+    explicitly override this fixture."""
+    from bisheng.common.services.config_service import settings
+
+    monkeypatch.setattr(settings.managed_agent, "enabled", True)

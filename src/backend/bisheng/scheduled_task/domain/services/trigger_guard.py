@@ -107,9 +107,14 @@ async def _native_projection_state(agent) -> AppState:
 async def _app_state(task: ScheduledTask) -> AppState:
     """应用存在性与上线状态。工作流硬删（行没了即已删除）、助手软删（`is_delete`）。"""
     if task.app_type == MANAGED_AGENT_APP_TYPE:
+        from bisheng.common.services.config_service import settings
         from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
         from bisheng.managed_agent.domain.models.managed_agent import AgentStatus
 
+        if not settings.managed_agent.enabled:
+            # Feature switch off: existing app_type=100 tasks are treated like an
+            # offline app (periodic skip / once wait / event+manual reject).
+            return AppState.OFFLINE
         agent = await ManagedAgentDao.aget(int(task.app_id))
         if agent is None:
             return AppState.DELETED
@@ -202,9 +207,12 @@ class IdentityBinding:
 
 async def _app_exists(app_id: str, app_type: int) -> bool:
     if app_type == MANAGED_AGENT_APP_TYPE:
+        from bisheng.common.services.config_service import settings
         from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
         from bisheng.managed_agent.domain.models.managed_agent import AgentStatus
 
+        if not settings.managed_agent.enabled:
+            return False
         agent = await ManagedAgentDao.aget(int(app_id))
         if agent is None or agent.status != AgentStatus.ONLINE.value:
             return False

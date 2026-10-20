@@ -171,7 +171,7 @@ def state(client, mock_server) -> E2EState:
     key = client.post(
         f"{API_BASE}/service-accounts/{st.account_id}/keys",
         headers=headers,
-        json={"name": "e2e-managed", "scopes": ["managed_agent:invoke"]},
+        json={"name": "e2e-managed", "scopes": ["managed_agent:invoke", "schedule:trigger"]},
     ).json()
     assert key.get("status_code") == 200, key
     st.key = key["data"]["plaintext"]
@@ -277,6 +277,62 @@ def test_scheduled_task_can_target_managed_agent(client, state):
 
     run = client.post(f"{API_BASE}/scheduled-tasks/{state.task_id}/run", headers=headers).json()
     assert run.get("status_code") in (200, 11909, 11910), run
+
+
+def test_custom_http_adapter(client, state):
+    headers = _bearer(state.token)
+    created = client.post(
+        f"{API_BASE}/managed-agents",
+        headers=headers,
+        json={
+            "name": f"{PREFIX}custom-{SUFFIX}",
+            "source_kind": "high_code",
+            "protocol": "custom_http",
+            "endpoint": f"http://127.0.0.1:{state.mock_port}/custom",
+            "health_method": "test_invoke",
+            "credential": {"auth_type": "none"},
+            "agent_card": {"inputs": [{"key": "query", "type": "string", "required": True}]},
+        },
+    ).json()
+    assert created.get("status_code") == 200, created
+    agent_id = created["data"]["id"]
+    try:
+        assert client.post(f"{API_BASE}/managed-agents/{agent_id}/publish", headers=headers).json()["status_code"] == 200
+        grant = client.post(
+            f"{API_BASE}/service-accounts/{state.account_id}/resource-grants:mutate",
+            headers=headers,
+            json={"grants": [{"resource_type": "managed_agent", "resource_id": str(agent_id), "level": "editor"}], "revokes": []},
+        )
+        assert grant.status_code == 200, grant.text
+        invoked = client.post(
+            f"{V2_BASE}/managed-agent/invoke",
+            headers={"Authorization": f"Bearer {state.key}"},
+            json={"agent_id": agent_id, "input": {"query": "hi"}},
+        )
+        assert invoked.status_code == 200, invoked.text
+        assert invoked.json()["data"]["output"] == "custom-pong"
+    finally:
+        client.delete(f"{API_BASE}/managed-agents/{agent_id}", headers=headers)
+
+
+def test_health_check_and_event_trigger(client, state):
+    headers = _bearer(state.token)
+    health = client.post(f"{API_BASE}/managed-agents/{state.agent_id}/health-check", headers=headers).json()
+    assert health.get("status_code") == 200, health
+    assert health["data"]["health_status"] == "healthy"
+
+    event = client.post(
+        f"{V2_BASE}/schedule/trigger",
+        headers={
+            "Authorization": f"Bearer {state.key}",
+            "X-Bs-Timestamp": str(int(time.time())),
+            "X-Bs-Nonce": uuid.uuid4().hex,
+        },
+        json={"task_id": state.task_id},
+    )
+    body = event.json()
+    assert event.status_code == 200, body
+    assert body.get("status_code") in (200, 11910), body
 
 
 def test_delete_is_blocked_while_task_enabled(client, state):

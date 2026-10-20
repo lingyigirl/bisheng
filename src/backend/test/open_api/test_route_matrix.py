@@ -19,6 +19,7 @@ from starlette.requests import Request
 
 from bisheng.api.router import router_rpc
 from bisheng.common.errcode.open_api import OpenApiKeyMissingError
+from bisheng.common.services.config_service import settings
 from bisheng.core.config.open_api import OpenApiConf
 from bisheng.core.context.tenant import DEFAULT_TENANT_ID
 from bisheng.open_api.api import dependencies as deps
@@ -58,6 +59,15 @@ def test_registry_matches_real_routes_bidirectionally():
     registered = {(m, re.sub(r"\{[^}]+\}", "{}", p)) for m, p in all_registered_endpoints()}
     real = {(m, p) for m, p, _ in _routes()}
     scopeless = {(m, p) for m, p, e in _routes() if get_open_api_scope_marker(e).scope is None}
+
+    # F078 is mounted only when the deployment switch is on. With the default
+    # config (off), the registry still lists the managed-agent scope, so drop
+    # that expected pair from the "ghost endpoint" comparison and assert the
+    # route is genuinely absent.
+    managed_pair = ("POST", "/api/v2/managed-agent/invoke")
+    if not settings.managed_agent.enabled:
+        registered.discard(managed_pair)
+        assert managed_pair not in real, "managed_agent.enabled is off but the route is mounted"
 
     assert registered - real == set(), f"注册表存在幽灵端点: {registered - real}"
     assert real - registered == scopeless, (
