@@ -7,6 +7,7 @@ All read-only — no writes to any F046 domain object (release-contract 表 1).
 """
 
 import json
+import time
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime
@@ -228,6 +229,11 @@ def _row_epoch(row: Any) -> float | None:
     if value is None:
         return None
     if isinstance(value, datetime):
+        # Windows rejects datetime.timestamp() for local pre-1980 values
+        # (including the epoch fixtures used by the export tests), while
+        # mktime handles the same timezone-aware local conversion.
+        if value.tzinfo is None:
+            return time.mktime(value.timetuple())
         return value.timestamp()
     try:
         return float(value)
