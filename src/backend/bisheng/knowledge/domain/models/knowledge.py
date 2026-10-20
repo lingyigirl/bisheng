@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Optional, Union
 
 from pydantic import BaseModel, field_validator
-from sqlalchemy import Boolean, Float, Integer, String
+from sqlalchemy import BigInteger, Boolean, Float, Integer, SmallInteger, String
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.functions import FunctionElement
 from sqlmodel import Column, DateTime, Field, case, delete, func, or_, select, text, update
@@ -129,6 +129,25 @@ class KnowledgeBase(SQLModelSerializable):
         default=None,
         sa_column=Column(JsonType, nullable=True),
         description="Metadata Field Configuration for Knowledge Base",
+    )
+    # Knowledge-graph lifecycle. The graph is built manually from the KB detail
+    # page; these columns only drive the entry point's state machine.
+    graph_state: int = Field(
+        default=0,
+        sa_column=Column(
+            SmallInteger,
+            nullable=False,
+            server_default=text("0"),
+            comment="知识图谱状态 0未生成 1生成中 2已生成 3生成失败 4已过期",
+        ),
+    )
+    graph_built_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime, nullable=True, comment="最近一次知识图谱成功生成时间"),
+    )
+    graph_job_id: int | None = Field(
+        default=None,
+        sa_column=Column(BigInteger, nullable=True, comment="最近一次知识图谱生成任务ID"),
     )
     create_time: datetime | None = Field(
         default=None, sa_column=Column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))

@@ -224,6 +224,15 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["bisheng", "bisheng_langchain"]
 
+[tool.ruff.lint.per-file-ignores]
+# These files intentionally contain Chinese user-facing copy/comments; RUF001
+# flags their full-width punctuation as ambiguous.
+"bisheng/knowledge/domain/models/knowledge_graph.py" = ["RUF001"]
+"bisheng/knowledge/domain/schemas/knowledge_graph_schema.py" = ["RUF001"]
+"bisheng/knowledge/domain/services/knowledge_graph_extraction.py" = ["RUF001"]
+"bisheng/core/database/alembic/versions/v2_8_0_f091_knowledge_graph.py" = ["RUF001"]
+"test/knowledge/test_knowledge_graph_extraction.py" = ["RUF001"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

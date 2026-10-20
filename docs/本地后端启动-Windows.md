@@ -238,8 +238,8 @@ curl http://127.0.0.1:7860/api/v1/env      # 期望 status_code=200，返回 env
 cd src/backend
 export config=config.yaml
 
-# 知识库任务（文档解析、Embedding、向量写入）
-uv run --frozen --no-sync celery -A bisheng.worker.main worker -l info -c 20 -P threads -Q knowledge_celery -n knowledge@%h
+# 知识库任务（文档解析、Embedding、向量写入）+ 知识图谱抽取
+uv run --frozen --no-sync celery -A bisheng.worker.main worker -l info -c 20 -P threads -Q knowledge_celery,graph_celery -n knowledge@%h
 
 # 工作流任务（DAG 执行）
 uv run --frozen --no-sync celery -A bisheng.worker.main worker -l info -c 100 -P threads -Q workflow_celery -n workflow@%h

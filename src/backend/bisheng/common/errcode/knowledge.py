@@ -218,3 +218,44 @@ class BackendProcessingError(BaseErrorCode):
 class KnowledgeInvalidCursorError(BaseErrorCode):
     Code: int = 10991
     Msg: str = "Invalid pagination cursor"
+
+
+# Knowledge graph (manual build) error codes.
+class KnowledgeGraphJobRunningError(BaseErrorCode):
+    Code: int = 10992
+    Msg: str = "知识图谱正在生成中，请稍后再试"
+
+
+class KnowledgeGraphNoFilesError(BaseErrorCode):
+    Code: int = 10993
+    Msg: str = "知识库中没有解析成功的文件"
+
+
+class KnowledgeGraphModelNotConfiguredError(BaseErrorCode):
+    Code: int = 10994
+    Msg: str = "未配置知识图谱抽取模型"
+
+
+class KnowledgeGraphNotReadyError(BaseErrorCode):
+    Code: int = 10995
+    Msg: str = "知识图谱尚未生成"
+
+
+class KnowledgeGraphBuildFailedError(BaseErrorCode):
+    Code: int = 10996
+    Msg: str = "知识图谱生成失败: {exception}"
+
+
+class KnowledgeGraphTypeNotSupportedError(BaseErrorCode):
+    Code: int = 10997
+    Msg: str = "仅普通文档知识库支持生成知识图谱"
+
+
+class KnowledgeGraphAlreadyExistsError(BaseErrorCode):
+    Code: int = 10998
+    Msg: str = "知识图谱已存在，请确认重新生成"
+
+
+class KnowledgeGraphEntityNotFoundError(BaseErrorCode):
+    Code: int = 10999
+    Msg: str = "实体不存在"

@@ -98,7 +98,13 @@
     "systemConfigTenantBanner": "正在配置 {{tenantName}}。未配置项将从 {{rootName}} 继承（若 {{rootName}} 开启共享）。",
     "systemConfigChildOwnBanner": "正在配置本租户系统模型。未配置项将从 {{rootName}} 继承（若 {{rootName}} 开启共享）。",
     "systemConfigInheritedBadge": "继承自 Root",
-    "systemConfigFallbackBlockedBanner": "Root 已关闭共享。请联系超管开启共享或在此为本租户独立配置。"
+    "systemConfigFallbackBlockedBanner": "Root 已关闭共享。请联系超管开启共享或在此为本租户独立配置。",
+    "knowledgeGraphModel": "知识图谱抽取模型",
+    "knowledgeGraphModelTooltip": "用于手动生成知识图谱时的实体、关系与属性抽取；未配置时回退到文档摘要模型",
+    "knowledgeGraphEntityTypes": "知识图谱默认实体类型",
+    "knowledgeGraphEntityTypesPlaceholder": "例如：人物, 组织, 地点, 事件, 产品, 概念",
+    "knowledgeGraphEntityTypesTooltip": "用逗号分隔；生成图谱时可在弹窗中临时覆盖",
+    "knowledgeGraphEntityTypesDefault": "人物, 组织, 地点, 事件, 产品, 概念"
   },
   "finetune": {
     "rtServiceManagement": "FT服务管理",

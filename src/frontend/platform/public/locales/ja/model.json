@@ -98,7 +98,13 @@
     "systemConfigTenantBanner": "{{tenantName}} を設定中。未設定項目は（{{rootName}} 共有が有効な場合）{{rootName}} から継承されます。",
     "systemConfigChildOwnBanner": "テナントのシステムモデルを設定中。未設定項目は（{{rootName}} の共有が有効な場合）{{rootName}} から継承されます。",
     "systemConfigInheritedBadge": "Root から継承",
-    "systemConfigFallbackBlockedBanner": "Root 共有が無効です。スーパー管理者に共有を有効化してもらうか、このテナントで個別に設定してください。"
+    "systemConfigFallbackBlockedBanner": "Root 共有が無効です。スーパー管理者に共有を有効化してもらうか、このテナントで個別に設定してください。",
+    "knowledgeGraphModel": "ナレッジグラフ抽出モデル",
+    "knowledgeGraphModelTooltip": "ナレッジグラフ生成時のエンティティ・関係・属性抽出に使用します。未設定の場合は文書要約モデルを使用します",
+    "knowledgeGraphEntityTypes": "ナレッジグラフのデフォルトエンティティ種別",
+    "knowledgeGraphEntityTypesPlaceholder": "例：人物, 組織, 場所, イベント, 製品, 概念",
+    "knowledgeGraphEntityTypesTooltip": "カンマ区切りで入力してください。生成ダイアログで一時的に上書きできます",
+    "knowledgeGraphEntityTypesDefault": "人物, 組織, 場所, イベント, 製品, 概念"
   },
   "finetune": {
     "rtServiceManagement": "FTサービス管理",

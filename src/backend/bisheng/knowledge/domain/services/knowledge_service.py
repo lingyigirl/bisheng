@@ -119,6 +119,16 @@ class KnowledgeService(KnowledgeUtils):
             permission_service=self.permission_service,
         )
 
+    @staticmethod
+    def _mark_graph_stale(knowledge_id: int) -> None:
+        """Best-effort: a source change invalidates a completed graph."""
+        try:
+            from bisheng.knowledge.domain.services.knowledge_graph_service import KnowledgeGraphService
+
+            KnowledgeGraphService.mark_stale_sync(knowledge_id)
+        except Exception:  # noqa: BLE001 - graph staleness must not block editing
+            logger.exception("mark knowledge graph stale failed knowledge_id={}", knowledge_id)
+
     async def add_metadata_fields(self, login_user: UserPayload, add_metadata_fields: AddKnowledgeMetadataFieldsReq):
         return await self.metadata_service.add_metadata_fields(login_user, add_metadata_fields)
 
@@ -862,6 +872,14 @@ class KnowledgeService(KnowledgeUtils):
 
         # Cleaned vectorData in
         cls.delete_knowledge_file_in_vector(knowledge)
+
+        # Knowledge graph rows are independent of Milvus/ES; clear them explicitly.
+        try:
+            from bisheng.knowledge.domain.services.knowledge_graph_service import KnowledgeGraphService
+
+            KnowledgeGraphService.delete_by_knowledge_sync(knowledge_id)
+        except Exception:  # noqa: BLE001 - KB deletion must not fail because graph cleanup did
+            logger.exception("delete knowledge graph rows failed knowledge_id={}", knowledge_id)
 
         # CleanedminioData
         cls.delete_knowledge_file_in_minio(knowledge_id)
@@ -2046,6 +2064,7 @@ class KnowledgeService(KnowledgeUtils):
         cls.update_chunk_updater_info(vector_client, es_client, db_knowledge, file_id, login_user)
 
         KnowledgeFileDao.update_file_updater(file_id, login_user.user_id, login_user.user_name)
+        cls._mark_graph_stale(knowledge_id)
 
         return True
 
@@ -2087,6 +2106,7 @@ class KnowledgeService(KnowledgeUtils):
         cls.update_chunk_updater_info(vector_client, es_client, db_knowledge, file_id, login_user)
 
         KnowledgeFileDao.update_file_updater(file_id, login_user.user_id, login_user.user_name)
+        cls._mark_graph_stale(knowledge_id)
 
         return True
 

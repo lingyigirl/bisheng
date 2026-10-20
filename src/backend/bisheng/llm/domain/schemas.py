@@ -132,6 +132,11 @@ class KnowledgeLLMConfig(BaseModel):
     )
     qa_similar_model_id: int | None = Field(None, description="QAThe Knowledge Base Similarity Question Model'sID")
     asr_model_id: int | None = Field(None, description="Knowledge base media transcription ASR model ID")
+    graph_model_id: int | None = Field(None, description="Knowledge graph extraction model ID")
+    graph_entity_types: list[str] | None = Field(
+        None,
+        description="Default entity types for knowledge graph extraction; empty uses built-in defaults",
+    )
     abstract_enabled: bool = Field(default=True, description="Whether to generate file summaries after parsing")
     auto_tag_enabled: bool = Field(default=True, description="Whether to generate file tags after upload parsing")
     abstract_prompt: str | None = Field(None, description="Summary Prompt")

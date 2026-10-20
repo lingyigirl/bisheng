@@ -395,6 +395,14 @@ def _parse_knowledge_file(file_id: int, preview_cache_key: str = None, callback_
         preview_cache_keys=[preview_cache_key],
         enable_auto_tags=True,
     )
+    # A re-parsed or newly parsed file invalidates an existing graph. The
+    # helper only flips BUILT -> STALE, so first-time parses are no-ops.
+    try:
+        from bisheng.knowledge.domain.services.knowledge_graph_service import KnowledgeGraphService
+
+        KnowledgeGraphService.mark_stale_sync(db_knowledge.id)
+    except Exception:  # noqa: BLE001 - graph staleness must not fail parsing
+        logger.exception("mark knowledge graph stale after parse failed knowledge_id={}", db_knowledge.id)
     logger.debug("parse_knowledge_file_celery_over", file_id)
     return db_knowledge
 

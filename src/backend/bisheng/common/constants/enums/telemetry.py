@@ -40,6 +40,9 @@ class ApplicationTypeEnum(str, Enum):
     # KNOWLEDGE_BASE -- it has its own model slot (`datasource_sql_llm`), so
     # telemetry and cost attribution have to be able to tell them apart.
     DATASOURCE_SQL = "datasource_sql"
+    # Knowledge graph extraction (manual build). Separate type so token cost is
+    # attributable to the graph job rather than to ordinary KB parsing.
+    KNOWLEDGE_GRAPH = "knowledge_graph"
 
     UNKNOWN = "unknown"
 

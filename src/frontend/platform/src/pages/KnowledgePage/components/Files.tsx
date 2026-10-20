@@ -35,6 +35,7 @@ import FileTagList from "./tags/FileTagList";
 import KnowledgeTagSelect from "./tags/KnowledgeTagSelect";
 import { TagCenterDialog } from "./tags/TagCenterDialog";
 import { HitTestDialog } from "./HitTestDialog";
+import { KnowledgeGraphButton } from "./KnowledgeGraph/KnowledgeGraphButton";
 import { resolveKnowledgeParseFailure } from "../knowledgeParseFailureMessage";
 import { knowledgeUploadCapabilities } from "../knowledgeUploadCapabilities";
 
@@ -194,9 +195,24 @@ export default function Files({ onPreview, canEditKb = false, canDeleteKb = fals
     const [tempFilters, setTempFilters] = useState<number[]>([]);
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const [metadataFields, setMetadataFields] = useState<Array<{ field_name: string; field_type: string }>>([]);
+    // Knowledge graph is only supported for normal document libraries (type=0).
+    const [knowledgeType, setKnowledgeType] = useState<number | null>(null);
     useEffect(() => {
         setEditable(canEditKb);
     }, [canEditKb, setEditable]);
+
+    useEffect(() => {
+        if (!id) return;
+        let cancelled = false;
+        getKnowledgeDetailApi([id]).then((details) => {
+            if (!cancelled) {
+                setKnowledgeType(Number(details?.[0]?.type ?? -1));
+            }
+        }).catch(() => {
+            if (!cancelled) setKnowledgeType(-1);
+        });
+        return () => { cancelled = true; };
+    }, [id]);
 
     // Polling during parsing
     const timerRef = useRef(null)
@@ -558,6 +574,11 @@ export default function Files({ onPreview, canEditKb = false, canDeleteKb = fals
                             <span className="hidden md:inline">{t('hitTest')}</span>
                         </Button>
                     </HitTestDialog>
+                    <KnowledgeGraphButton
+                        knowledgeId={id}
+                        knowledgeType={knowledgeType}
+                        canEditKb={canEditKb}
+                    />
                     {canEditKb && (
                         <AddKnowledgeFileMenu
                             buttonClassName="px-4 md:px-8"

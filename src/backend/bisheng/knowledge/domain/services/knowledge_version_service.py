@@ -299,6 +299,17 @@ class KnowledgeVersionService:
                 old_primary.is_primary = False
                 await self.version_repo.update(old_primary)
 
+        # Primary-version changes alter which chunks are live; mark any
+        # completed graph stale so the UI prompts a rebuild.
+        try:
+            from starlette.concurrency import run_in_threadpool
+
+            from bisheng.knowledge.domain.services.knowledge_graph_service import KnowledgeGraphService
+
+            await run_in_threadpool(KnowledgeGraphService.mark_stale_sync, target_kf.knowledge_id)
+        except Exception:  # noqa: BLE001 - version switching must not fail because graph cleanup did
+            logger.exception("mark knowledge graph stale after primary switch failed knowledge_id={}", target_kf.knowledge_id)
+
         KnowledgeAuditTelemetryService.audit_set_primary_version(
             self.login_user, self.request,
             target_kf.knowledge_id, target_kf.file_name, target_version.version_no,

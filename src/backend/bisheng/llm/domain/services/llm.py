@@ -1114,6 +1114,7 @@ class LLMService:
                 data.extract_title_model_id,
                 data.qa_similar_model_id,
                 data.asr_model_id,
+                data.graph_model_id,
             ],
             target,
         )

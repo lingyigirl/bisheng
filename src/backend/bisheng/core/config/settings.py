@@ -178,6 +178,10 @@ class CeleryConf(BaseModel):
     def validate(self):
         if not self.task_routers:
             self.task_routers = {
+                # Graph extraction is LLM-heavy; keep it on its own queue so it
+                # cannot starve file parsing. Must be listed BEFORE the generic
+                # knowledge route (Celery matches routes in insertion order).
+                "bisheng.worker.knowledge.graph.*": {"queue": "graph_celery"},
                 "bisheng.worker.knowledge.*": {"queue": "knowledge_celery"},  # Knowledge Base Related Tasks
                 "bisheng.worker.workflow.*": {"queue": "workflow_celery"},  # Workflow Execution Related Tasks
             }
@@ -265,6 +269,12 @@ class CeleryConf(BaseModel):
         if "file_scheduler_reconcile" not in self.beat_schedule:
             self.beat_schedule["file_scheduler_reconcile"] = {
                 "task": "bisheng.worker.knowledge.scheduler.reconcile_file_scheduler_task",
+                "schedule": 300.0,
+            }
+        if "knowledge_graph_reconcile" not in self.beat_schedule:
+            # Fail graph jobs whose worker died or whose queue entry was lost.
+            self.beat_schedule["knowledge_graph_reconcile"] = {
+                "task": "bisheng.worker.knowledge.graph.reconcile_knowledge_graph_job_celery",
                 "schedule": 300.0,
             }
         if "storage_tmp_cleanup" not in self.beat_schedule:

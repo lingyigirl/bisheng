@@ -154,6 +154,15 @@ def delete_vector_files(file_ids: List[int], knowledge: Knowledge) -> bool:
         )
         logger.info(f"act=delete_es file_ids={file_ids} res={res}")
 
+    # Knowledge-graph evidence references document_id; remove it alongside the
+    # chunks so the graph does not keep pointing at deleted files.
+    try:
+        from bisheng.knowledge.domain.services.knowledge_graph_service import KnowledgeGraphService
+
+        KnowledgeGraphService.on_files_deleted_sync(knowledge.id, list(file_ids))
+    except Exception:  # noqa: BLE001 - file deletion must not fail because graph cleanup did
+        logger.exception("knowledge graph cascade delete failed knowledge_id={} file_ids={}", knowledge.id, file_ids)
+
     return True
 
 

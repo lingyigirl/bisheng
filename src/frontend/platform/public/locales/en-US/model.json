@@ -100,7 +100,13 @@
     "systemConfigTenantBanner": "Configuring {{tenantName}}. Unconfigured items inherit from {{rootName}} (when {{rootName}} sharing is on).",
     "systemConfigChildOwnBanner": "Configuring your tenant's system models. Unconfigured items inherit from {{rootName}} (when {{rootName}} sharing is on).",
     "systemConfigInheritedBadge": "Inherited from Root",
-    "systemConfigFallbackBlockedBanner": "Root sharing is off. Ask the super admin to enable sharing or configure this tenant directly."
+    "systemConfigFallbackBlockedBanner": "Root sharing is off. Ask the super admin to enable sharing or configure this tenant directly.",
+    "knowledgeGraphModel": "Knowledge graph extraction model",
+    "knowledgeGraphModelTooltip": "Used to extract entities, relations and attributes when generating a knowledge graph; falls back to the document summary model when empty",
+    "knowledgeGraphEntityTypes": "Default knowledge graph entity types",
+    "knowledgeGraphEntityTypesPlaceholder": "e.g. Person, Organization, Location, Event, Product, Concept",
+    "knowledgeGraphEntityTypesTooltip": "Comma-separated; can be overridden in the build dialog",
+    "knowledgeGraphEntityTypesDefault": "Person, Organization, Location, Event, Product, Concept"
   },
   "finetune": {
     "rtServiceManagement": "FT Service Management",

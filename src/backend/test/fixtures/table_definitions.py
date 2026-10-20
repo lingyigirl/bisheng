@@ -178,8 +178,82 @@ CREATE TABLE IF NOT EXISTS knowledge (
     -- column added without a line here fails at INSERT with
     -- "table knowledge has no column named ...".
     department_id INTEGER,
+    graph_state INTEGER NOT NULL DEFAULT 0,
+    graph_built_at DATETIME,
+    graph_job_id INTEGER,
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+)"""
+
+TABLE_KNOWLEDGE_GRAPH_JOB = """\
+CREATE TABLE IF NOT EXISTS knowledge_graph_job (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL DEFAULT 1,
+    knowledge_id INTEGER NOT NULL,
+    status INTEGER NOT NULL DEFAULT 0,
+    model_id INTEGER,
+    entity_types JSON,
+    total_files INTEGER NOT NULL DEFAULT 0,
+    done_files INTEGER NOT NULL DEFAULT 0,
+    failed_files INTEGER NOT NULL DEFAULT 0,
+    total_chunks INTEGER NOT NULL DEFAULT 0,
+    done_chunks INTEGER NOT NULL DEFAULT 0,
+    token_in INTEGER NOT NULL DEFAULT 0,
+    token_out INTEGER NOT NULL DEFAULT 0,
+    error_message VARCHAR(1000),
+    create_user_id INTEGER,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    start_time DATETIME,
+    end_time DATETIME,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
+)"""
+
+TABLE_KNOWLEDGE_GRAPH_ENTITY = """\
+CREATE TABLE IF NOT EXISTS knowledge_graph_entity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL DEFAULT 1,
+    knowledge_id INTEGER NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    normalized_name VARCHAR(255) NOT NULL,
+    entity_type VARCHAR(64) NOT NULL,
+    description TEXT,
+    attributes JSON,
+    aliases JSON,
+    mention_count INTEGER NOT NULL DEFAULT 1,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE (knowledge_id, normalized_name, entity_type)
+)"""
+
+TABLE_KNOWLEDGE_GRAPH_RELATION = """\
+CREATE TABLE IF NOT EXISTS knowledge_graph_relation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL DEFAULT 1,
+    knowledge_id INTEGER NOT NULL,
+    source_entity_id INTEGER NOT NULL,
+    target_entity_id INTEGER NOT NULL,
+    rel_type VARCHAR(64) NOT NULL,
+    description TEXT,
+    weight FLOAT NOT NULL DEFAULT 1,
+    attributes JSON,
+    mention_count INTEGER NOT NULL DEFAULT 1,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE (knowledge_id, source_entity_id, target_entity_id, rel_type)
+)"""
+
+TABLE_KNOWLEDGE_GRAPH_EVIDENCE = """\
+CREATE TABLE IF NOT EXISTS knowledge_graph_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL DEFAULT 1,
+    knowledge_id INTEGER NOT NULL,
+    entity_id INTEGER,
+    relation_id INTEGER,
+    document_id INTEGER NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    chunk_pk VARCHAR(128),
+    confidence FLOAT,
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL
 )"""
 
 # ---------------------------------------------------------------------------
@@ -546,6 +620,10 @@ TABLE_DEFINITIONS: dict[str, str] = {
     "groupresource": TABLE_GROUP_RESOURCE,
     "flow": TABLE_FLOW,
     "knowledge": TABLE_KNOWLEDGE,
+    "knowledge_graph_job": TABLE_KNOWLEDGE_GRAPH_JOB,
+    "knowledge_graph_entity": TABLE_KNOWLEDGE_GRAPH_ENTITY,
+    "knowledge_graph_relation": TABLE_KNOWLEDGE_GRAPH_RELATION,
+    "knowledge_graph_evidence": TABLE_KNOWLEDGE_GRAPH_EVIDENCE,
     "department": TABLE_DEPARTMENT,
     "user_department": TABLE_USER_DEPARTMENT,
     "auditlog": TABLE_AUDIT_LOG,

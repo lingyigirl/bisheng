@@ -44,6 +44,8 @@ knowledge_file_worker:
 
 celery_task:
   task_routers:
+    bisheng.worker.knowledge.graph.*:
+      queue: graph_celery
     bisheng.worker.knowledge.*:
       queue: knowledge_celery
 

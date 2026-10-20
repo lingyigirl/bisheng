@@ -7,7 +7,7 @@ start_mode=${1:-api}
 
 start_knowledge(){
   # 知识库解析的celery worker
-    celery -A bisheng.worker.main worker -l info -c 50 -P threads -Q knowledge_celery -n knowledge@%h
+    celery -A bisheng.worker.main worker -l info -c 50 -P threads -Q knowledge_celery,graph_celery -n knowledge@%h
 }
 
 start_knowledge_ocr(){
@@ -36,7 +36,7 @@ start_default(){
 
 start_min_worker(){
     # 最小化worker进程数，减少资源占用
-    celery -A bisheng.worker.main worker -l info -c 100 -P threads -Q knowledge_celery,ocr_celery,workflow_celery,celery -n min_worker@%h
+    celery -A bisheng.worker.main worker -l info -c 100 -P threads -Q knowledge_celery,ocr_celery,graph_celery,workflow_celery,celery -n min_worker@%h
 }
 
 if [ "$start_mode" = "api" ]; then

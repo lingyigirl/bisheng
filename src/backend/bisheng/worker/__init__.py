@@ -8,6 +8,11 @@ from bisheng.worker.knowledge.file_worker import (
     parse_knowledge_file_celery,
     retry_knowledge_file_celery,
 )
+from bisheng.worker.knowledge.graph_worker import (
+    build_knowledge_graph_celery,
+    extract_knowledge_graph_file_celery,
+    reconcile_knowledge_graph_job_celery,
+)
 from bisheng.worker.knowledge.move_worker import migrate_file_vectors
 from bisheng.worker.knowledge.qa import copy_qa_knowledge_celery, insert_qa_celery, rebuild_qa_knowledge_celery
 from bisheng.worker.knowledge.rebuild_knowledge_worker import rebuild_knowledge_celery, rebuild_knowledge_file_chunk

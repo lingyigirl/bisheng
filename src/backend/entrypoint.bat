@@ -99,7 +99,7 @@ exit /b %errorlevel%
 
 :knowledge
 echo Starting Knowledge Celery worker...
-"%VENV%\celery.exe" -A bisheng.worker.main worker -l info -c 20 -P threads -Q knowledge_celery -n knowledge@%%h
+"%VENV%\celery.exe" -A bisheng.worker.main worker -l info -c 20 -P threads -Q knowledge_celery,graph_celery -n knowledge@%%h
 exit /b %errorlevel%
 
 

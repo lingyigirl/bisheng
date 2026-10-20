@@ -3,9 +3,10 @@ import os
 from bisheng.worker.main import bisheng_celery
 
 _QUEUES = {
-    "all": "ocr_celery,knowledge_celery,workflow_celery,celery",
+    "all": "ocr_celery,knowledge_celery,graph_celery,workflow_celery,celery",
     "ocr": "ocr_celery",
-    "file": "knowledge_celery,workflow_celery,celery",
+    "file": "knowledge_celery,graph_celery,workflow_celery,celery",
+    "graph": "graph_celery",
 }
 
 

@@ -113,10 +113,10 @@ $ServiceDefs = [ordered]@{
         Port = 7860
     }
     'knowledge' = [pscustomobject]@{
-        Desc = 'Celery 知识库任务 (knowledge_celery)'
+        Desc = 'Celery 知识库任务 (knowledge_celery + graph_celery)'
         Args = @('-m', 'celery', '-A', 'bisheng.worker.main', 'worker',
                  '-l', 'info', '-c', '20', '-P', 'threads',
-                 '-Q', 'knowledge_celery', '-n', "knowledge@$NodeName")
+                 '-Q', 'knowledge_celery,graph_celery', '-n', "knowledge@$NodeName")
         Port = 0
     }
     'workflow' = [pscustomobject]@{

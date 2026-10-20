@@ -104,6 +104,9 @@ _TENANT_AWARE_MODEL_MODULES = (
     "bisheng.database.models.mark_task",
     "bisheng.user.domain.models.user_role",
     "bisheng.knowledge.domain.models.knowledge_file",
+    # Knowledge-graph tables are tenant-scoped like their parent knowledge base.
+    # Listed explicitly because the discovery snapshot runs once at startup.
+    "bisheng.knowledge.domain.models.knowledge_graph",
     "bisheng.tool.domain.models.gpts_tools",
     "bisheng.share_link.domain.models.share_link",
     "bisheng.message.domain.models.inbox_message",

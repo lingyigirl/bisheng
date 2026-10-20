@@ -465,5 +465,13 @@
   "11818": "tools is not applicable to this call",
   "11819": "Unknown scope code",
   "11820": "Unsupported resource type or permission level",
-  "11821": "This user is a service account's dedicated identity; manage it under System -> Service accounts"
+  "11821": "This user is a service account's dedicated identity; manage it under System -> Service accounts",
+  "10992": "Knowledge graph is being generated, please try again later",
+  "10993": "No successfully parsed files in this knowledge base",
+  "10994": "Knowledge graph extraction model is not configured",
+  "10995": "Knowledge graph has not been generated",
+  "10996": "Knowledge graph generation failed: {{exception}}",
+  "10997": "Only normal document knowledge bases support knowledge graphs",
+  "10998": "Knowledge graph already exists; confirm regeneration",
+  "10999": "Entity not found"
 }

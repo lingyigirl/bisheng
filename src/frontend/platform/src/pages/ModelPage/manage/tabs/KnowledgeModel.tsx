@@ -3,7 +3,7 @@ import { LoadIcon, LoadingIcon } from "@/components/bs-icons/loading";
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm";
 import { Button } from "@/components/bs-ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/bs-ui/dialog";
-import { Textarea } from "@/components/bs-ui/input";
+import { Input, Textarea } from "@/components/bs-ui/input";
 import { Label } from "@/components/bs-ui/label";
 import Cascader from "@/components/bs-ui/select/cascader";
 import { Switch } from "@/components/bs-ui/switch";
@@ -120,6 +120,10 @@ const PromptDialog = ({ value, onChange, onRestore, onSave, label, children }) =
     </Dialog>
 }
 
+function parseEntityTypes(value: string): string[] {
+    return value.split(/[,，、\n]/).map(item => item.trim()).filter(Boolean);
+}
+
 export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], onBack }) {
     const { t } = useTranslation('model')
 
@@ -129,6 +133,8 @@ export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], 
         extractModelId: null,
         qaSimilarModelId: null,
         asrModelId: null,
+        graphModelId: null,
+        graphEntityTypes: '',
         abstractEnabled: true,
         autoTagEnabled: true,
         abstractPrompt: '',
@@ -148,6 +154,8 @@ export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], 
             qa_similar_model_id,
             asr_model_id,
             source_model_id,
+            graph_model_id,
+            graph_entity_types,
             abstract_enabled,
             auto_tag_enabled,
             abstract_prompt,
@@ -159,6 +167,10 @@ export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], 
             extractModelId: extract_title_model_id,
             qaSimilarModelId: qa_similar_model_id,
             asrModelId: asr_model_id ?? null,
+            graphModelId: graph_model_id ?? null,
+            graphEntityTypes: (graph_entity_types?.length
+                ? graph_entity_types
+                : parseEntityTypes(t('model.knowledgeGraphEntityTypesDefault'))).join(', '),
             abstractEnabled: abstract_enabled ?? true,
             autoTagEnabled: auto_tag_enabled ?? true,
             abstractPrompt: abstract_prompt ?? defalutPrompt,
@@ -169,7 +181,7 @@ export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], 
             abstract_prompt: abstract_prompt || defalutPrompt,
             auto_tag_prompt: auto_tag_prompt || defaultAutoTagPrompt,
         }
-    }, [config]);
+    }, [config, t]);
 
     // Clear inherited flag on first user edit — the in-memory form no
     // longer reflects Root's value, so the Badge should disappear before
@@ -188,6 +200,8 @@ export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], 
             qaSimilarModelId,
             asrModelId,
             sourceModelId,
+            graphModelId,
+            graphEntityTypes,
             abstractEnabled,
             autoTagEnabled,
             abstractPrompt,
@@ -211,6 +225,8 @@ export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], 
             qa_similar_model_id: qaSimilarModelId,
             asr_model_id: asrModelId || null,
             source_model_id: sourceModelId,
+            graph_model_id: graphModelId || null,
+            graph_entity_types: parseEntityTypes(graphEntityTypes),
             abstract_enabled: abstractEnabled,
             auto_tag_enabled: autoTagEnabled,
             abstract_prompt: abstractPrompt,
@@ -272,6 +288,24 @@ export default function KnowledgeModel({ llmOptions, embeddings, asrModel = [], 
                 options={llmOptions}
                 onChange={(val) => setFormAndClearInherited({ ...form, extractModelId: val })}
             />
+            <ModelSelect
+                close
+                label={t('model.knowledgeGraphModel')}
+                tooltipText={t('model.knowledgeGraphModelTooltip')}
+                value={form.graphModelId}
+                options={llmOptions}
+                onChange={(val) => setFormAndClearInherited({ ...form, graphModelId: val })}
+            />
+            <div>
+                <Label className="bisheng-label">{t('model.knowledgeGraphEntityTypes')}</Label>
+                <Input
+                    className="mt-1"
+                    value={form.graphEntityTypes}
+                    onChange={(event) => setFormAndClearInherited({ ...form, graphEntityTypes: event.target.value })}
+                    placeholder={t('model.knowledgeGraphEntityTypesPlaceholder')}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">{t('model.knowledgeGraphEntityTypesTooltip')}</p>
+            </div>
             <div className="rounded-md border p-4 space-y-4">
                 <div className="flex items-center justify-between gap-6">
                     <Label className="bisheng-label mb-0">{t('model.summaryGeneration', '摘要生成')}</Label>

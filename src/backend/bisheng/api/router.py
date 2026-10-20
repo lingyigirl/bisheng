@@ -34,6 +34,7 @@ from bisheng.finetune.api.server import router as server_router
 from bisheng.gpu_manage.api.router import router as gpu_manage_router
 from bisheng.knowledge.api.router import (
     answer_suggestion_router,
+    knowledge_graph_router,
     knowledge_router,
     knowledge_space_router,
     knowledge_space_tag_library_router,
@@ -75,6 +76,7 @@ router = APIRouter(
 router.include_router(chat_router)
 router.include_router(endpoints_router)
 router.include_router(knowledge_router)
+router.include_router(knowledge_graph_router)
 router.include_router(knowledge_space_tag_library_router)
 router.include_router(knowledge_space_router)
 router.include_router(knowledge_version_router)

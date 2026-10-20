@@ -21,7 +21,7 @@ def test_default_mode_listens_all_queues(monkeypatch):
             "-P",
             "threads",
             "-Q",
-            "ocr_celery,knowledge_celery,workflow_celery,celery",
+            "ocr_celery,knowledge_celery,graph_celery,workflow_celery,celery",
         ]
     ]
 
@@ -71,7 +71,32 @@ def test_file_mode_excludes_ocr_queue(monkeypatch):
             "-P",
             "threads",
             "-Q",
-            "knowledge_celery,workflow_celery,celery",
+            "knowledge_celery,graph_celery,workflow_celery,celery",
+        ]
+    ]
+
+
+def test_graph_mode_listens_graph_queue_only(monkeypatch):
+    from bisheng import run_celery as r
+
+    captured = []
+    monkeypatch.setattr(r.bisheng_celery, "start", lambda argv: captured.append(argv))
+    monkeypatch.setenv("BISHENG_CELERY_MODE", "graph")
+    monkeypatch.setenv("BISHENG_CELERY_CONCURRENCY", "2")
+
+    r.main()
+
+    assert captured == [
+        [
+            "worker",
+            "-l",
+            "info",
+            "-c",
+            "2",
+            "-P",
+            "threads",
+            "-Q",
+            "graph_celery",
         ]
     ]
 
