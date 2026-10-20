@@ -18,6 +18,8 @@ VALID_RESOURCE_TYPES = {
     # F061: registered database Q&A source. A peer of knowledge_library, not a
     # subtype — it has its own permission points (spec AC-43 / AC-44).
     "db_datasource",
+    # F078: managed-agent registry entry (native projection or third-party).
+    "managed_agent",
 }
 
 # Valid OpenFGA relations

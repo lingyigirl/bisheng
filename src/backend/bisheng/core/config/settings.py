@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from bisheng.core.config.gpu_manage import GpuManageConf
 from bisheng.core.config.llm import LLMConf
+from bisheng.core.config.managed_agent import ManagedAgentConf
 from bisheng.core.config.multi_tenant import MultiTenantConf
 from bisheng.core.config.open_api import OpenApiConf
 from bisheng.core.config.openfga import OpenFGAConf
@@ -289,6 +290,15 @@ class CeleryConf(BaseModel):
             self.beat_schedule["scheduled_task_scan"] = {
                 "task": "bisheng.worker.scheduled_task.scan.scan_scheduled_tasks",
                 "schedule": 20.0,
+                "options": {"queue": "celery"},
+            }
+        if "managed_agent_health_scan" not in self.beat_schedule:
+            # F078: periodic health check for managed agents. Fixed 300s tick;
+            # the per-agent interval lives in ManagedAgentConf. Queue is pinned
+            # for the same reason as F077 (task_routers may be replaced).
+            self.beat_schedule["managed_agent_health_scan"] = {
+                "task": "bisheng.worker.managed_agent.health_scan.scan_managed_agents",
+                "schedule": 300.0,
                 "options": {"queue": "celery"},
             }
 
@@ -860,6 +870,7 @@ class Settings(BaseModel):
     multi_tenant: MultiTenantConf = MultiTenantConf()
     open_api: OpenApiConf = OpenApiConf()
     scheduled_task: ScheduledTaskConf = ScheduledTaskConf()
+    managed_agent: ManagedAgentConf = ManagedAgentConf()
     openfga: OpenFGAConf = OpenFGAConf()
     user_tenant_sync: UserTenantSyncConf = UserTenantSyncConf()
     sso_sync: SSOSyncConf = SSOSyncConf()

@@ -30,6 +30,7 @@ from loguru import logger
 
 from bisheng.database.models.assistant import AssistantDao, AssistantStatus
 from bisheng.database.models.flow import FlowDao, FlowStatus, FlowType
+from bisheng.managed_agent.domain.constants import MANAGED_AGENT_APP_TYPE
 from bisheng.open_api.domain.models.dao import ServiceAccountDao
 from bisheng.open_api.domain.services.identity_service import load_owner_payload, owner_is_privileged
 from bisheng.permission.domain.services.application_permission_service import ApplicationPermissionService
@@ -39,6 +40,8 @@ from bisheng.scheduled_task.domain.models.scheduled_task import ScheduledTask
 _OBJECT_TYPE_BY_APP_TYPE: dict[int, str] = {
     FlowType.ASSISTANT.value: "assistant",
     FlowType.WORKFLOW.value: "workflow",
+    # F078: registry row, not a Flow/Assistant row.
+    MANAGED_AGENT_APP_TYPE: "managed_agent",
 }
 
 
@@ -86,8 +89,34 @@ class RecheckOutcome:
         return self.app_ok and self.identity_ok
 
 
+async def _native_projection_state(agent) -> AppState:
+    """Native projection availability (AC-10): registry online is not enough."""
+    if agent.native_app_type == FlowType.ASSISTANT.value:
+        row = await AssistantDao.aget_one_assistant(str(agent.native_app_id))
+        if row is None or int(getattr(row, "is_delete", 0) or 0) != 0:
+            return AppState.DELETED
+        return AppState.OK if row.status == AssistantStatus.ONLINE.value else AppState.OFFLINE
+    if agent.native_app_type == FlowType.WORKFLOW.value:
+        row = await FlowDao.aget_flow_by_id(str(agent.native_app_id))
+        if row is None or row.flow_type != FlowType.WORKFLOW.value:
+            return AppState.DELETED
+        return AppState.OK if row.status == FlowStatus.ONLINE.value else AppState.OFFLINE
+    return AppState.OK
+
+
 async def _app_state(task: ScheduledTask) -> AppState:
     """应用存在性与上线状态。工作流硬删（行没了即已删除）、助手软删（`is_delete`）。"""
+    if task.app_type == MANAGED_AGENT_APP_TYPE:
+        from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+        from bisheng.managed_agent.domain.models.managed_agent import AgentStatus
+
+        agent = await ManagedAgentDao.aget(int(task.app_id))
+        if agent is None:
+            return AppState.DELETED
+        if agent.status != AgentStatus.ONLINE.value:
+            return AppState.OFFLINE
+        return await _native_projection_state(agent)
+
     if task.app_type == FlowType.ASSISTANT.value:
         row = await AssistantDao.aget_one_assistant(str(task.app_id))
         if row is None or int(getattr(row, "is_delete", 0) or 0) != 0:
@@ -172,6 +201,15 @@ class IdentityBinding:
 
 
 async def _app_exists(app_id: str, app_type: int) -> bool:
+    if app_type == MANAGED_AGENT_APP_TYPE:
+        from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+        from bisheng.managed_agent.domain.models.managed_agent import AgentStatus
+
+        agent = await ManagedAgentDao.aget(int(app_id))
+        if agent is None or agent.status != AgentStatus.ONLINE.value:
+            return False
+        return await _native_projection_state(agent) is AppState.OK
+
     if app_type == FlowType.ASSISTANT.value:
         row = await AssistantDao.aget_one_assistant(str(app_id))
         return row is not None and int(getattr(row, "is_delete", 0) or 0) == 0
@@ -206,9 +244,7 @@ async def validate_binding(
     object_type = _OBJECT_TYPE_BY_APP_TYPE.get(app_type)
     if object_type is None:
         return False, IdentityBinding(identity_state=IdentityState.ACCOUNT_UNAVAILABLE)
-    if not await ApplicationPermissionService.has_any_permission_async(
-        payload, object_type, str(app_id), ["use_app"]
-    ):
+    if not await ApplicationPermissionService.has_any_permission_async(payload, object_type, str(app_id), ["use_app"]):
         return True, IdentityBinding(identity_state=IdentityState.NO_USE_APP)
 
     return True, IdentityBinding(identity_state=IdentityState.OK, owner_user_id=owner_user_id)

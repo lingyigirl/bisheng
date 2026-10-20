@@ -28,7 +28,7 @@ router = APIRouter(prefix="/service-accounts", tags=["OpenApiManagement"])
 
 
 class GrantItem(BaseModel):
-    resource_type: str = Field(description="knowledge_library | knowledge_space | assistant | workflow")
+    resource_type: str = Field(description="knowledge_library | knowledge_space | assistant | workflow | managed_agent")
     resource_id: str
     level: str = Field(description="viewer | editor | manager")
 

@@ -25,6 +25,7 @@ from bisheng.database.models.assistant import AssistantDao, AssistantLinkDao
 from bisheng.database.models.flow import FlowDao, FlowType
 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao, KnowledgeTypeEnum
 from bisheng.knowledge.domain.services.knowledge_space_service import KnowledgeSpaceService
+from bisheng.managed_agent.domain.constants import MANAGED_AGENT_APP_TYPE
 from bisheng.user.domain.models.user import UserDao
 
 
@@ -95,6 +96,15 @@ async def _collect_assistant_refs(assistant) -> list[KnowledgeRef]:
 
 async def collect_app_refs(app_id: str, app_type: int) -> list[KnowledgeRef]:
     """按应用类型收集知识引用。"""
+    if app_type == MANAGED_AGENT_APP_TYPE:
+        from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+
+        agent = await ManagedAgentDao.aget(int(app_id))
+        if agent is None or agent.source_kind != "native":
+            # Third-party agents have no platform knowledge refs (INV-25 clause 4
+            # only applies to native apps).
+            return []
+        return await collect_app_refs(str(agent.native_app_id), int(agent.native_app_type))
     if app_type == FlowType.WORKFLOW.value:
         flow = await FlowDao.aget_flow_by_id(str(app_id))
         return collect_workflow_refs((flow.data if flow else None) or {})

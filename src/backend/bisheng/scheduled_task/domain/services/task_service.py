@@ -17,12 +17,14 @@ from loguru import logger
 
 from bisheng.common.errcode.http_error import NotFoundError, UnAuthorizedError
 from bisheng.common.errcode.scheduled_task import (
+    ScheduledTaskAppNotSchedulableError,
     ScheduledTaskConfigInvalidError,
     ScheduledTaskIdentityUnavailableError,
     ScheduledTaskLimitExceededError,
 )
 from bisheng.common.services.config_service import settings
 from bisheng.database.models.audit_log import AuditLogDao
+from bisheng.managed_agent.domain.constants import MANAGED_AGENT_APP_TYPE
 from bisheng.open_api.domain.models.dao import ServiceAccountDao
 from bisheng.scheduled_task.domain.constants import ScheduledTaskAuditAction
 from bisheng.scheduled_task.domain.models.dao import ScheduledTaskDao
@@ -122,6 +124,36 @@ def _validate_presets(presets) -> list[dict] | None:
     return normalized
 
 
+async def _validate_presets_for_app(app_id: str, app_type: int, presets: list[dict] | None):
+    """F078: managed agents validate presets against their Agent Card.
+
+    Native projections keep their existing workflow/assistant preset semantics
+    (the card is only a registry contract, not a second source of truth for
+    native inputs). Third-party agents have no F077 input-node metadata, so the
+    card is the only schema available.
+    """
+    if app_type != MANAGED_AGENT_APP_TYPE:
+        return presets
+    from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+    from bisheng.managed_agent.domain.services.agent_card import (
+        AgentCardFileInput,
+        parse_agent_card,
+        validate_preset_inputs,
+    )
+
+    agent = await ManagedAgentDao.aget(int(app_id))
+    if agent is None:
+        raise ScheduledTaskConfigInvalidError(msg="managed agent not found")
+    if agent.source_kind == "native":
+        return presets
+    card = parse_agent_card(agent.agent_card)
+    try:
+        normalized = validate_preset_inputs(card, presets)
+    except AgentCardFileInput as exc:
+        raise ScheduledTaskAppNotSchedulableError(exception=f"file input is not supported: {exc}") from exc
+    return [{"key": item.key, "value": item.value} for item in normalized]
+
+
 async def _validate_identity_and_knowledge(
     *, app_id: str, app_type: int, service_account_id: int, tenant_id: int
 ) -> int:
@@ -211,7 +243,7 @@ async def create_task(user, req) -> ScheduledTask:
     await app_shape_guard.assert_app_schedulable(req.app_id, req.app_type)
 
     schedule_type, cron_expression, next_run_at = _validate_schedule(req.schedule_type, req.cron_expression, req.run_at)
-    presets = _validate_presets(req.preset_inputs)
+    presets = await _validate_presets_for_app(req.app_id, req.app_type, _validate_presets(req.preset_inputs))
     owner_user_id = await _validate_identity_and_knowledge(
         app_id=req.app_id,
         app_type=req.app_type,
@@ -256,7 +288,7 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
         fields["description"] = req.description
         changed.add("description")
     if req.preset_inputs is not None:
-        presets = _validate_presets(req.preset_inputs)
+        presets = await _validate_presets_for_app(task.app_id, task.app_type, _validate_presets(req.preset_inputs))
         fields["preset_inputs"] = presets
         # 只留 key，不把值写进审计（AC-51）。
         changed.add("preset_keys")

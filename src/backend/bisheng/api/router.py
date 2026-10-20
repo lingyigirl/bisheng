@@ -42,6 +42,9 @@ from bisheng.knowledge.api.router import (
 )
 from bisheng.linsight.api.router import router as linsight_router
 from bisheng.llm.api.router import router as llm_router
+from bisheng.managed_agent.api.endpoints.taxonomy import router as managed_agent_taxonomy_router
+from bisheng.managed_agent.api.router import management_router as managed_agent_management_router
+from bisheng.managed_agent.api.router import rpc_router as managed_agent_rpc_router
 from bisheng.message.api.router import router as message_router
 from bisheng.open_api.api.dependencies import verify_open_api_access
 from bisheng.open_api.api.router import management_router as open_api_management_router
@@ -143,8 +146,14 @@ router_rpc.include_router(open_api_rpc_router)
 # F077: 定时任务的事件触发端点（POST /api/v2/schedule/trigger）继承上面的密钥鉴权依赖；
 # 端点的 scope 在 open_api/domain/scopes.py 逐条登记，漏标即 500/11811（design 决策 12）。
 router_rpc.include_router(scheduled_task_rpc_router)
+# F078: 纳管智能体的统一调用端点（POST /api/v2/managed-agent/invoke）。
+# 与 F077 一样继承上面的密钥鉴权依赖；scope 在 open_api/domain/scopes.py 登记。
+router_rpc.include_router(managed_agent_rpc_router)
 # F076: 开放 API 管理面(服务账号/密钥/设置)挂在 /api/v1
 router.include_router(open_api_management_router)
 # F077: 定时任务管理面(CRUD/立即运行/可用运行身份/cron 预览/NL 草稿)挂在 /api/v1，
 # 应用级 edit_app 校验在各端点内独立声明（design 决策 11）。
 router.include_router(scheduled_task_management_router)
+# F078: 纳管智能体管理面（注册/分类/健康/目录）挂在 /api/v1。
+router.include_router(managed_agent_management_router)
+router.include_router(managed_agent_taxonomy_router)

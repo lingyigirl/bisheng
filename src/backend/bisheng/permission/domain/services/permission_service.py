@@ -73,6 +73,9 @@ class PermissionService:
             "assistant",
             "knowledge_space",
             "knowledge_library",
+            # F078: managed agents are tenant-private. Membership alone is a
+            # no-op — the list helpers below must carry a matching branch.
+            "managed_agent",
         }
     )
 
@@ -1416,6 +1419,13 @@ class PermissionService:
                     result = await session.exec(stmt)
                     rows = result.all()
                     return [str(row[0] if isinstance(row, tuple) else row) for row in rows]
+                if object_type == "managed_agent":
+                    from bisheng.managed_agent.domain.models.managed_agent import ManagedAgent
+
+                    stmt = select(ManagedAgent.id).where(col(ManagedAgent.user_id).in_(uids))
+                    result = await session.exec(stmt)
+                    rows = result.all()
+                    return [str(row[0] if isinstance(row, tuple) else row) for row in rows]
                 if object_type == "knowledge_file":
                     from bisheng.knowledge.domain.models.knowledge_file import KnowledgeFile
 
@@ -1469,6 +1479,13 @@ class PermissionService:
                     result = await session.exec(stmt)
                     rows = result.all()
                     return [str(row[0] if isinstance(row, tuple) else row) for row in rows]
+                if object_type == "managed_agent":
+                    from bisheng.managed_agent.domain.models.managed_agent import ManagedAgent
+
+                    stmt = select(ManagedAgent.id).where(col(ManagedAgent.tenant_id).in_(tids))
+                    result = await session.exec(stmt)
+                    rows = result.all()
+                    return [str(row[0] if isinstance(row, tuple) else row) for row in rows]
                 if object_type in {"knowledge_space", "knowledge_library"}:
                     from bisheng.knowledge.domain.models.knowledge import Knowledge, KnowledgeTypeEnum
 
@@ -1515,6 +1532,22 @@ class PermissionService:
                 rows = await AssistantDao.aget_assistants_by_ids(object_ids)
                 for row in rows or []:
                     mapping[str(row.id)] = int(row.tenant_id)
+                return mapping
+            if object_type == "managed_agent":
+                from sqlmodel import col, select
+
+                from bisheng.core.database import get_async_db_session
+                from bisheng.managed_agent.domain.models.managed_agent import ManagedAgent
+
+                numeric_ids = [int(one) for one in object_ids if str(one).isdigit()]
+                if not numeric_ids:
+                    return {}
+                async with get_async_db_session() as session:
+                    result = await session.exec(
+                        select(ManagedAgent.id, ManagedAgent.tenant_id).where(col(ManagedAgent.id).in_(numeric_ids))
+                    )
+                    for row_id, tenant_id in result.all():
+                        mapping[str(row_id)] = int(tenant_id)
                 return mapping
             if object_type in {"knowledge_space", "knowledge_library"}:
                 from bisheng.knowledge.domain.models.knowledge import KnowledgeDao, KnowledgeTypeEnum
@@ -1744,6 +1777,16 @@ class PermissionService:
                     assistant = await AssistantDao.aget_one_assistant(object_id)
                     return assistant.user_id if assistant else None
 
+                if object_type == "managed_agent":
+                    # F078: creator/owner fallback for a managed agent whose
+                    # owner tuple write was lost. Bypass is safe here because
+                    # the caller already resolved the object id through a
+                    # tenant-scoped path.
+                    from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+
+                    agent = await ManagedAgentDao.aget_bypass(int(object_id))
+                    return agent.user_id if agent else None
+
                 if object_type == "knowledge_space":
                     from bisheng.knowledge.domain.models.knowledge import KnowledgeDao, KnowledgeTypeEnum
 
@@ -1927,6 +1970,11 @@ class PermissionService:
                     from bisheng.database.models.assistant import AssistantDao
 
                     obj = await AssistantDao.aget_one_assistant(str(object_id))
+                    return obj.tenant_id if obj else None
+                if object_type == "managed_agent":
+                    from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+
+                    obj = await ManagedAgentDao.aget_bypass(int(object_id))
                     return obj.tenant_id if obj else None
                 if object_type == "knowledge_space":
                     from bisheng.knowledge.domain.models.knowledge import KnowledgeDao, KnowledgeTypeEnum

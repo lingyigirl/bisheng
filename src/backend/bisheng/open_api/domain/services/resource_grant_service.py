@@ -36,6 +36,8 @@ GRANTABLE_RESOURCE_TYPES: tuple[str, ...] = (
     "knowledge_space",
     "assistant",
     "workflow",
+    # F078: service accounts need editor (use_app) on a managed agent to invoke it.
+    "managed_agent",
 )
 #: 可授予的三档权限。`owner` 刻意不含(见模块 docstring)。
 GRANT_LEVELS: tuple[str, ...] = ("viewer", "editor", "manager")

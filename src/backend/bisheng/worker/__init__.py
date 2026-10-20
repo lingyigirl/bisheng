@@ -15,8 +15,10 @@ from bisheng.worker.knowledge.scheduler import (
     reconcile_file_scheduler_task,
     trigger_dispatch_task,
 )
+from bisheng.worker.managed_agent.health_scan import scan_managed_agents
 from bisheng.worker.permission.retry_failed_tuples import retry_failed_tuples
 from bisheng.worker.scheduled_task.assistant_runner import execute_assistant_run
+from bisheng.worker.scheduled_task.managed_agent_runner import execute_managed_agent_run
 from bisheng.worker.scheduled_task.scan import scan_scheduled_tasks
 from bisheng.worker.storage.cleanup import cleanup_tmp_storage
 from bisheng.worker.telemetry.mid_table import (

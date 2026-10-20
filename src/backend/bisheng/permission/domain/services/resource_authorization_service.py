@@ -59,6 +59,14 @@ _MANAGE_PERMISSION_BY_RESOURCE_TIER = {
         "manager": "manage_datasource_manager",
         "usage": "manage_datasource_viewer",
     },
+    # F078: managed agents reuse the application management tiers.
+    # Duplicated in permission/api/endpoints/resource_permission.py; keep both
+    # maps in sync (a lockstep test asserts they agree).
+    "managed_agent": {
+        "owner": "manage_app_owner",
+        "manager": "manage_app_manager",
+        "usage": "manage_app_viewer",
+    },
 }
 _MANAGE_PERMISSION_BY_RESOURCE = {
     "knowledge_space": "manage_space_relation",
@@ -81,7 +89,7 @@ def _normalize_model(model: dict) -> dict:
 
 
 def _default_permission_ids(resource_type: str, relation: str) -> set[str]:
-    if resource_type in {"workflow", "assistant"}:
+    if resource_type in {"workflow", "assistant", "managed_agent"}:
         return set(default_application_permissions(relation))
     if resource_type == "tool":
         return set(default_tool_permissions(relation))
@@ -193,20 +201,12 @@ class ResourceAuthorizationService:
         raw_models = await self.get_relation_models() if relation_models is None else relation_models
         models = [_normalize_model(model) for model in raw_models]
         owner_model = next(
-            (
-                model
-                for model in models
-                if model.get("id") == "owner" and model.get("relation") == "owner"
-            ),
+            (model for model in models if model.get("id") == "owner" and model.get("relation") == "owner"),
             None,
         )
         if owner_model is None:
             owner_model = next(
-                (
-                    model
-                    for model in models
-                    if model.get("relation") == "owner" and model.get("is_system")
-                ),
+                (model for model in models if model.get("relation") == "owner" and model.get("is_system")),
                 None,
             )
         if owner_model is None:

@@ -360,6 +360,24 @@ bash scripts/migrate_fga_add_datasource_type.sh apply       # 同 --apply
 
 Exit codes: `0` 成功（含「已存在」与 dry-run）/ `2` OpenFGA 不可达 / `3` 模型读取或写入失败。
 
+### `migrate_fga_add_managed_agent_type.py`（F078）
+
+把已存在的 OpenFGA store 升级到带 `managed_agent` 资源类型的模型。
+
+F078 在静态授权模型里新增了 `managed_agent` 类型（纳管智能体，与 workflow/assistant 同构的 owner/manager/editor/viewer 金字塔）。与 F061 完全同因：OpenFGA 模型在 store 内不可变且分版本，**仅发新代码不会让既有 store 获得新类型**，必须按 store 写一次新模型。部署顺序：F078 代码（开关 off）→ 本脚本 → pin `model_id`/重启 → 开启 `managed_agent.enabled` → 首次创建。未写模型时，创建纳管智能体会卡在 owner 元组写入（`RegistryService.create` 传 `enforce_fga_success=True`）。
+
+Usage (from `src/backend/`):
+
+```bash
+bash scripts/migrate_fga_add_managed_agent_type.sh --dry-run   # 只报告（默认行为）
+bash scripts/migrate_fga_add_managed_agent_type.sh --apply     # 写入新模型
+bash scripts/migrate_fga_add_managed_agent_type.sh apply       # 同 --apply
+```
+
+回滚：模型不可变且保留历史，把 `openfga.model_id` 指回脚本打印的旧 id 即可。
+
+Exit codes: `0` 成功（含「已存在」与 dry-run）/ `2` OpenFGA 不可达 / `3` 模型读取或写入失败。
+
 ## Linsight Scripts (F035)
 
 ### `migrate_sop_to_skill.sh` / `migrate_sop_to_skill.py`

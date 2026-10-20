@@ -1,8 +1,8 @@
 """Static OpenFGA authorization model for BiSheng v2.5.1.
 
-Defines 17 types: user, system, tenant, department, user_group,
+Defines 18 types: user, system, tenant, department, user_group,
 knowledge_space, knowledge_library, folder, knowledge_file, channel, workflow,
-assistant, tool, dashboard, llm_server, llm_model, db_datasource.
+assistant, tool, dashboard, llm_server, llm_model, db_datasource, managed_agent.
 
 Permission pyramid: owner > manager(can_manage) > editor(can_edit) > viewer(can_read)
 can_delete: owner (top-level) or owner|can_manage from parent (hierarchical)
@@ -28,6 +28,9 @@ v2.5.1 F013 changes:
   source. It is a PEER of knowledge_library, not a child of it — the two are
   governed by independent permission points (spec AC-43 / AC-44), so the type
   carries no parent relation (HAS_PARENT stays False).
+- v2.0.4 (F078) adds managed_agent: a tenant-scoped registry entry for native
+  projections and third-party agents. Same standard resource pyramid as
+  workflow/assistant; no parent relation.
 """
 
 import copy
@@ -35,25 +38,29 @@ import copy
 # v2.0.2 — user_group#admin now implies user_group#member and can manage
 # legacy groupresource-managed resources.
 # v2.0.3 — db_datasource resource type added (F061).
-# The version MUST change whenever the DSL below changes: a running instance
-# keys its reload decision on this string, so an unchanged version would leave
-# every existing deployment on the old model (F061 T-06).
-MODEL_VERSION = 'v2.0.3'
+# v2.0.4 — managed_agent resource type added (F078).
+#
+# The version is informational and is printed by the one-off migration scripts.
+# A running instance does NOT reload on this string: OpenFGA models are
+# immutable per store, and FGAManager keeps the model_id it resolved at startup
+# (or adopts the newest existing model). Existing stores therefore need
+# scripts/migrate_fga_add_<feature>_type.py to write the new model once.
+MODEL_VERSION = "v2.0.4"
 
 
 def _user_types():
     """Allowed user types for resource relations."""
     return [
-        {'type': 'user'},
-        {'type': 'department', 'relation': 'member'},
-        {'type': 'user_group', 'relation': 'member'},
-        {'type': 'user_group', 'relation': 'admin'},
+        {"type": "user"},
+        {"type": "department", "relation": "member"},
+        {"type": "user_group", "relation": "member"},
+        {"type": "user_group", "relation": "admin"},
     ]
 
 
-def _standard_resource_type(type_name: str, *, has_parent: bool = False,
-                            parent_types: list = None,
-                            viewer_includes_tenant_shared: bool = True) -> dict:
+def _standard_resource_type(
+    type_name: str, *, has_parent: bool = False, parent_types: list = None, viewer_includes_tenant_shared: bool = True
+) -> dict:
     """Build a standard resource type with owner/manager/editor/viewer pyramid + can_delete.
 
     When ``viewer_includes_tenant_shared=True`` the resource also gets a
@@ -67,95 +74,101 @@ def _standard_resource_type(type_name: str, *, has_parent: bool = False,
 
     # parent (for folder/knowledge_file)
     if has_parent and parent_types:
-        relations['parent'] = {'this': {}}
-        metadata['parent'] = {
-            'directly_related_user_types': [{'type': t} for t in parent_types]
-        }
+        relations["parent"] = {"this": {}}
+        metadata["parent"] = {"directly_related_user_types": [{"type": t} for t in parent_types]}
 
     # owner
-    relations['owner'] = {'this': {}}
-    metadata['owner'] = {'directly_related_user_types': [{'type': 'user'}]}
+    relations["owner"] = {"this": {}}
+    metadata["owner"] = {"directly_related_user_types": [{"type": "user"}]}
 
     # manager = direct + owner [+ can_manage from parent]
     manager_children = [
-        {'this': {}},
-        {'computedUserset': {'relation': 'owner'}},
+        {"this": {}},
+        {"computedUserset": {"relation": "owner"}},
     ]
     if has_parent:
-        manager_children.append({
-            'tupleToUserset': {
-                'tupleset': {'relation': 'parent'},
-                'computedUserset': {'relation': 'can_manage'},
+        manager_children.append(
+            {
+                "tupleToUserset": {
+                    "tupleset": {"relation": "parent"},
+                    "computedUserset": {"relation": "can_manage"},
+                }
             }
-        })
-    relations['manager'] = {'union': {'child': manager_children}}
-    metadata['manager'] = {'directly_related_user_types': _user_types()}
+        )
+    relations["manager"] = {"union": {"child": manager_children}}
+    metadata["manager"] = {"directly_related_user_types": _user_types()}
 
     # editor = direct + manager [+ can_edit from parent]
     editor_children = [
-        {'this': {}},
-        {'computedUserset': {'relation': 'manager'}},
+        {"this": {}},
+        {"computedUserset": {"relation": "manager"}},
     ]
     if has_parent:
-        editor_children.append({
-            'tupleToUserset': {
-                'tupleset': {'relation': 'parent'},
-                'computedUserset': {'relation': 'can_edit'},
+        editor_children.append(
+            {
+                "tupleToUserset": {
+                    "tupleset": {"relation": "parent"},
+                    "computedUserset": {"relation": "can_edit"},
+                }
             }
-        })
-    relations['editor'] = {'union': {'child': editor_children}}
-    metadata['editor'] = {'directly_related_user_types': _user_types()}
+        )
+    relations["editor"] = {"union": {"child": editor_children}}
+    metadata["editor"] = {"directly_related_user_types": _user_types()}
 
     # shared_with: [tenant] — F013 resource-level share relation consumed by
     # the viewer tupleToUserset below. Enabled by default; disable only for
     # types that should never be shared cross-tenant.
     if viewer_includes_tenant_shared:
-        relations['shared_with'] = {'this': {}}
-        metadata['shared_with'] = {
-            'directly_related_user_types': [{'type': 'tenant'}],
+        relations["shared_with"] = {"this": {}}
+        metadata["shared_with"] = {
+            "directly_related_user_types": [{"type": "tenant"}],
         }
 
     # viewer = direct + editor [+ can_read from parent] [+ member from shared_with]
     viewer_children = [
-        {'this': {}},
-        {'computedUserset': {'relation': 'editor'}},
+        {"this": {}},
+        {"computedUserset": {"relation": "editor"}},
     ]
     if has_parent:
-        viewer_children.append({
-            'tupleToUserset': {
-                'tupleset': {'relation': 'parent'},
-                'computedUserset': {'relation': 'can_read'},
+        viewer_children.append(
+            {
+                "tupleToUserset": {
+                    "tupleset": {"relation": "parent"},
+                    "computedUserset": {"relation": "can_read"},
+                }
             }
-        })
+        )
     if viewer_includes_tenant_shared:
-        viewer_children.append({
-            'tupleToUserset': {
-                'tupleset': {'relation': 'shared_with'},
-                'computedUserset': {'relation': 'member'},
+        viewer_children.append(
+            {
+                "tupleToUserset": {
+                    "tupleset": {"relation": "shared_with"},
+                    "computedUserset": {"relation": "member"},
+                }
             }
-        })
-    relations['viewer'] = {'union': {'child': viewer_children}}
+        )
+    relations["viewer"] = {"union": {"child": viewer_children}}
     # viewer's directly_related_user_types stays at the three standard sources;
     # access via shared_with is expressed by the tupleToUserset above (OpenFGA
     # protobuf does not permit nested relation refs in this field).
-    metadata['viewer'] = {'directly_related_user_types': _user_types()}
+    metadata["viewer"] = {"directly_related_user_types": _user_types()}
 
     # computed: can_manage, can_edit, can_read
-    relations['can_manage'] = {'computedUserset': {'relation': 'manager'}}
-    relations['can_edit'] = {'computedUserset': {'relation': 'editor'}}
-    relations['can_read'] = {'computedUserset': {'relation': 'viewer'}}
+    relations["can_manage"] = {"computedUserset": {"relation": "manager"}}
+    relations["can_edit"] = {"computedUserset": {"relation": "editor"}}
+    relations["can_read"] = {"computedUserset": {"relation": "viewer"}}
 
     # can_delete
     if has_parent:
         # hierarchical: owner OR can_manage from parent
-        relations['can_delete'] = {
-            'union': {
-                'child': [
-                    {'computedUserset': {'relation': 'owner'}},
+        relations["can_delete"] = {
+            "union": {
+                "child": [
+                    {"computedUserset": {"relation": "owner"}},
                     {
-                        'tupleToUserset': {
-                            'tupleset': {'relation': 'parent'},
-                            'computedUserset': {'relation': 'can_manage'},
+                        "tupleToUserset": {
+                            "tupleset": {"relation": "parent"},
+                            "computedUserset": {"relation": "can_manage"},
                         }
                     },
                 ]
@@ -163,36 +176,34 @@ def _standard_resource_type(type_name: str, *, has_parent: bool = False,
         }
     else:
         # top-level: owner only
-        relations['can_delete'] = {'computedUserset': {'relation': 'owner'}}
+        relations["can_delete"] = {"computedUserset": {"relation": "owner"}}
 
     return {
-        'type': type_name,
-        'relations': relations,
-        'metadata': {'relations': metadata},
+        "type": type_name,
+        "relations": relations,
+        "metadata": {"relations": metadata},
     }
 
 
 AUTHORIZATION_MODEL: dict = {
-    'schema_version': '1.1',
-    'type_definitions': [
+    "schema_version": "1.1",
+    "type_definitions": [
         # === Base types ===
-        {'type': 'user', 'relations': {}, 'metadata': None},
-
+        {"type": "user", "relations": {}, "metadata": None},
         # === system: super_admin ===
         {
-            'type': 'system',
-            'relations': {
-                'super_admin': {'this': {}},
+            "type": "system",
+            "relations": {
+                "super_admin": {"this": {}},
             },
-            'metadata': {
-                'relations': {
-                    'super_admin': {
-                        'directly_related_user_types': [{'type': 'user'}],
+            "metadata": {
+                "relations": {
+                    "super_admin": {
+                        "directly_related_user_types": [{"type": "user"}],
                     },
                 },
             },
         },
-
         # === tenant: admin + member + shared_to ===
         # F013 (v2.5.1):
         # - admin: Child Tenant only; does NOT inherit via parent (two-tier admin model);
@@ -203,110 +214,113 @@ AUTHORIZATION_MODEL: dict = {
         # tenant#parent relation intentionally absent — parent_tenant_id lives in MySQL only
         # (AD-05, 2026-04-20 Round 2 narrowing).
         {
-            'type': 'tenant',
-            'relations': {
-                'admin': {'this': {}},
-                'member': {'this': {}},
-                'shared_to': {'this': {}},
+            "type": "tenant",
+            "relations": {
+                "admin": {"this": {}},
+                "member": {"this": {}},
+                "shared_to": {"this": {}},
             },
-            'metadata': {
-                'relations': {
-                    'admin': {
-                        'directly_related_user_types': [{'type': 'user'}],
+            "metadata": {
+                "relations": {
+                    "admin": {
+                        "directly_related_user_types": [{"type": "user"}],
                     },
-                    'member': {
-                        'directly_related_user_types': [{'type': 'user'}],
+                    "member": {
+                        "directly_related_user_types": [{"type": "user"}],
                     },
-                    'shared_to': {
-                        'directly_related_user_types': [{'type': 'tenant'}],
+                    "shared_to": {
+                        "directly_related_user_types": [{"type": "tenant"}],
                     },
                 },
             },
         },
-
         # === department: parent + admin (inherits from parent) + member ===
         {
-            'type': 'department',
-            'relations': {
-                'parent': {'this': {}},
-                'admin': {
-                    'union': {
-                        'child': [
-                            {'this': {}},
+            "type": "department",
+            "relations": {
+                "parent": {"this": {}},
+                "admin": {
+                    "union": {
+                        "child": [
+                            {"this": {}},
                             {
-                                'tupleToUserset': {
-                                    'tupleset': {'relation': 'parent'},
-                                    'computedUserset': {'relation': 'admin'},
+                                "tupleToUserset": {
+                                    "tupleset": {"relation": "parent"},
+                                    "computedUserset": {"relation": "admin"},
                                 }
                             },
                         ]
                     }
                 },
-                'member': {'this': {}},
+                "member": {"this": {}},
             },
-            'metadata': {
-                'relations': {
-                    'parent': {
-                        'directly_related_user_types': [{'type': 'department'}],
+            "metadata": {
+                "relations": {
+                    "parent": {
+                        "directly_related_user_types": [{"type": "department"}],
                     },
-                    'admin': {
-                        'directly_related_user_types': [{'type': 'user'}],
+                    "admin": {
+                        "directly_related_user_types": [{"type": "user"}],
                     },
-                    'member': {
-                        'directly_related_user_types': [{'type': 'user'}],
+                    "member": {
+                        "directly_related_user_types": [{"type": "user"}],
                     },
                 },
             },
         },
-
         # === user_group: admin + member ===
         {
-            'type': 'user_group',
-            'relations': {
-                'admin': {'this': {}},
-                'member': {
-                    'union': {
-                        'child': [
-                            {'this': {}},
-                            {'computedUserset': {'relation': 'admin'}},
+            "type": "user_group",
+            "relations": {
+                "admin": {"this": {}},
+                "member": {
+                    "union": {
+                        "child": [
+                            {"this": {}},
+                            {"computedUserset": {"relation": "admin"}},
                         ]
                     }
                 },
             },
-            'metadata': {
-                'relations': {
-                    'admin': {
-                        'directly_related_user_types': [{'type': 'user'}],
+            "metadata": {
+                "relations": {
+                    "admin": {
+                        "directly_related_user_types": [{"type": "user"}],
                     },
-                    'member': {
-                        'directly_related_user_types': [{'type': 'user'}],
+                    "member": {
+                        "directly_related_user_types": [{"type": "user"}],
                     },
                 },
             },
         },
-
-        # === Resource types (12) ===
-        _standard_resource_type('knowledge_space'),
-        _standard_resource_type('knowledge_library'),
-        _standard_resource_type('folder', has_parent=True,
-                                parent_types=['knowledge_space', 'knowledge_library', 'folder']),
-        _standard_resource_type('knowledge_file', has_parent=True,
-                                parent_types=['folder', 'knowledge_space', 'knowledge_library']),
-        _standard_resource_type('channel'),
-        _standard_resource_type('workflow'),
-        _standard_resource_type('assistant'),
-        _standard_resource_type('tool'),
-        _standard_resource_type('dashboard'),
+        # === Resource types (13) ===
+        _standard_resource_type("knowledge_space"),
+        _standard_resource_type("knowledge_library"),
+        _standard_resource_type(
+            "folder", has_parent=True, parent_types=["knowledge_space", "knowledge_library", "folder"]
+        ),
+        _standard_resource_type(
+            "knowledge_file", has_parent=True, parent_types=["folder", "knowledge_space", "knowledge_library"]
+        ),
+        _standard_resource_type("channel"),
+        _standard_resource_type("workflow"),
+        _standard_resource_type("assistant"),
+        _standard_resource_type("tool"),
+        _standard_resource_type("dashboard"),
         # F013 (v2.5.1) preallocates llm_server/llm_model for F020 LLM multi-tenant.
         # Without these types, F020 cannot write {llm_server:id}#viewer →
         # tenant:{root}#shared_to#member tuples to enable Root → Child sharing.
-        _standard_resource_type('llm_server'),
-        _standard_resource_type('llm_model'),
+        _standard_resource_type("llm_server"),
+        _standard_resource_type("llm_model"),
         # F061 (v2.7.0): a registered external database is a controlled resource
         # in its own right, a PEER of knowledge_library — never a subtype of it
         # (spec AC-43). No parent: datasources are not nested under knowledge
         # spaces and carry no department-ownership semantics (spec AC-47).
-        _standard_resource_type('db_datasource'),
+        _standard_resource_type("db_datasource"),
+        # F078 (v2.0.4): a managed agent (native projection or third-party) is
+        # a tenant-scoped resource with the standard owner/manager/editor/
+        # viewer pyramid. No parent: registry entries are not nested.
+        _standard_resource_type("managed_agent"),
     ],
 }
 

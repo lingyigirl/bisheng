@@ -16,9 +16,11 @@ from datetime import datetime
 
 from loguru import logger
 
+from bisheng.common.errcode.managed_agent import ManagedAgentConfigInvalidError
 from bisheng.common.errcode.scheduled_task import ScheduledTaskNlDraftInvalidError
 from bisheng.common.models.config import ConfigKeyEnum
 from bisheng.common.services.config_service import settings
+from bisheng.managed_agent.domain.constants import MANAGED_AGENT_APP_TYPE
 from bisheng.scheduled_task.domain.models.scheduled_task import ScheduleType
 from bisheng.scheduled_task.domain.services import run_service
 from bisheng.scheduled_task.domain.services.cron_schedule import (
@@ -137,7 +139,40 @@ def _validate_presets(raw) -> list[dict] | None:
     return presets or None
 
 
-async def draft_from_text(*, tenant_id: int, user_id: int, text: str) -> dict:
+async def _validate_managed_presets(app_id: str | None, app_type: int | None, presets):
+    """F078: validate draft presets against a managed agent's Agent Card."""
+    if app_type != MANAGED_AGENT_APP_TYPE or not app_id:
+        return presets
+    from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+    from bisheng.managed_agent.domain.services.agent_card import (
+        AgentCardFileInput,
+        parse_agent_card,
+        validate_preset_inputs,
+    )
+
+    agent = await ManagedAgentDao.aget(int(app_id))
+    if agent is None:
+        raise ScheduledTaskNlDraftInvalidError(exception="managed agent not found")
+    if agent.source_kind == "native":
+        return presets
+    card = parse_agent_card(agent.agent_card)
+    try:
+        normalized = validate_preset_inputs(card, presets)
+    except AgentCardFileInput as exc:
+        raise ScheduledTaskNlDraftInvalidError(exception=f"file input is not schedulable: {exc}") from exc
+    except ManagedAgentConfigInvalidError as exc:
+        raise ScheduledTaskNlDraftInvalidError(exception=str(exc)[:200]) from exc
+    return [{"key": item.key, "value": item.value} for item in normalized] or None
+
+
+async def draft_from_text(
+    *,
+    tenant_id: int,
+    user_id: int,
+    text: str,
+    app_id: str | None = None,
+    app_type: int | None = None,
+) -> dict:
     """把一句自然语言变成可编辑的草稿；**不落库**（AC-42）。"""
     conf = _conf()
     text = (text or "").strip()
@@ -180,7 +215,9 @@ async def draft_from_text(*, tenant_id: int, user_id: int, text: str) -> dict:
             "schedule_description": describe(normalized),
             "schedule_display": describe_parts(normalized),
             "next_runs": next_runs(normalized, anchor, conf.preview_count),
-            "preset_inputs": _validate_presets(payload.get("preset_inputs")),
+            "preset_inputs": await _validate_managed_presets(
+                app_id, app_type, _validate_presets(payload.get("preset_inputs"))
+            ),
             "rationale": str(payload.get("rationale") or ""),
         }
 
@@ -194,6 +231,8 @@ async def draft_from_text(*, tenant_id: int, user_id: int, text: str) -> dict:
         "schedule_description": run_at.strftime("%Y-%m-%d %H:%M"),
         "schedule_display": {"day": None, "time": {"kind": "once", "run_at": run_at.isoformat()}},
         "next_runs": [run_at],
-        "preset_inputs": _validate_presets(payload.get("preset_inputs")),
+        "preset_inputs": await _validate_managed_presets(
+            app_id, app_type, _validate_presets(payload.get("preset_inputs"))
+        ),
         "rationale": str(payload.get("rationale") or ""),
     }

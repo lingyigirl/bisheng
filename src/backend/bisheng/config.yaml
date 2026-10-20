@@ -115,3 +115,18 @@ logger_conf:
       rotation: "00:00"
       retention: "3 Days"
       enqueue: true
+
+# F078: 智能体纳管总开关（默认 false = 路由 404、菜单/页签隐藏，既有部署零影响）
+# managed_agent:
+#   enabled: false
+#   connect_timeout_seconds: 10
+#   read_timeout_seconds: 60
+#   invoke_overall_timeout_seconds: 120
+#   max_response_bytes: 1000000
+#   rate_limit_per_minute: 60
+#   health_interval_seconds: 300
+#   health_failure_threshold: 3
+#   auto_offline_on_health_failure: false
+#   max_agents_per_tenant: 100
+#   egress_allowlist: []          # 必须显式列 host 或 host:port；空 = 全部拒绝
+#   proxy: null                   # 企业代理；trust_env 始终 false
