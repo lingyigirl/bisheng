@@ -25,6 +25,40 @@
 
 ---
 
+## 0.1 本地配置覆盖（不要直接改 config.yaml）
+
+`src\backend\bisheng\config.yaml` 是团队共享配置，受版本管理。本地 Redis、数据库等与共享环境不同时，**不要直接修改它**，而是创建本地覆盖文件：
+
+```text
+src\backend\bisheng\config.local.yaml
+```
+
+该文件已被 `.gitignore` 的 `config.*.yaml` 规则忽略，不会提交。只写需要覆盖的键，例如：
+
+```yaml
+redis_url: "redis://127.0.0.1:6379/1"
+celery_redis_url: "redis://127.0.0.1:6379/2"
+```
+
+`scripts\backend.cmd` 启动时会自动把 `config.yaml` 和 `config.local.yaml` 深合并，生成：
+
+```text
+src\backend\bisheng\config.effective.yaml
+```
+
+并通过 `config=config.effective.yaml` 启动 API 和所有 worker。`config.effective.yaml` 也是忽略文件，不要手动修改。
+
+如果手动启动 Celery（不走 `backend.cmd`），先生成有效配置：
+
+```bash
+cd src/backend
+python ../../scripts/prepare_local_config.py \
+  bisheng/config.yaml bisheng/config.local.yaml bisheng/config.effective.yaml
+export config=config.effective.yaml
+```
+
+---
+
 ## 1. 前置：一次性环境搭建
 
 ### 1.1 虚拟环境
@@ -236,7 +270,11 @@ curl http://127.0.0.1:7860/api/v1/env      # 期望 status_code=200，返回 env
 
 ```bash
 cd src/backend
-export config=config.yaml
+
+# 存在本地覆盖时，先生成 config.effective.yaml（不存在 config.local.yaml 则直接用 config.yaml）
+python ../../scripts/prepare_local_config.py \
+  bisheng/config.yaml bisheng/config.local.yaml bisheng/config.effective.yaml
+export config=config.effective.yaml
 
 # 知识库任务（文档解析、Embedding、向量写入）+ 知识图谱抽取
 uv run --frozen --no-sync celery -A bisheng.worker.main worker -l info -c 20 -P threads -Q knowledge_celery,graph_celery -n knowledge@%h

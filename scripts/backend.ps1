@@ -89,6 +89,9 @@ $RepoRoot   = Split-Path -Parent $PSScriptRoot
 $BackendDir = Join-Path $RepoRoot 'src\backend'
 $VenvPy     = Join-Path $BackendDir '.venv\Scripts\python.exe'
 $CfgFile    = Join-Path $BackendDir 'bisheng\config.yaml'
+$LocalCfgFile = Join-Path $BackendDir 'bisheng\config.local.yaml'
+$EffectiveCfgFile = Join-Path $BackendDir 'bisheng\config.effective.yaml'
+$PrepareCfgScript = Join-Path $RepoRoot 'scripts\prepare_local_config.py'
 $RunDir     = Join-Path $RepoRoot '.run'
 $LogDir     = Join-Path $RunDir 'logs'
 $PidDir     = Join-Path $RunDir 'pids'
@@ -282,10 +285,11 @@ function Test-Preflight {
         $fatal = $true
     }
 
-    if (Test-Path $CfgFile) {
-        Write-Ok '  配置文件         src\backend\bisheng\config.yaml'
+    if (Test-Path $EffectiveCfgFile) {
+        $cfgDisplay = $EffectiveCfgFile.Substring($RepoRoot.Length + 1)
+        Write-Ok "  配置文件         $cfgDisplay"
     } else {
-        Write-Err '  缺少 src\backend\bisheng\config.yaml'
+        Write-Err "  缺少配置文件:$EffectiveCfgFile"
         $fatal = $true
     }
 
@@ -326,6 +330,40 @@ function Test-Preflight {
     }
 
     return (-not $fatal)
+}
+
+# ---------------------------------------------------------------------------
+# 本地配置覆盖
+#   基线是 config.yaml（受版本管理）；config.local.yaml 是未跟踪的本地覆盖。
+#   两者深合并为 config.effective.yaml，后端通过 config=config.effective.yaml 加载。
+# ---------------------------------------------------------------------------
+function Resolve-EffectiveConfig {
+    # 返回实际要加载的配置文件路径；失败返回 $null。
+    $baseCfg = $CfgFile
+    $outputCfg = $EffectiveCfgFile
+    $env:config = 'config.yaml'
+
+    if (-not (Test-Path $LocalCfgFile)) {
+        return $baseCfg
+    }
+    if (-not (Test-Path $VenvPy)) {
+        Write-Err "  检测到本地配置覆盖,但找不到虚拟环境:$VenvPy"
+        return $null
+    }
+    if (-not (Test-Path $PrepareCfgScript)) {
+        Write-Err "  检测到本地配置覆盖,但找不到合并脚本:$PrepareCfgScript"
+        return $null
+    }
+
+    Write-Info '  检测到本地配置覆盖:src\backend\bisheng\config.local.yaml'
+    & $VenvPy $PrepareCfgScript $baseCfg $LocalCfgFile $outputCfg
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $outputCfg)) {
+        Write-Err '  本地配置合并失败,已中止启动'
+        return $null
+    }
+    $env:config = 'config.effective.yaml'
+    Write-Ok '  已生成有效配置:src\backend\bisheng\config.effective.yaml'
+    return $outputCfg
 }
 
 # ---------------------------------------------------------------------------
@@ -578,10 +616,8 @@ if ($Only) {
     $targets = @($AllNames | Where-Object { $Only -contains $_ })
 }
 
-# 这两个变量会被子进程继承:config 是 bisheng 加载配置的必需项,
+# config 是 bisheng 加载配置的必需项,由 Resolve-EffectiveConfig 在启动前设置;
 # PYTHONPATH 保证以脚本路径方式启动时也能 import bisheng(文档 §3.3)。
-$env:config = 'config.yaml'
-
 if ($Stop) {
     Stop-BiSheng -Names $targets
     Write-Host ''
@@ -595,6 +631,14 @@ Write-Host "  目标  :$($targets -join ', ')"
 if ($DryRun) { Write-Warn '  [dry-run] 只打印命令,不实际执行' }
 
 Stop-BiSheng -Names $targets
+
+$resolvedCfg = Resolve-EffectiveConfig
+if (-not $resolvedCfg) {
+    Write-Host ''
+    Write-Err '本地配置准备失败,已中止启动。'
+    exit 1
+}
+$EffectiveCfgFile = $resolvedCfg
 
 if (-not (Test-Preflight)) {
     Write-Host ''
