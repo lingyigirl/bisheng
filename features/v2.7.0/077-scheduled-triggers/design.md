@@ -434,13 +434,19 @@
 
 ## 7.1 手工验收修复（2026-10-20）
 
-针对 `docs/report.md` 的验收缺口，实现期修正如下（不改变对客契约）：
+针对 [`docs/v2.7.0-manual-2026-10-19/report.md`](../../../docs/v2.7.0-manual-2026-10-19/report.md) 的验收缺口，实现期修正如下（不改变对客契约）：
 
 1. **`last_run_at` 写入点 = claim**：此前只有 `run_started_at`，`_finalize` 依赖 `last_run_at` 导致耗时恒 NULL。claim 后各路径（计划轮次、立即运行、事件触发、助手 worker、observe）统一重读任务，终态耗时由 `last_run_at/run_started_at` 计算；`afinalize` 总是写 `last_duration_ms`（含显式 NULL），避免旧值残留。**口径**：列表耗时 = claim 到终态（含队列等待）；监控 `process_time` 从 worker 实际执行开始，两者可能不同。
 2. **系统处置留痕统一落 `schedule.run`**：计划轮次失败、租约超时、达阈值/应用删除/一次性终态自动停用均以 `operator_id=0`（system）留痕，不新增 `schedule.task.disable` 行（保持不进审计页白名单）。轮次内的系统审计累积后**锁外批量**写，避免 15s 派发锁被逐条 commit 拉长。
 3. **租约回收的租户姿态**：`_reclaim_expired` 在设置任何任务租户上下文之前运行，`areclaim_expired` 必须包 `bypass_tenant_filter()`；逐行处置前再 `set_current_tenant_id(row.tenant_id)`，否则多租户 beat 会在回收阶段 `NoTenantContextError`。
 4. **触发计划三语**：列表/预览/NL 草稿新增 `schedule_display`（语义 token），前端按 `scheduledTask` 命名空间渲染；`schedule_description` 保留为中文兼容/兜底。一次性任务同样输出结构化 `once` 形态。
-5. **F076 11806 补齐**：带密钥请求的中间件看的是 ROOT 租户，鉴权依赖必须用凭据的 `tenant_id` 自查停用租户（Redis 黑名单 + DB 兜底）。
+5. **F076 11806 补齐**：带密钥请求的中间件看的是 ROOT 租户，鉴权依赖必须用凭据的 `tenant_id` 自查停用租户（Redis 黑名单 + DB 兜底；缓存 miss 也回查 DB，root 仅跳过额外 DB 查询）。
+6. **计划失败展示（复核 #11）**：以 `last_duration_ms` 区分真实运行；计划轮次 FAIL/SKIP 时隐藏「开始」与监控链接，Tooltip 提示「本轮为计划轮次失败，未实际运行」；`needs_input` 作为暂停中的真实运行单独放行。
+7. **预设值变化可追溯（复核 #14）**：审计 metadata 增加顶层 `preset_values_changed` 布尔标记；`preset_inputs` 仍只存 key、不存 value（AC-51）。
+8. **11806 缓存未命中（复核 #15）**：Redis 黑名单 miss 时回查租户行（fail-closed）；新增 cache-miss 契约测试。
+9. **工作流版本标识**：新增 `FlowVersion.id → last_app_version_id` 落库单测；助手无版本体系，保持 NULL。
+
+完整运行态结果、剩余环境/覆盖限制见报告 §9/§10。
 
 ---
 
