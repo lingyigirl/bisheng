@@ -25,7 +25,7 @@
 | `domain/models/{managed_agent,taxonomy,run}.py` | 三张表：注册表、分类法、调用留痕；`JsonType`/`LargeText`/`UPDATE_TIME_SERVER_DEFAULT`，租户列 `default=None` |
 | `domain/models/dao.py` | CRUD、状态 CAS、删除前计数、健康更新、调用统计；管理读 `strict_tenant_filter`，批量写手写 `tenant_id` |
 | `domain/services/agent_card.py` | Agent Card 解析/预设输入校验；文件输入不可定时化（11914） |
-| `domain/services/registry_service.py` | 注册/编辑/上线/下线/停用/删除；owner tuple `enforce_fga_success=True`，失败回滚行 |
+| `domain/services/registry_service.py` | 注册/编辑/上线/下线/停用/删除；标签关联（`TagLink`，create/update/delete 同步）；owner tuple `enforce_fga_success=True`，失败回滚行 |
 | `domain/services/classification_service.py` | 场景/行业 CRUD；被引用时禁止删除 |
 | `domain/services/credential_service.py` | Fernet 加密凭据、掩码、空 secret = 不变 |
 | `domain/services/adapters/*` | native / OpenAI-compatible / custom HTTP；SSRF/allowlist/超时/响应体上限 |
@@ -59,7 +59,7 @@
 
 ### 平台（`src/frontend/platform`）
 
-- 新页面 `pages/BuildPage/managedAgents/`：列表/筛选、注册编辑、详情、分类管理、健康检查、启停/删除、定时任务面板。
+- 新页面 `pages/BuildPage/managedAgents/`：列表/筛选（含标签）、注册编辑（含标签多选）、详情（含调用统计面板）、分类管理、健康检查、启停/删除、定时任务面板。
 - 路由 `build/managed-agents` + HeaderMenu「智能体纳管」。
 - API `controllers/API/managedAgent.ts`、类型 `types/api/managedAgent.ts`。
 - 服务账号授权代管增加 `managed_agent` 类型。
@@ -68,7 +68,7 @@
 ### 客户端（`src/frontend/client`）
 
 - `pages/apps/explore.tsx` 增加 Tabs：原生应用广场 / 第三方智能体。
-- `ManagedAgentTab/Card/Filters`：只展示 online + 有查看权限的纳管智能体；场景/行业筛选、预览抽屉。
+- `ManagedAgentTab/Card/Filters`：只展示 online + 有查看权限的纳管智能体；场景/行业/标签筛选、标签展示、预览抽屉。
 - `api/managedAgents.ts` + 三语 `translation.json` 键。
 
 ---
@@ -120,11 +120,12 @@
 
 ## 5. 验证记录
 
-- 后端回归 **641 passed**（`test/managed_agent` + `test/open_api` + `test/scheduled_task` + FGA/F013；含 flag/FGA 对齐用例）。
-- 平台 `pnpm typecheck` **434 strict 全过**；客户端 `pnpm typecheck` **1304 strict 全过**；接入指南测试 17/17；`check-i18n` OK。
-- 客户端目标文件 eslint 0；无新增 typecheck 错误。
+- 后端回归 **644 passed**（`config=config.yaml`：`test/managed_agent` + `test/open_api` + `test/scheduled_task` + FGA/F013）；现场配置 `config=config.celery-private.yaml` 下 **643 passed, 1 skipped**（开关打开时路由挂载用例按设计跳过）。
+- 平台 `pnpm typecheck` **434 strict 全过**；客户端 `pnpm typecheck` **1304 strict 全过**；`check-i18n` OK。
+- 客户端/平台本次改动文件 eslint 0。
 - MySQL DDL 离线编译：31/11/20 列；DM8 无本机实例，按清单留现场。
-- e2e 套件 `test/e2e/test_e2e_managed_agents.py` 已落地，实跑需目标环境开启 `allow_private_networks`（仅测试）并配置 allowlist。
+- e2e 套件 `test/e2e/test_e2e_managed_agents.py` **9 passed**（本机运行实例，启用 `allow_private_networks` + allowlist `127.0.0.1`）。
+- 现场验收报告 §6 的 9 项问题已逐项核实与修复，见 `docs/F078-报告问题修复说明.md`。
 
 ---
 
