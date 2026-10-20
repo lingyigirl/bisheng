@@ -2186,6 +2186,7 @@
     "selectedOnly": "Selected only",
     "noMatchingResources": "No matching resources. Try another search or turn off Selected only.",
     "unavailableSkill": "{{name}} (unavailable)",
+    "unavailableConnector": "Unavailable connectors",
     "previousPage": "Previous",
     "nextPage": "Next",
     "resourcePage": "Page {{page}} / {{total}}",
