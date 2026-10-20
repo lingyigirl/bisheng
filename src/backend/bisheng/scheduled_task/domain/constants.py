@@ -28,14 +28,16 @@ class ScheduledTaskAuditAction(StrEnum):
     TASK_UPDATE = "schedule.task.update"
     #: 启用（重新启用时 next_run_at 会被重算为下一个未来计划点）。
     TASK_ENABLE = "schedule.task.enable"
-    #: 停用（含一次性任务执行后的自动停用——那一笔以系统身份留痕，见 RUN 说明）。
+    #: 人工停用。一次性任务终态、达阈值、应用删除等**自动停用**不落本动作：
+    #: 它们与运行取证一起落 ``schedule.run``（系统身份），保持不进审计页白名单。
     TASK_DISABLE = "schedule.task.disable"
     #: 删除任务（运行留痕与审计不随删除消失）。
     TASK_DELETE = "schedule.task.delete"
     #: 手动立即运行（人触发的动作，进审计页：谁在什么时候跳过计划跑了一次）。
     TASK_RUN_NOW = "schedule.task.run_now"
-    #: 单轮运行留痕。operator = 运行身份（服务账号专用身份）；系统自动处置
-    #: （租约超时判失败、达阈值自动停用）以 ``operator_id=0`` → ``'system'`` 留痕。
+    #: 运行与系统处置留痕。正常运行的 operator = 运行身份（服务账号专用身份）；
+    #: 系统自动处置（计划轮次失败、租约超时判失败、达阈值/应用删除/一次性终态
+    #: 自动停用）以 ``operator_id=0`` → ``'system'`` 留痕。
     RUN = "schedule.run"
 
 

@@ -67,6 +67,9 @@ async def _execute_assistant_run_async(task_id: int, trace_id: str) -> bool:
     started_at = time.time()
     status = RunStatus.FAILED
     error: str | None = None
+    # AC-52：监控「智能体」列应显示应用名，而不是定时任务名；应用查不到/已删除时
+    # 回退任务名，保证遥测仍可归因。
+    app_name = task.name
     try:
         # 执行级二次断言（自有任务体，零额外成本）：队列等待期间应用可能下线/身份被撤。
         recheck = await trigger_guard.recheck_task(task)
@@ -83,6 +86,7 @@ async def _execute_assistant_run_async(task_id: int, trace_id: str) -> bool:
         if assistant is None:
             error = "app_deleted"
             return False
+        app_name = assistant.name
 
         # 进程内直调（镜像 v2 无状态核心）；chat_id="" 即不落会话。
         from bisheng.api.services.assistant_agent import AssistantAgent
@@ -102,7 +106,7 @@ async def _execute_assistant_run_async(task_id: int, trace_id: str) -> bool:
         return False
     finally:
         end_time = time.time()
-        await _report_telemetry(task, started_at, end_time, status)
+        await _report_telemetry(task, started_at, end_time, status, app_name=app_name, trace_id=trace_id)
         await run_service._finalize(
             task,
             token=trace_id,
@@ -114,19 +118,29 @@ async def _execute_assistant_run_async(task_id: int, trace_id: str) -> bool:
         )
 
 
-async def _report_telemetry(task, started_at: float, end_time: float, status: RunStatus) -> None:
+async def _report_telemetry(
+    task,
+    started_at: float,
+    end_time: float,
+    status: RunStatus,
+    *,
+    app_name: str,
+    trace_id: str,
+) -> None:
     """APPLICATION_PROCESS 上报（复用既有 schema，不新增字段）。
 
     best-effort：遥测写失败不得改变运行结果（与工作流侧 finally 上报同口径）。
+    ``app_name`` 必须是应用名（AC-52）；``trace_id`` 用本轮租约令牌，避免读
+    任务行上的旧值。
     """
     try:
         await telemetry_service.log_event(
             user_id=task.run_identity_user_id,
             event_type=BaseTelemetryTypeEnum.APPLICATION_PROCESS,
-            trace_id=task.last_trace_id,
+            trace_id=trace_id,
             event_data=ApplicationProcessEventData(
                 app_id=str(task.app_id),
-                app_name=task.name,
+                app_name=app_name,
                 app_type=ApplicationTypeEnum.ASSISTANT,
                 chat_id="",
                 start_time=int(started_at),

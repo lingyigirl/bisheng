@@ -218,6 +218,11 @@ class ScheduledTaskDao:
 
         reclaimed: list[dict] = []
         for row in expired:
+            # AC-52：超时回收也要给出耗时。起点是 claim 写入的 run_started_at；
+            # 老数据没有该值时保持 NULL，不臆造。
+            duration_ms = None
+            if row.run_started_at is not None:
+                duration_ms = max(int((now - row.run_started_at).total_seconds() * 1000), 0)
             async with get_async_db_session() as session:
                 result = await session.execute(
                     update(ScheduledTask)
@@ -233,6 +238,8 @@ class ScheduledTaskDao:
                         last_status=RunStatus.FAILED.value,
                         last_error="run lease expired (timeout)",
                         last_finish_at=now,
+                        last_run_at=row.run_started_at or row.last_run_at,
+                        last_duration_ms=duration_ms,
                         consecutive_fail_count=ScheduledTask.consecutive_fail_count + 1,
                         update_time=now,
                     )
@@ -246,6 +253,10 @@ class ScheduledTaskDao:
                             "name": row.name,
                             "created_by": row.created_by,
                             "trace_id": row.last_trace_id,
+                            # 审计的 slot 口径：claim 时消耗的计划槽位（不是已推进的下一跳）。
+                            "last_planned_at": row.last_planned_at,
+                            "run_started_at": row.run_started_at,
+                            "duration_ms": duration_ms,
                             # 失败前计数：调用方据此判定"首败一条"与阈值停用
                             "fail_count_before": int(row.consecutive_fail_count or 0),
                             "fail_count_after": int(row.consecutive_fail_count or 0) + 1,
@@ -284,6 +295,9 @@ class ScheduledTaskDao:
         values: dict = {
             "run_lease_token": token,
             "run_started_at": now,
+            # AC-52：本次运行开始时间。此前只有 run_started_at、没有写 last_run_at，
+            # 导致 _finalize 的耗时计算（依赖 last_run_at）恒为 NULL。
+            "last_run_at": now,
             "lease_expires_at": lease_expires_at,
             "last_trace_id": trace_id,
             "blocked_reason": None,
@@ -329,6 +343,11 @@ class ScheduledTaskDao:
                     last_status=RunStatus.SKIPPED.value,
                     last_error=reason,
                     last_finish_at=now,
+                    # 跳过不是一次运行：清掉上一次运行的耗时，避免列表把旧耗时
+                    # 显示在“已跳过”旁边。last_run_at / last_trace_id / run_started_at
+                    # 一律不动——overlap 跳过可能发生在另一轮仍持租约时，覆盖会破坏
+                    # 在跑运行的耗时与 trace 归因（run_planner 的 SKIP 优先级高于 HELD）。
+                    last_duration_ms=None,
                     update_time=now,
                 )
             )
@@ -358,6 +377,9 @@ class ScheduledTaskDao:
             "last_finish_at": now,
             "consecutive_fail_count": ScheduledTask.consecutive_fail_count + 1,
             "blocked_reason": None,
+            # 计划轮次 FAIL 没有真正的运行（未 claim）：清掉旧耗时；同样不动
+            # last_run_at / last_trace_id / run_started_at，原因见 amark_skipped。
+            "last_duration_ms": None,
             "update_time": now,
         }
         if disable:
@@ -425,8 +447,8 @@ class ScheduledTaskDao:
             "blocked_reason": None,
             "update_time": now,
         }
-        if duration_ms is not None:
-            values["last_duration_ms"] = duration_ms
+        # 终态必须写真值：未带起始时间时显式写 NULL，避免沿用上一次运行的耗时。
+        values["last_duration_ms"] = duration_ms
         if app_version_id is not None:
             values["last_app_version_id"] = app_version_id
         if trace_id is not None:

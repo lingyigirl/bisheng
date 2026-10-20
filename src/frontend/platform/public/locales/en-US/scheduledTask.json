@@ -37,7 +37,12 @@
     "failed": "Failed",
     "skipped": "Skipped",
     "needs_input": "Waiting for input",
-    "noError": "No error details"
+    "noError": "No error details",
+    "startedAt": "Started {{time}}",
+    "finishedAt": "Result {{time}}",
+    "duration": "Duration {{duration}}",
+    "version": "Version {{version}}",
+    "viewMonitor": "Last run monitor"
   },
   "form": {
     "editTitle": "Edit scheduled task",
@@ -67,5 +72,37 @@
     "presetKey": "Input key",
     "presetValue": "Value",
     "noSessionHint": "Scheduled runs do not create app conversations; see the task list and monitoring."
+  },
+  "schedule": {
+    "listSeparator": ", ",
+    "weekdayRange": "{{start}}–{{end}}",
+    "weekday": {
+      "sun": "Sun",
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat"
+    },
+    "day": {
+      "everyDay": "Every day",
+      "weekdays": "Every {{weekdays}}",
+      "monthDays": "Day {{days}} of each month",
+      "yearlyDays": "{{months}} {{days}} each year",
+      "yearlyWeekdays": "Every {{weekdays}} in {{months}}",
+      "everyDayOfMonths": "Every day in {{months}}",
+      "or": "{{first}} or {{second}}"
+    },
+    "time": {
+      "everyMinute": "Every minute",
+      "everyNMinutes": "Every {{n}} minutes",
+      "minutesOfHour": "At minute {{minutes}} of every hour",
+      "everyNHoursAtMinute": "At minute {{minute}} of every {{n}} hours",
+      "everyNMinutesOfHour": "Every {{n}} minutes of hour {{hour}}",
+      "everyMinuteOfHours": "Every minute of hours {{hours}}",
+      "onceAt": "Once at {{time}}"
+    },
+    "raw": "Minute {{minute}}; hour {{hour}}; day {{dayOfMonth}}; month {{monthOfYear}}; weekday {{dayOfWeek}}"
   }
 }

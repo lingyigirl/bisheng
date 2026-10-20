@@ -1565,7 +1565,10 @@
       "success": "成功",
       "failed": "失败"
     },
-    "monitorTraceId": "调用流水号"
+    "monitorTraceId": "调用流水号",
+    "monitorTracePending": "该运行尚未写入监控，请稍后刷新",
+    "auditBefore": "操作前",
+    "auditAfter": "操作后"
   },
   "tag": {
     "labelMaxLength": "标签名不能超过10个字符",

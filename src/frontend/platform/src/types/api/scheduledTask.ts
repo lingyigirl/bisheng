@@ -8,6 +8,36 @@ export interface PresetInputItem {
     value: string
 }
 
+/** F077 AC-59：后端返回的结构化触发计划（语义 token，前端按语言渲染）。 */
+export type RawCronFields = {
+    minute: string
+    hour: string
+    day_of_month: string
+    month_of_year: string
+    day_of_week: string
+}
+
+export type ScheduleDay =
+    | { kind: "every_day" }
+    | { kind: "weekdays"; weekdays: number[]; range: boolean }
+    | { kind: "month_days"; days: number[] }
+    | { kind: "yearly_days"; months: number[]; days: number[] }
+    | { kind: "yearly_weekdays"; months: number[]; weekdays: number[]; range: boolean }
+    | { kind: "every_day_of_months"; months: number[] }
+    | { kind: "or"; parts: ScheduleDay[] }
+
+export type ScheduleTime =
+    | { kind: "every_minute" }
+    | { kind: "every_n_minutes"; n: number }
+    | { kind: "minutes_of_hour"; minutes: number[] }
+    | { kind: "every_n_hours_at_minute"; n: number; minute: number }
+    | { kind: "every_n_minutes_of_hour"; n: number; hour: number }
+    | { kind: "every_minute_of_hours"; hours: number[] }
+    | { kind: "at"; times: { hour: number; minute: number }[] }
+    | { kind: "once"; run_at: string }
+
+export type ScheduleDisplay = { day?: ScheduleDay | null; time: ScheduleTime } | { raw: RawCronFields }
+
 export interface ScheduledTaskItem {
     id: number
     name: string
@@ -18,6 +48,7 @@ export interface ScheduledTaskItem {
     cron_expression: string | null
     run_at: string | null
     schedule_description: string
+    schedule_display: ScheduleDisplay | null
     status: "enabled" | "disabled"
     next_run_at: string | null
     last_status: "success" | "failed" | "skipped" | "needs_input" | null
@@ -60,6 +91,7 @@ export interface ScheduledTaskUpdateReq {
 export interface CronPreviewResp {
     expression: string
     description: string
+    schedule_display?: ScheduleDisplay | null
     next_runs: string[]
 }
 
@@ -77,6 +109,7 @@ export interface NlDraftResp {
     cron_expression: string | null
     run_at: string | null
     schedule_description: string
+    schedule_display?: ScheduleDisplay | null
     next_runs: string[]
     preset_inputs: PresetInputItem[] | null
     rationale: string

@@ -24,8 +24,13 @@ from loguru import logger
 
 from bisheng.common.services.config_service import settings
 from bisheng.core.cache.redis_manager import get_redis_client
-from bisheng.core.context.tenant import bypass_tenant_filter, get_current_tenant_id, set_current_tenant_id
-from bisheng.database.models.audit_log import AuditLogDao
+from bisheng.core.context.tenant import (
+    DEFAULT_TENANT_ID,
+    bypass_tenant_filter,
+    get_current_tenant_id,
+    set_current_tenant_id,
+)
+from bisheng.database.models.audit_log import AuditLog, AuditLogDao
 from bisheng.database.models.flow import FlowDao, FlowType
 from bisheng.scheduled_task.domain.constants import ScheduledTaskAuditAction
 from bisheng.scheduled_task.domain.models.dao import ScheduledTaskDao
@@ -146,8 +151,12 @@ async def run_cycle(now: datetime | None = None, *, dispatch=None, notify=None) 
     dispatch = dispatch or _dispatch
     notify = notify or _notify
 
+    # 系统处置审计（计划失败/超时回收）先累积、锁释放后批量落库：派发锁 TTL
+    # 默认只有 15s，逐条 ainsert_v2（各自开会话 + commit + refresh）在故障风暴
+    # （最多 200 到期 + 200 过期）时会明显拉长持锁时间。
+    system_audits: list[AuditLog] = []
     try:
-        stats.reclaimed = await _reclaim_expired(now, notify)
+        stats.reclaimed = await _reclaim_expired(now, notify, system_audits)
 
         # 跨租户枚举（beat tick 没有租户 header，见 design §5 坑 10）。
         with bypass_tenant_filter():
@@ -160,7 +169,7 @@ async def run_cycle(now: datetime | None = None, *, dispatch=None, notify=None) 
             previous_tenant = get_current_tenant_id()
             set_current_tenant_id(task.tenant_id)
             try:
-                used = await _process_task(task, now, room, stats, dispatch, notify)
+                used = await _process_task(task, now, room, stats, dispatch, notify, system_audits)
                 room -= used
             except Exception:
                 # 单条失败不拖垮整轮（下一 tick 会重新判定它）。
@@ -171,7 +180,10 @@ async def run_cycle(now: datetime | None = None, *, dispatch=None, notify=None) 
 
         stats.observed = await observe_runs(now, notify=notify)
     finally:
-        await _release_lock(lock_token)
+        try:
+            await _release_lock(lock_token)
+        finally:
+            await _flush_system_audits(system_audits)
 
     logger.info("schedule.scan.round {}", stats.as_dict())
     return stats
@@ -204,7 +216,9 @@ def _snapshot(task: ScheduledTask) -> TaskSnapshot:
     )
 
 
-async def _process_task(task, now, room, stats: CycleStats, dispatch, notify) -> int:
+async def _process_task(
+    task, now, room, stats: CycleStats, dispatch, notify, system_audits: list[AuditLog] | None = None
+) -> int:
     """处理一条到期任务；返回本轮占用的并发名额（0 或 1）。"""
     recheck = await trigger_guard.recheck_task(task)
     decision = classify(
@@ -234,6 +248,10 @@ async def _process_task(task, now, room, stats: CycleStats, dispatch, notify) ->
             logger.info("scheduled_task: task {} lost the claim race; skipping", task.id)
             return 0
         stats.claimed += 1
+        # claim 成功后重读：本次的 last_run_at / last_trace_id / run_started_at
+        # 已在原子写里落库，_finalize（含派发失败路径）必须用新值，不能用 claim
+        # 前加载的内存对象。
+        task = await ScheduledTaskDao.aget(task.id) or task
         try:
             await dispatch(task, trace_id=token)
         except Exception:
@@ -247,6 +265,8 @@ async def _process_task(task, now, room, stats: CycleStats, dispatch, notify) ->
                 now=now,
                 notify=notify,
                 count_failure=True,
+                started_at=now,
+                trace_id=token,
             )
         return 1
 
@@ -262,7 +282,7 @@ async def _process_task(task, now, room, stats: CycleStats, dispatch, notify) ->
         return 0
 
     if decision.variant is PlanVariant.FAIL:
-        await _apply_failure(task, decision, now, notify)
+        await _apply_failure(task, decision, now, notify, system_audits)
         stats.failed += 1
         return 0
 
@@ -273,13 +293,14 @@ async def _process_task(task, now, room, stats: CycleStats, dispatch, notify) ->
     return 0
 
 
-async def _apply_failure(task, decision, now, notify) -> None:
+async def _apply_failure(task, decision, now, notify, system_audits: list[AuditLog] | None = None) -> None:
     """计划轮次的失败记账 + 首败/阈值/删除三类通知（每轮至多一条）。"""
+    reason = decision.last_error or PlanReason.IDENTITY_UNAVAILABLE.value
     updated = await ScheduledTaskDao.amark_failed(
         task.id,
         slot=task.next_run_at,
         next_run_at=decision.next_run_at,
-        reason=decision.last_error or PlanReason.IDENTITY_UNAVAILABLE.value,
+        reason=reason,
         now=now,
         disable=decision.disable,
     )
@@ -292,6 +313,27 @@ async def _apply_failure(task, decision, now, notify) -> None:
     if not decision.disable and prior + 1 >= threshold:
         await ScheduledTaskDao.aupdate_fields(task.id, {"status": TaskStatus.DISABLED.value}, tenant_id=task.tenant_id)
         disabled_at_threshold = True
+
+    # AC-50：计划轮次 FAIL 是系统自动处置（没有 claim/运行身份），以系统身份
+    # 留一条 schedule.run 取证行；该动作不进审计页白名单。
+    if system_audits is not None:
+        system_audits.append(
+            _system_audit_entry(
+                tenant_id=task.tenant_id,
+                task_id=task.id,
+                name=task.name,
+                status=RunStatus.FAILED,
+                reason=reason,
+                trace_id=None,
+                metadata={
+                    "slot": _iso(task.next_run_at),
+                    "next_run_at": _iso(decision.next_run_at),
+                    "auto_disabled": bool(decision.disable or disabled_at_threshold),
+                    "fail_count": prior + 1,
+                    "disposition": "plan_failure",
+                },
+            )
+        )
 
     if decision.disable:
         # AC-31：应用已删除 —— fail-closed 并自动停用，恒通知。
@@ -318,29 +360,66 @@ async def _apply_failure(task, decision, now, notify) -> None:
         )
 
 
-async def _reclaim_expired(now: datetime, notify) -> int:
+async def _reclaim_expired(now: datetime, notify, system_audits: list[AuditLog] | None = None) -> int:
     """租约回收（AC-15）：判失败、释放互斥，并做与计划轮次同口径的通知决策。"""
     threshold = _conf().consecutive_failure_threshold
-    reclaimed = await ScheduledTaskDao.areclaim_expired(now)
+    # 调度路径必须跨租户读取：run_cycle 在设置任何任务租户上下文之前调用本函数，
+    # multi_tenant 开启时没有上下文会直接触发 NoTenantContextError。
+    with bypass_tenant_filter():
+        reclaimed = await ScheduledTaskDao.areclaim_expired(now)
     for row in reclaimed:
-        if row["fail_count_before"] + 1 >= threshold:
-            await ScheduledTaskDao.aupdate_fields(
-                row["id"], {"status": TaskStatus.DISABLED.value}, tenant_id=row["tenant_id"]
-            )
-        if row["fail_count_before"] == 0:
-            await notify(
-                _LightTask(row),
-                ACTION_FAILED,
-                "定时任务运行失败",
-                f"任务「{row['name']}」运行超时，已判定失败。",
-            )
-        elif row["fail_count_before"] + 1 == threshold:
-            await notify(
-                _LightTask(row),
-                ACTION_FAILED,
-                "定时任务已自动停用",
-                f"任务「{row['name']}」连续失败 {threshold} 次，已自动停用。",
-            )
+        previous_tenant = get_current_tenant_id()
+        set_current_tenant_id(row["tenant_id"])
+        try:
+            auto_disabled = row["fail_count_before"] + 1 >= threshold
+            if auto_disabled:
+                try:
+                    await ScheduledTaskDao.aupdate_fields(
+                        row["id"], {"status": TaskStatus.DISABLED.value}, tenant_id=row["tenant_id"]
+                    )
+                except Exception:
+                    # 停用失败不阻断后续通知/审计；下一轮若再次超时仍会重试。
+                    logger.exception("scheduled_task: auto-disable failed for reclaimed task {}", row["id"])
+                    auto_disabled = False
+
+            if system_audits is not None:
+                system_audits.append(
+                    _system_audit_entry(
+                        tenant_id=row["tenant_id"],
+                        task_id=row["id"],
+                        name=row["name"],
+                        status=RunStatus.FAILED,
+                        reason="run lease expired (timeout)",
+                        trace_id=row.get("trace_id"),
+                        metadata={
+                            "slot": _iso(row.get("last_planned_at")),
+                            "auto_disabled": auto_disabled,
+                            "fail_count": row["fail_count_after"],
+                            "duration_ms": row.get("duration_ms"),
+                            "disposition": "lease_timeout",
+                        },
+                    )
+                )
+
+            if row["fail_count_before"] == 0:
+                await notify(
+                    _LightTask(row),
+                    ACTION_FAILED,
+                    "定时任务运行失败",
+                    f"任务「{row['name']}」运行超时，已判定失败。",
+                )
+            elif row["fail_count_before"] + 1 == threshold:
+                await notify(
+                    _LightTask(row),
+                    ACTION_FAILED,
+                    "定时任务已自动停用",
+                    f"任务「{row['name']}」连续失败 {threshold} 次，已自动停用。",
+                )
+        except Exception:
+            # 单行失败不拖垮其余回收行（审计已在上面追加，仍会随本轮 flush）。
+            logger.exception("scheduled_task: reclaim post-processing failed for task {}", row.get("id"))
+        finally:
+            set_current_tenant_id(previous_tenant)
     return len(reclaimed)
 
 
@@ -566,15 +645,26 @@ async def _finalize(
     now: datetime,
     notify,
     count_failure: bool = False,
+    started_at: datetime | None = None,
+    trace_id: str | None = None,
+    notify_failure: bool = True,
+    disable_once: bool = True,
 ) -> None:
     """释放租约 + 写最近结果 + 一次性任务自动停用 + 失败通知 + 运行留痕。"""
+    # 起始时间由调用方显式给或从 claim 写入的字段取：不能依赖调用方内存对象的
+    # “新鲜度”（派发失败路径曾传入 claim 前的对象，导致耗时/trace 都取旧值）。
+    effective_started = started_at or task.last_run_at or task.run_started_at
     duration_ms = None
-    if task.last_run_at:
-        duration_ms = max(int((now - task.last_run_at).total_seconds() * 1000), 0)
+    if effective_started is not None:
+        duration_ms = max(int((now - effective_started).total_seconds() * 1000), 0)
+    effective_trace_id = trace_id or task.last_trace_id
 
     threshold = _conf().consecutive_failure_threshold
     prior = int(task.consecutive_fail_count or 0)
-    disable = task.schedule_type == ScheduleType.ONCE.value
+    # AC-08：一次性任务终态自动停用；AC-17 的人工试跑派发失败传 disable_once=False，
+    # 不消耗唯一一次机会。
+    once_terminal = disable_once and task.schedule_type == ScheduleType.ONCE.value
+    disable = once_terminal
     disabled_at_threshold = False
     if count_failure and not disable and prior + 1 >= threshold:
         disable = True
@@ -587,16 +677,18 @@ async def _finalize(
         error=error,
         now=now,
         duration_ms=duration_ms,
+        trace_id=effective_trace_id,
         disable=disable,
         reset_fail_count=(status is RunStatus.SUCCESS),
-        increment_fail_count=(status is RunStatus.FAILED),
+        # AC-17：人工/事件触发的失败不进入连续失败计数（只有计划轮次与定时运行计数）。
+        increment_fail_count=(status is RunStatus.FAILED and count_failure),
     )
     if updated != 1:
         # 令牌不匹配：租约已被回收或换了主人（例如超时判定先行），本次回写作废。
         logger.warning("scheduled_task: finalize for task {} did not own the lease", task.id)
         return
 
-    if status is RunStatus.FAILED:
+    if notify_failure and status is RunStatus.FAILED:
         if prior == 0:
             await notify(
                 task,
@@ -612,10 +704,75 @@ async def _finalize(
                 f"任务「{task.name}」连续失败 {prior + 1} 次，已自动停用。",
             )
 
-    await _audit_run(task, status=status, error=error, now=now)
+    auto_disabled = disabled_at_threshold or once_terminal
+    await _audit_run(
+        task,
+        status=status,
+        error=error,
+        trace_id=effective_trace_id,
+        auto_disabled=auto_disabled,
+    )
+    if auto_disabled:
+        # AC-50：自动停用是系统处置，额外以系统身份留痕（运行行仍归运行身份）。
+        await _audit_system_disposition(
+            task,
+            status=status,
+            trace_id=effective_trace_id,
+            reason="failure_threshold" if disabled_at_threshold else "once_auto_disabled",
+        )
 
 
-async def _audit_run(task, *, status: RunStatus, error: str | None, now: datetime) -> None:
+def _iso(value: datetime | None) -> str | None:
+    """metadata 只放 JSON 原语：datetime 统一转 ISO 字符串。"""
+    return value.isoformat() if value is not None else None
+
+
+def _system_audit_entry(
+    *,
+    tenant_id: int,
+    task_id: int,
+    name: str,
+    status: RunStatus,
+    reason: str | None,
+    trace_id: str | None,
+    metadata: dict,
+) -> AuditLog:
+    """构造一条待批量落库的系统留痕（operator_id=0 → 'system'）。"""
+    return AuditLog(
+        tenant_id=tenant_id,
+        operator_id=0,
+        operator_name="system",
+        operator_tenant_id=DEFAULT_TENANT_ID,
+        action=ScheduledTaskAuditAction.RUN.value,
+        target_type=TARGET_TYPE,
+        target_id=str(task_id),
+        reason=reason,
+        audit_metadata={"status": status.value, "trace_id": trace_id, **metadata},
+        object_name=name,
+    )
+
+
+async def _flush_system_audits(entries: list[AuditLog]) -> None:
+    """锁释放后批量落库：best-effort，写失败不得影响调度结果。"""
+    if not entries:
+        return
+    try:
+        # 与 call_audit_service 同口径：行自带显式 tenant_id，落库时绕过租户过滤，
+        # 避免 beat 无上下文时 before_flush 参与改写。
+        with bypass_tenant_filter():
+            await AuditLogDao.ainsert_audit_logs(entries)
+    except Exception:
+        logger.exception("scheduled_task: system audit batch write failed ({} rows)", len(entries))
+
+
+async def _audit_run(
+    task,
+    *,
+    status: RunStatus,
+    error: str | None,
+    trace_id: str | None,
+    auto_disabled: bool,
+) -> None:
     """运行留痕（`schedule.run`）：只落库取证、不进审计页白名单（AC-50）。"""
     try:
         await AuditLogDao.ainsert_v2(
@@ -626,12 +783,45 @@ async def _audit_run(task, *, status: RunStatus, error: str | None, now: datetim
             target_type=TARGET_TYPE,
             target_id=str(task.id),
             reason=error,
-            metadata={"status": status.value, "trace_id": task.last_trace_id},
+            metadata={
+                "status": status.value,
+                "trace_id": trace_id or task.last_trace_id,
+                "auto_disabled": auto_disabled,
+            },
             object_name=task.name,
         )
     except Exception:
         # 留痕是 best-effort：写失败不得改变运行结果（与遥测 finally 同口径）。
         logger.exception("scheduled_task: run audit write failed for task {}", task.id)
+
+
+async def _audit_system_disposition(
+    task,
+    *,
+    status: RunStatus,
+    trace_id: str | None,
+    reason: str,
+) -> None:
+    """系统自动处置（阈值停用/一次性终态停用）以系统身份补一条取证行。"""
+    try:
+        await AuditLogDao.ainsert_v2(
+            tenant_id=task.tenant_id,
+            operator_id=0,
+            operator_tenant_id=DEFAULT_TENANT_ID,
+            action=ScheduledTaskAuditAction.RUN.value,
+            target_type=TARGET_TYPE,
+            target_id=str(task.id),
+            reason=reason,
+            metadata={
+                "status": status.value,
+                "trace_id": trace_id,
+                "auto_disabled": True,
+                "disposition": reason,
+            },
+            object_name=task.name,
+        )
+    except Exception:
+        logger.exception("scheduled_task: system disposition audit write failed for task {}", task.id)
 
 
 # ── 通知 ─────────────────────────────────────────────────────────────
@@ -728,7 +918,13 @@ def _rejection_error(decision, trigger_kind: TriggerKind = TriggerKind.MANUAL):
     return ScheduledTaskRunRejectedError()
 
 
-async def run_now(task_id: int, *, dispatch=None, trigger_kind: TriggerKind = TriggerKind.MANUAL) -> str:
+async def run_now(
+    task_id: int,
+    *,
+    dispatch=None,
+    trigger_kind: TriggerKind = TriggerKind.MANUAL,
+    notify=None,
+) -> str:
     """立即运行一轮（`manual` 语义）：不排队、不重试、不改变既定计划（AC-17）。
 
     与计划轮次共用同一套复检/判定/原子写回/派发；差别只有三点：`trigger_kind=MANUAL`、
@@ -741,6 +937,7 @@ async def run_now(task_id: int, *, dispatch=None, trigger_kind: TriggerKind = Tr
         raise NotFoundError()
 
     dispatch = dispatch or _dispatch
+    notify = notify or _notify
     now = _now()
     recheck = await trigger_guard.recheck_task(task)
     running = await ScheduledTaskDao.acount_running(now)
@@ -776,7 +973,33 @@ async def run_now(task_id: int, *, dispatch=None, trigger_kind: TriggerKind = Tr
             trigger_kind,
         )
 
-    await dispatch(task, trace_id=token)
+    # claim 后重读：last_run_at / last_trace_id / run_started_at 已落库，派发异常时
+    # _finalize 必须基于本次运行的新值。
+    task = await ScheduledTaskDao.aget(task.id) or task
+    try:
+        await dispatch(task, trace_id=token)
+    except Exception:
+        # broker/Redis 派发失败：释放租约并留痕，避免白占 run_timeout_seconds。
+        # 人工/事件触发不计连续失败、不发首败通知，也不消耗一次性任务的唯一机会（AC-17）。
+        logger.exception("scheduled_task: dispatch failed for manual/event run of task {}", task.id)
+        try:
+            await _finalize(
+                task,
+                token=token,
+                status=RunStatus.FAILED,
+                error="dispatch failed",
+                now=now,
+                notify=notify,
+                count_failure=False,
+                started_at=now,
+                trace_id=token,
+                notify_failure=False,
+                disable_once=False,
+            )
+        except Exception:
+            # 终态回写自身失败不得掩盖原始派发异常（端点仍需给出真实原因）。
+            logger.exception("scheduled_task: finalize after dispatch failure failed for task {}", task.id)
+        raise
     return token
 
 
@@ -806,9 +1029,7 @@ async def assert_not_replayed(timestamp: int | None, nonce: str | None, *, now_e
 
     try:
         redis = await get_redis_client()
-        accepted = await redis.async_connection.set(
-            f"scheduled_task:nonce:{nonce}", 1, nx=True, ex=window * 2
-        )
+        accepted = await redis.async_connection.set(f"scheduled_task:nonce:{nonce}", 1, nx=True, ex=window * 2)
     except Exception:
         logger.exception("scheduled_task: replay guard unavailable")
         raise _trigger_redis_error()

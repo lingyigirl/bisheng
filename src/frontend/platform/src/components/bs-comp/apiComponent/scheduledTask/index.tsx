@@ -11,10 +11,13 @@ import {
     runScheduledTaskNowApi,
 } from "@/controllers/API/scheduledTask"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
+import { userContext } from "@/contexts/userContext"
 import { ScheduledTaskItem } from "@/types/api/scheduledTask"
 import { formatIsoDateTime } from "@/util/utils"
-import { useEffect, useState } from "react"
+import { useContext, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { useNavigate } from "react-router-dom"
+import { formatScheduleDisplay } from "./formatScheduleDisplay"
 import { TaskFormDialog } from "./TaskFormDialog"
 
 interface ScheduledTaskPanelProps {
@@ -34,6 +37,11 @@ function resultVariant(status: ScheduledTaskItem["last_status"]): "success" | "e
     return "gray"
 }
 
+function durationLabel(ms: number | null): string {
+    if (ms === null || ms === undefined) return "—"
+    return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
 /**
  * 「对外发布 → 定时任务」面板（AC-57/AC-58）。
  *
@@ -41,7 +49,13 @@ function resultVariant(status: ScheduledTaskItem["last_status"]): "success" | "e
  * 刷新策略：打开即刷 + 手动刷新（不轮询——运行结果以 list 里的 `last_*` 为准）。
  */
 export function ScheduledTaskPanel({ appId, appType }: ScheduledTaskPanelProps) {
-    const { t } = useTranslation("scheduledTask")
+    const { t, i18n } = useTranslation("scheduledTask")
+    const navigate = useNavigate()
+    const { user } = useContext(userContext)
+    // AC-52 one-click monitor: hidden when the user cannot open the audit/monitor menu.
+    const canViewMonitor = Boolean(
+        user?.role === "admin" || user?.is_child_admin || user?.web_menu?.includes("log"),
+    )
     const [rows, setRows] = useState<ScheduledTaskItem[]>([])
     const [loading, setLoading] = useState(false)
     const [formOpen, setFormOpen] = useState(false)
@@ -146,14 +160,23 @@ export function ScheduledTaskPanel({ appId, appType }: ScheduledTaskPanelProps) 
                                         </div>
                                     </td>
                                     <td className="p-2">
-                                        <span>{row.schedule_description || row.cron_expression || row.run_at}</span>
+                                        <span>
+                                            {formatScheduleDisplay(
+                                                t,
+                                                i18n.language,
+                                                row.schedule_display,
+                                                row.schedule_description || row.cron_expression || row.run_at || "—",
+                                            )}
+                                        </span>
                                     </td>
                                     <td className="p-2 text-muted-foreground">
-                                        {row.blocked_reason === "app_offline"
-                                            ? t("waitingAppOnline")
-                                            : row.next_run_at
-                                              ? formatIsoDateTime(row.next_run_at)
-                                              : "—"}
+                                        {row.status === "disabled"
+                                            ? "—"
+                                            : row.blocked_reason === "app_offline"
+                                              ? t("waitingAppOnline")
+                                              : row.next_run_at
+                                                ? formatIsoDateTime(row.next_run_at)
+                                                : "—"}
                                     </td>
                                     <td className="p-2">
                                         {row.last_status ? (
@@ -168,11 +191,47 @@ export function ScheduledTaskPanel({ appId, appType }: ScheduledTaskPanelProps) 
                                                     </TooltipTrigger>
                                                     <TooltipContent>
                                                         <p>{row.last_error || t("last.noError")}</p>
+                                                        {row.last_run_at && (
+                                                            <p>
+                                                                {t("last.startedAt", {
+                                                                    time: formatIsoDateTime(row.last_run_at),
+                                                                })}
+                                                            </p>
+                                                        )}
                                                     </TooltipContent>
                                                 </Tooltip>
                                             </TooltipProvider>
                                         ) : (
                                             <span className="text-muted-foreground">{t("never")}</span>
+                                        )}
+                                        {(row.last_finish_at || row.last_run_at) && (
+                                            <div className="mt-1 text-xs text-muted-foreground">
+                                                {[
+                                                    // 结果时间优先：计划轮次 FAIL 没有真实运行，
+                                                    // last_run_at 可能停留在上一次运行。
+                                                    row.last_finish_at
+                                                        ? t("last.finishedAt", {
+                                                              time: formatIsoDateTime(row.last_finish_at),
+                                                          })
+                                                        : row.last_run_at
+                                                          ? t("last.startedAt", {
+                                                                time: formatIsoDateTime(row.last_run_at),
+                                                            })
+                                                          : "",
+                                                    typeof row.last_duration_ms === "number"
+                                                        ? t("last.duration", {
+                                                              duration: durationLabel(row.last_duration_ms),
+                                                          })
+                                                        : "",
+                                                ]
+                                                    .filter(Boolean)
+                                                    .join(" · ")}
+                                            </div>
+                                        )}
+                                        {row.last_app_version_id && (
+                                            <div className="mt-0.5 text-xs text-muted-foreground">
+                                                {t("last.version", { version: row.last_app_version_id })}
+                                            </div>
                                         )}
                                     </td>
                                     <td className="p-2">
@@ -181,6 +240,22 @@ export function ScheduledTaskPanel({ appId, appType }: ScheduledTaskPanelProps) 
                                         </Badge>
                                     </td>
                                     <td className="p-2 text-right">
+                                        {canViewMonitor &&
+                                            row.last_trace_id &&
+                                            row.last_run_at &&
+                                            row.last_status !== "skipped" && (
+                                                <Button
+                                                    variant="link"
+                                                    size="sm"
+                                                    onClick={() =>
+                                                        navigate(
+                                                            `/log?tab=monitor&trace_id=${encodeURIComponent(row.last_trace_id as string)}`,
+                                                        )
+                                                    }
+                                                >
+                                                    {t("last.viewMonitor")}
+                                                </Button>
+                                            )}
                                         <Button variant="link" size="sm" onClick={() => openEdit(row)}>{t("edit")}</Button>
                                         <Button variant="link" size="sm" onClick={() => runNow(row)}>{t("runNow")}</Button>
                                         <Button variant="link" size="sm" onClick={() => toggleEnabled(row)}>

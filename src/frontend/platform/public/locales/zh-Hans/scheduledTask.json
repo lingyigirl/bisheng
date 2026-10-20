@@ -37,7 +37,12 @@
     "failed": "失败",
     "skipped": "已跳过",
     "needs_input": "等待人工输入",
-    "noError": "无错误信息"
+    "noError": "无错误信息",
+    "startedAt": "开始 {{time}}",
+    "finishedAt": "结果 {{time}}",
+    "duration": "耗时 {{duration}}",
+    "version": "版本 {{version}}",
+    "viewMonitor": "上次运行监控"
   },
   "form": {
     "editTitle": "编辑定时任务",
@@ -67,5 +72,37 @@
     "presetKey": "输入项名称",
     "presetValue": "值",
     "noSessionHint": "定时运行不会产生应用会话与消息，运行结果请看任务列表与监控。"
+  },
+  "schedule": {
+    "listSeparator": "、",
+    "weekdayRange": "{{start}}至{{end}}",
+    "weekday": {
+      "sun": "周日",
+      "mon": "周一",
+      "tue": "周二",
+      "wed": "周三",
+      "thu": "周四",
+      "fri": "周五",
+      "sat": "周六"
+    },
+    "day": {
+      "everyDay": "每天",
+      "weekdays": "每{{weekdays}}",
+      "monthDays": "每月 {{days}} 日",
+      "yearlyDays": "每年 {{months}} {{days}} 日",
+      "yearlyWeekdays": "每年 {{months}}的每{{weekdays}}",
+      "everyDayOfMonths": "每年 {{months}}的每天",
+      "or": "{{first}} 或 {{second}}"
+    },
+    "time": {
+      "everyMinute": "每分钟",
+      "everyNMinutes": "每 {{n}} 分钟",
+      "minutesOfHour": "每小时的第 {{minutes}} 分钟",
+      "everyNHoursAtMinute": "每 {{n}} 小时的第 {{minute}} 分钟",
+      "everyNMinutesOfHour": "{{hour}} 点的每 {{n}} 分钟",
+      "everyMinuteOfHours": "{{hours}} 点的每分钟",
+      "onceAt": "一次性 {{time}}"
+    },
+    "raw": "分钟 {{minute}}；小时 {{hour}}；日 {{dayOfMonth}}；月 {{monthOfYear}}；周 {{dayOfWeek}}"
   }
 }

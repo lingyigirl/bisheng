@@ -19,8 +19,10 @@ import {
     ScheduleType,
     ScheduledTaskItem,
 } from "@/types/api/scheduledTask"
+import { formatIsoDateTime } from "@/util/utils"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { formatScheduleDisplay } from "./formatScheduleDisplay"
 
 interface TaskFormDialogProps {
     open: boolean
@@ -48,7 +50,7 @@ function toLocalInput(value: string | null): string {
  * → 预填本表单 → 用户确认保存才真正创建（AC-42）。
  */
 export function TaskFormDialog({ open, onClose, appId, appType, task, onSaved }: TaskFormDialogProps) {
-    const { t } = useTranslation("scheduledTask")
+    const { t, i18n } = useTranslation("scheduledTask")
     const isEdit = !!task
 
     const [name, setName] = useState("")
@@ -103,6 +105,7 @@ export function TaskFormDialog({ open, onClose, appId, appType, task, onSaved }:
                 setPreview({
                     expression: res.cron_expression ?? (res.run_at ?? ""),
                     description: res.schedule_description,
+                    schedule_display: res.schedule_display,
                     next_runs: res.next_runs,
                 })
             })
@@ -209,10 +212,21 @@ export function TaskFormDialog({ open, onClose, appId, appType, task, onSaved }:
                             </div>
                             {preview && (
                                 <div className="text-xs text-muted-foreground">
-                                    <p>{preview.description}</p>
+                                    <p>
+                                        {formatScheduleDisplay(
+                                            t,
+                                            i18n.language,
+                                            preview.schedule_display,
+                                            preview.description,
+                                        )}
+                                    </p>
                                     {preview.next_runs.length > 0 && (
                                         <p className="mt-1">
-                                            {t("form.nextRuns")}: {preview.next_runs.slice(0, 5).join(" · ")}
+                                            {t("form.nextRuns")}:{" "}
+                                            {preview.next_runs
+                                                .slice(0, 5)
+                                                .map((item) => formatIsoDateTime(item))
+                                                .join(" · ")}
                                         </p>
                                     )}
                                 </div>

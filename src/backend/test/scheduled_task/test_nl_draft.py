@@ -115,6 +115,12 @@ async def test_cron_draft_returns_normalized_plan(model):
     draft = await nl_draft_service.draft_from_text(tenant_id=TENANT_ID, user_id=7, text="每个工作日早上九点跑一次")
     assert draft["cron_expression"] == "0 9 * * 1-5"  # 归一化
     assert "9:00" in draft["schedule_description"]
+    assert draft["schedule_display"]["day"] == {
+        "kind": "weekdays",
+        "weekdays": [1, 2, 3, 4, 5],
+        "range": True,
+    }
+    assert draft["schedule_display"]["time"] == {"kind": "at", "times": [{"hour": 9, "minute": 0}]}
     assert len(draft["next_runs"]) == 5
     assert draft["preset_inputs"] == [{"key": "客户名称", "value": "甲公司"}]
     assert draft["rationale"] == "工作日每天九点"
@@ -126,6 +132,10 @@ async def test_once_draft_parses_absolute_time(model):
     draft = await nl_draft_service.draft_from_text(tenant_id=TENANT_ID, user_id=7, text="后天跑一次")
     assert draft["schedule_type"] == "once"
     assert draft["run_at"].strftime("%Y-%m-%d %H:%M") == run_at
+    assert draft["schedule_display"] == {
+        "day": None,
+        "time": {"kind": "once", "run_at": draft["run_at"].isoformat()},
+    }
     assert draft["next_runs"] == [draft["run_at"]]
 
 

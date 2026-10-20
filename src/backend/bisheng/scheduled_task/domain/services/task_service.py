@@ -34,6 +34,7 @@ from bisheng.scheduled_task.domain.models.scheduled_task import (
 from bisheng.scheduled_task.domain.services import app_shape_guard, knowledge_guard, run_service, trigger_guard
 from bisheng.scheduled_task.domain.services.cron_schedule import (
     describe,
+    describe_parts,
     next_runs,
     normalize,
     validate_and_parse,
@@ -142,8 +143,45 @@ async def _validate_identity_and_knowledge(
 # ── 审计 ─────────────────────────────────────────────────────────────
 
 
-async def _audit(user, action: ScheduledTaskAuditAction, task: ScheduledTask, **metadata) -> None:
+def _task_snapshot(task: ScheduledTask) -> dict:
+    """管理审计的安全快照（AC-49 / AC-51）。
+
+    只存标识、计划与状态；`preset_inputs` **只保留 key，不存 value**——预设值
+    属于输入正文，不得进入审计 metadata。
+    """
+
+    def _value(value):
+        return value.isoformat() if isinstance(value, datetime) else value
+
+    return {
+        "name": task.name,
+        "description": task.description,
+        "schedule_type": task.schedule_type,
+        "cron_expression": task.cron_expression,
+        "run_at": _value(task.run_at),
+        "service_account_id": task.service_account_id,
+        "run_identity_user_id": task.run_identity_user_id,
+        "status": task.status,
+        "next_run_at": _value(task.next_run_at),
+        "preset_keys": [str(item.get("key") or item.get("label") or "") for item in (task.preset_inputs or [])],
+    }
+
+
+async def _audit(
+    user,
+    action: ScheduledTaskAuditAction,
+    task: ScheduledTask,
+    *,
+    before: dict | None = None,
+    after: dict | None = None,
+    **metadata,
+) -> None:
     """管理动作审计（进审计页白名单；best-effort 不改变业务结果）。"""
+    payload = dict(metadata)
+    if before is not None:
+        payload["before"] = before
+    if after is not None:
+        payload["after"] = after
     try:
         await AuditLogDao.ainsert_v2(
             tenant_id=task.tenant_id,
@@ -152,7 +190,7 @@ async def _audit(user, action: ScheduledTaskAuditAction, task: ScheduledTask, **
             action=action.value,
             target_type=TARGET_TYPE,
             target_id=str(task.id),
-            metadata=metadata or None,
+            metadata=payload or None,
             object_name=task.name,
         )
     except Exception:
@@ -197,7 +235,7 @@ async def create_task(user, req) -> ScheduledTask:
             created_by=user.user_id,
         )
     )
-    await _audit(user, ScheduledTaskAuditAction.TASK_CREATE, task)
+    await _audit(user, ScheduledTaskAuditAction.TASK_CREATE, task, after=_task_snapshot(task))
     return task
 
 
@@ -208,18 +246,20 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
     await assert_can_manage(user, task.app_type, task.app_id)
 
     fields: dict = {}
-    before: dict = {}
+    changed: set[str] = set()
+    before_full = _task_snapshot(task)
 
     if req.name is not None and req.name != task.name:
         fields["name"] = req.name
-        before["name"] = task.name
+        changed.add("name")
     if req.description is not None and req.description != task.description:
         fields["description"] = req.description
-        before["description"] = task.description
+        changed.add("description")
     if req.preset_inputs is not None:
         presets = _validate_presets(req.preset_inputs)
         fields["preset_inputs"] = presets
-        before["preset_inputs"] = "changed"
+        # 只留 key，不把值写进审计（AC-51）。
+        changed.add("preset_keys")
     if req.service_account_id is not None and req.service_account_id != task.service_account_id:
         # 换运行身份：走与创建期相同的校验（AC-03），通过后同时更新锁定的 owner。
         owner_user_id = await _validate_identity_and_knowledge(
@@ -230,7 +270,7 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
         )
         fields["service_account_id"] = req.service_account_id
         fields["run_identity_user_id"] = owner_user_id
-        before["service_account_id"] = task.service_account_id
+        changed.update({"service_account_id", "run_identity_user_id"})
     if req.schedule_type is not None or req.cron_expression is not None or req.run_at is not None:
         schedule_type, cron_expression, next_run_at = _validate_schedule(
             req.schedule_type or task.schedule_type,
@@ -238,7 +278,7 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
             req.run_at if req.run_at is not None else task.run_at,
         )
         fields.update({"schedule_type": schedule_type, "cron_expression": cron_expression, "next_run_at": next_run_at})
-        before["schedule"] = task.cron_expression or (task.run_at.isoformat() if task.run_at else None)
+        changed.update({"schedule_type", "cron_expression", "run_at", "next_run_at"})
 
     if not fields:
         return task
@@ -247,7 +287,10 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
     if updated != 1:
         raise NotFoundError()
     task = await ScheduledTaskDao.aget(task_id)
-    await _audit(user, ScheduledTaskAuditAction.TASK_UPDATE, task, before=before, after=list(fields))
+    after_full = _task_snapshot(task)
+    before = {key: before_full.get(key) for key in changed}
+    after = {key: after_full.get(key) for key in changed}
+    await _audit(user, ScheduledTaskAuditAction.TASK_UPDATE, task, before=before, after=after)
     return task
 
 
@@ -257,6 +300,7 @@ async def set_enabled(user, task_id: int, *, enabled: bool) -> ScheduledTask:
         raise NotFoundError()
     await assert_can_manage(user, task.app_type, task.app_id)
 
+    prior_status = task.status
     fields: dict = {"status": TaskStatus.ENABLED.value if enabled else TaskStatus.DISABLED.value}
     if enabled:
         # AC-02：重新启用自下一个计划时刻起恢复——停用期间到期的轮次不补跑。
@@ -269,7 +313,7 @@ async def set_enabled(user, task_id: int, *, enabled: bool) -> ScheduledTask:
     await ScheduledTaskDao.aupdate_fields(task.id, fields, tenant_id=task.tenant_id)
     task = await ScheduledTaskDao.aget(task_id)
     action = ScheduledTaskAuditAction.TASK_ENABLE if enabled else ScheduledTaskAuditAction.TASK_DISABLE
-    await _audit(user, action, task)
+    await _audit(user, action, task, before={"status": prior_status}, after={"status": task.status})
     return task
 
 
@@ -278,8 +322,9 @@ async def delete_task(user, task_id: int) -> None:
     if task is None:
         raise NotFoundError()
     await assert_can_manage(user, task.app_type, task.app_id)
+    snapshot = _task_snapshot(task)
     await ScheduledTaskDao.adelete(task.id, tenant_id=task.tenant_id)
-    await _audit(user, ScheduledTaskAuditAction.TASK_DELETE, task)
+    await _audit(user, ScheduledTaskAuditAction.TASK_DELETE, task, before=snapshot)
 
 
 async def run_task_now(user, task_id: int) -> str:
@@ -289,7 +334,7 @@ async def run_task_now(user, task_id: int) -> str:
         raise NotFoundError()
     await assert_can_manage(user, task.app_type, task.app_id)
     trace_id = await run_service.run_now(task_id)
-    await _audit(user, ScheduledTaskAuditAction.TASK_RUN_NOW, task, trace_id=trace_id)
+    await _audit(user, ScheduledTaskAuditAction.TASK_RUN_NOW, task, after={"trace_id": trace_id})
     return trace_id
 
 
@@ -319,11 +364,16 @@ async def list_tasks(
 
 
 def preview_schedule(expression: str):
-    """cron 预览：归一化 + 人类可读 + 未来 N 次（服务端算，AC-07）。"""
+    """cron 预览：归一化 + 人类可读（中文兼容 + 结构化）+ 未来 N 次（AC-07/AC-59）。"""
     validate_and_parse(expression)
     normalized = normalize(expression)
     anchor = _now().replace(tzinfo=run_service.SERVER_TZ)
-    return normalized, describe(normalized), next_runs(normalized, anchor, _conf().preview_count)
+    return (
+        normalized,
+        describe(normalized),
+        describe_parts(normalized),
+        next_runs(normalized, anchor, _conf().preview_count),
+    )
 
 
 async def list_available_identities(user, *, app_id: str, app_type: int) -> list[dict]:

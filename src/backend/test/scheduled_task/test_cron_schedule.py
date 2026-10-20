@@ -26,6 +26,7 @@ from bisheng.common.errcode.scheduled_task import ScheduledTaskCronInvalidError
 from bisheng.scheduled_task.domain.services import cron_schedule as cron_schedule_module
 from bisheng.scheduled_task.domain.services.cron_schedule import (
     describe,
+    describe_parts,
     next_runs,
     normalize,
     validate_and_parse,
@@ -315,6 +316,133 @@ def test_next_runs_matches_celery_under_injected_nowfun(expression, anchor):
 )
 def test_describe_common_forms(expression, expected):
     assert describe(expression) == expected
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ("* * * * *", {"time": {"kind": "every_minute"}}),
+        ("*/5 * * * *", {"time": {"kind": "every_n_minutes", "n": 5}}),
+        ("0 * * * *", {"time": {"kind": "minutes_of_hour", "minutes": [0]}}),
+        (
+            "0 9 * * *",
+            {
+                "day": {"kind": "every_day"},
+                "time": {"kind": "at", "times": [{"hour": 9, "minute": 0}]},
+            },
+        ),
+        (
+            "0 9 * * 1-5",
+            {
+                "day": {"kind": "weekdays", "weekdays": [1, 2, 3, 4, 5], "range": True},
+                "time": {"kind": "at", "times": [{"hour": 9, "minute": 0}]},
+            },
+        ),
+        (
+            "0 9 * * 0,2",
+            {
+                "day": {"kind": "weekdays", "weekdays": [0, 2], "range": False},
+                "time": {"kind": "at", "times": [{"hour": 9, "minute": 0}]},
+            },
+        ),
+        (
+            "0 0 13 * *",
+            {
+                "day": {"kind": "month_days", "days": [13]},
+                "time": {"kind": "at", "times": [{"hour": 0, "minute": 0}]},
+            },
+        ),
+        (
+            "0 0 29 2 *",
+            {
+                "day": {"kind": "yearly_days", "months": [2], "days": [29]},
+                "time": {"kind": "at", "times": [{"hour": 0, "minute": 0}]},
+            },
+        ),
+        (
+            "0 */2 * * *",
+            {"time": {"kind": "every_n_hours_at_minute", "n": 2, "minute": 0}},
+        ),
+        (
+            "*/15 9 * * *",
+            {
+                "day": {"kind": "every_day"},
+                "time": {"kind": "every_n_minutes_of_hour", "n": 15, "hour": 9},
+            },
+        ),
+        (
+            "0 9 18 * 5",
+            {
+                "day": {
+                    "kind": "or",
+                    "parts": [
+                        {"kind": "month_days", "days": [18]},
+                        {"kind": "weekdays", "weekdays": [5], "range": False},
+                    ],
+                },
+                "time": {"kind": "at", "times": [{"hour": 9, "minute": 0}]},
+            },
+        ),
+        (
+            "0 0 * 2 1",
+            {
+                "day": {
+                    "kind": "yearly_weekdays",
+                    "months": [2],
+                    "weekdays": [1],
+                    "range": False,
+                },
+                "time": {"kind": "at", "times": [{"hour": 0, "minute": 0}]},
+            },
+        ),
+    ],
+)
+def test_describe_parts_common_forms(expression, expected):
+    assert describe_parts(expression) == expected
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "1,15 */6 * * *",
+        "0-30 9 * * *",
+        "0 0,3,6,9,12,15,18,21,23 * * *",
+        "*/7 * * * *",
+    ],
+)
+def test_describe_parts_falls_back_to_raw(expression):
+    """与 describe() 的结构化兜底同口径：不可自然语言化的形态回退五段原文。"""
+    parts = describe_parts(expression)
+    assert "raw" in parts
+    assert parts["raw"]["minute"] == expression.split(" ")[0]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "* * * * *",
+        "*/5 * * * *",
+        "0 * * * *",
+        "0 9 * * *",
+        "0 9 * * 1-5",
+        "0 9 * * 0,2",
+        "0 0 13 * *",
+        "0 9 1,15 * *",
+        "0 0 29 2 *",
+        "1,15 9 * * *",
+        "0 9,15 * * *",
+        "0 */2 * * *",
+        "*/15 9 * * *",
+        "0 9 18 * 5",
+        "1,15 */6 * * *",
+        "0-30 9 * * *",
+        "0 0,3,6,9,12,15,18,21,23 * * *",
+        "*/7 * * * *",
+    ],
+)
+def test_describe_parts_matches_describe_fallback(expression):
+    """锁步：两套分支对“是否必须回退结构化原文”的判断一致，降低漂移风险。"""
+    assert ("raw" in describe_parts(expression)) == describe(expression).startswith("分钟 ")
 
 
 @pytest.mark.parametrize(

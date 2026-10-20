@@ -31,13 +31,19 @@ router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-task"])
 def _to_item(row) -> ScheduledTaskItem:
     """任务行 → 列表项（只暴露 design §4.2 约定的对外字段）。"""
     schedule_description = ""
+    schedule_display = None
     if row.schedule_type == "cron" and row.cron_expression:
         try:
-            from bisheng.scheduled_task.domain.services.cron_schedule import describe
+            from bisheng.scheduled_task.domain.services.cron_schedule import describe, describe_parts
 
             schedule_description = describe(row.cron_expression)
+            # AC-59：结构化描述供前端按当前语言渲染；description 保留为兼容/兜底。
+            schedule_display = describe_parts(row.cron_expression)
         except Exception:  # 历史脏数据：不在列表渲染上炸
             schedule_description = row.cron_expression
+    elif row.schedule_type == "once" and row.run_at is not None:
+        # 一次性任务同样走结构化渲染（本地化时间格式由前端负责）。
+        schedule_display = {"day": None, "time": {"kind": "once", "run_at": row.run_at.isoformat()}}
     return ScheduledTaskItem(
         id=row.id,
         name=row.name,
@@ -48,6 +54,7 @@ def _to_item(row) -> ScheduledTaskItem:
         cron_expression=row.cron_expression,
         run_at=row.run_at,
         schedule_description=schedule_description,
+        schedule_display=schedule_display,
         status=row.status,
         next_run_at=row.next_run_at,
         last_status=row.last_status,
@@ -103,8 +110,10 @@ async def preview_schedule(
     user: UserPayload = Depends(UserPayload.get_login_user),
 ):
     """cron 预览（AC-07）：服务端解析/归一化/人类可读/未来 N 次，前端只渲染。"""
-    expression, description, runs = task_service.preview_schedule(req.expression)
-    return resp_200(CronPreviewResp(expression=expression, description=description, next_runs=runs))
+    expression, description, display, runs = task_service.preview_schedule(req.expression)
+    return resp_200(
+        CronPreviewResp(expression=expression, description=description, schedule_display=display, next_runs=runs)
+    )
 
 
 @router.post("/nl-draft")
@@ -117,9 +126,7 @@ async def nl_draft(
     与创建同样要求目标应用的 `edit_app`（草稿会把用户引向一次创建）。
     """
     await task_service.assert_can_manage(user, req.app_type, req.app_id)
-    draft = await nl_draft_service.draft_from_text(
-        tenant_id=user.tenant_id, user_id=user.user_id, text=req.text
-    )
+    draft = await nl_draft_service.draft_from_text(tenant_id=user.tenant_id, user_id=user.user_id, text=req.text)
     return resp_200(NlDraftResp(**draft))
 
 

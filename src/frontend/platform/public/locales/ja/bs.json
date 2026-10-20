@@ -1565,7 +1565,10 @@
       "success": "成功",
       "failed": "失敗"
     },
-    "monitorTraceId": "トレースID"
+    "monitorTraceId": "トレースID",
+    "monitorTracePending": "この実行はまだ監視に登録されていません。しばらくしてから更新してください。",
+    "auditBefore": "変更前",
+    "auditAfter": "変更後"
   },
   "tag": {
     "labelMaxLength": "タグ名は 10 文字以内で入力してください",

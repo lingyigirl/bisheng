@@ -218,6 +218,38 @@ async def test_update_reschedule_and_identity_change(patched_db, wire):
     assert any(a[0] == "schedule.task.update" for a in wire["audits"])
 
 
+async def test_audit_snapshots_cover_crud_and_hide_preset_values(patched_db, wire):
+    """AC-49/AC-51：管理动作带关键前后取值，但 preset 的 value 绝不进审计。"""
+    task = await task_service.create_task(_User(), _req())
+    create_audit = next(a for a in wire["audits"] if a[0] == "schedule.task.create")
+    assert create_audit[2]["after"]["name"] == "nightly"
+    assert create_audit[2]["after"]["cron_expression"] == "0 9 * * *"
+
+    secret = "TOP-SECRET-PRESET-VALUE"
+    await task_service.update_task(
+        _User(),
+        task.id,
+        ScheduledTaskUpdateReq(
+            name="renamed",
+            preset_inputs=[PresetInputItem(key="question", value=secret)],
+        ),
+    )
+    update_audit = next(a for a in wire["audits"] if a[0] == "schedule.task.update")
+    assert update_audit[2]["before"]["name"] == "nightly"
+    assert update_audit[2]["after"]["name"] == "renamed"
+    assert update_audit[2]["after"]["preset_keys"] == ["question"]
+    assert secret not in str(update_audit[2]), "preset 值属于输入正文，不得进入审计"
+
+    await task_service.set_enabled(_User(), task.id, enabled=False)
+    disable_audit = next(a for a in wire["audits"] if a[0] == "schedule.task.disable")
+    assert disable_audit[2]["before"] == {"status": "enabled"}
+    assert disable_audit[2]["after"] == {"status": "disabled"}
+
+    await task_service.delete_task(_User(), task.id)
+    delete_audit = next(a for a in wire["audits"] if a[0] == "schedule.task.delete")
+    assert delete_audit[2]["before"]["name"] == "renamed"
+
+
 async def test_enable_recomputes_next_run_disable_keeps_it(patched_db, wire):
     task = await task_service.create_task(_User(), _req())
 
@@ -263,9 +295,11 @@ async def test_list_requires_app_or_admin(patched_db, wire):
 
 
 def test_preview_returns_description_and_next_runs():
-    expression, description, runs = task_service.preview_schedule("0 9 * * mon-fri")
+    expression, description, display, runs = task_service.preview_schedule("0 9 * * mon-fri")
     assert expression == "0 9 * * mon-fri"
     assert "9:00" in description
+    assert display["day"] == {"kind": "weekdays", "weekdays": [1, 2, 3, 4, 5], "range": True}
+    assert display["time"] == {"kind": "at", "times": [{"hour": 9, "minute": 0}]}
     assert len(runs) == 5
 
 

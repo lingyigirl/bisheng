@@ -74,6 +74,34 @@ const renderObjectName = (log: any, t: (key: string, opts?: any) => string): str
     return log.object_name || log.target_id || t('log.objectTypeEnum.none')
 }
 
+type AuditLogRow = {
+    note?: string | null
+    audit_metadata?: Record<string, unknown> | null
+    // Defensive: some serializers use the SQL column name (`metadata`).
+    metadata?: Record<string, unknown> | null
+    [key: string]: unknown
+}
+
+// AC-49: v2 audit rows keep before/after values in `audit_metadata`; the
+// legacy `note` column is empty for them. Render a compact, readable summary
+// so the audit page actually shows what changed.
+const renderAuditNote = (
+    log: AuditLogRow,
+    t: (key: string, opts?: Record<string, unknown>) => string,
+): string => {
+    if (log.note) return String(log.note).replace('编辑后', '\n编辑后')
+    const meta = log.audit_metadata ?? log.metadata
+    if (!meta || typeof meta !== 'object') return t('log.objectTypeEnum.none')
+    const { before, after, ...rest } = meta
+    const lines: string[] = []
+    if (before !== undefined) lines.push(`${t('log.auditBefore')}: ${JSON.stringify(before)}`)
+    if (after !== undefined) lines.push(`${t('log.auditAfter')}: ${JSON.stringify(after)}`)
+    Object.entries(rest).forEach(([key, value]) => {
+        lines.push(`${key}: ${typeof value === 'object' ? JSON.stringify(value) : String(value)}`)
+    })
+    return lines.join('\n') || t('log.objectTypeEnum.none')
+}
+
 export default function SystemLog() {
     const { t } = useTranslation()
     const { users, loadUsers } = useUsers()
@@ -205,7 +233,7 @@ export default function SystemLog() {
                             <TableCell><div className="max-w-[200px] break-all truncate-multiline">{renderObjectName(log, t)}</div></TableCell>
                             <TableCell>{log.ip_address}</TableCell>
                             <TableCell className="max-w-[250px]">
-                                <div className="whitespace-pre-line break-all">{log.note?.replace('编辑后', `\n编辑后`) || t('log.objectTypeEnum.none')}</div>
+                                <div className="whitespace-pre-line break-all">{renderAuditNote(log, t)}</div>
                             </TableCell>
                         </TableRow>
                     ))}

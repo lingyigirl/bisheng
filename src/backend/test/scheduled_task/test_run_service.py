@@ -29,6 +29,7 @@ from bisheng.scheduled_task.domain.models.scheduled_task import (
     RunStatus,
     ScheduledTask,
     ScheduleType,
+    TaskStatus,
 )
 from bisheng.scheduled_task.domain.services import run_service, trigger_guard
 from bisheng.scheduled_task.domain.services.trigger_guard import (
@@ -99,6 +100,23 @@ def recheck(monkeypatch):
     return state
 
 
+@pytest.fixture(autouse=True)
+def captured_audits(monkeypatch):
+    """审计写入打桩：单测不得落真实 DB；同时暴露写入内容供断言。"""
+    direct: list[dict] = []
+    batches: list[list] = []
+
+    async def _insert_v2(cls, **kwargs):
+        direct.append(kwargs)
+
+    async def _insert_many(cls, entries):
+        batches.append(list(entries))
+
+    monkeypatch.setattr(run_service.AuditLogDao, "ainsert_v2", classmethod(_insert_v2))
+    monkeypatch.setattr(run_service.AuditLogDao, "ainsert_audit_logs", classmethod(_insert_many))
+    return {"direct": direct, "batches": batches}
+
+
 async def _task(**overrides) -> ScheduledTask:
     base = {
         "name": "nightly",
@@ -163,6 +181,9 @@ async def test_normal_claims_and_dispatches(patched_db, lock, recheck):
     row = await _read(patched_db, task.id)
     assert row.run_lease_token == dispatched[0][1]
     assert row.next_run_at.replace(tzinfo=None) == datetime(2026, 10, 17, 9, 0), "推进到下一个计划点"
+    # AC-52：claim 即本次运行开始时间；此前该列从未被写入。
+    assert row.last_run_at == NOW
+    assert row.run_started_at == NOW
 
 
 async def test_offline_periodic_task_is_skipped_without_failure(patched_db, lock, recheck):
@@ -231,10 +252,12 @@ async def test_lock_not_acquired_skips_whole_round(patched_db, lock, recheck):
     assert stats.lock_skipped is True and stats.due == 0
 
 
-async def test_dispatch_failure_is_finalized_as_failed(patched_db, lock, recheck):
+async def test_dispatch_failure_is_finalized_as_failed(patched_db, lock, recheck, captured_audits):
     task = await _task()
+    seen = {}
 
     async def _boom(t, *, trace_id):
+        seen["trace_id"] = trace_id
         raise RuntimeError("broker down")
 
     notified = []
@@ -249,6 +272,141 @@ async def test_dispatch_failure_is_finalized_as_failed(patched_db, lock, recheck
     assert row.run_lease_token is None, "派发失败立即释放租约，不让任务白占 60 分钟"
     assert row.consecutive_fail_count == 1
     assert notified, "首败通知"
+    # 派发失败的 schedule.run 必须用本次 claim 的 trace，而不是上一轮的内存值。
+    assert captured_audits["direct"], "派发失败也要写运行留痕"
+    assert captured_audits["direct"][-1]["metadata"]["trace_id"] == seen["trace_id"]
+    assert row.last_duration_ms is not None, "AC-52：派发失败也有耗时（0ms 起）"
+
+
+async def test_plan_failure_writes_system_audit(patched_db, lock, recheck, captured_audits):
+    task = await _task()
+    recheck["outcome"] = RecheckOutcome(app_state=AppState.OK, identity_state=IdentityState.NO_USE_APP)
+
+    await run_service.run_cycle(NOW, dispatch=_never, notify=_noop_notify)
+
+    row = await _read(patched_db, task.id)
+    assert row.last_status == RunStatus.FAILED.value
+    assert len(captured_audits["batches"]) == 1
+    entry = captured_audits["batches"][0][0]
+    assert entry.operator_id == 0, "系统自动处置以系统身份留痕（AC-50）"
+    assert entry.operator_tenant_id == run_service.DEFAULT_TENANT_ID
+    assert entry.action == "schedule.run"
+    assert entry.audit_metadata["status"] == RunStatus.FAILED.value
+    assert entry.audit_metadata["disposition"] == "plan_failure"
+    assert entry.audit_metadata["auto_disabled"] is False
+    assert entry.audit_metadata["slot"] is not None
+
+
+async def test_threshold_auto_disable_is_system_audited(patched_db, lock, recheck, captured_audits):
+    task = await _task(consecutive_fail_count=4)
+    recheck["outcome"] = RecheckOutcome(app_state=AppState.OK, identity_state=IdentityState.NO_USE_APP)
+
+    await run_service.run_cycle(NOW, dispatch=_never, notify=_noop_notify)
+
+    row = await _read(patched_db, task.id)
+    assert row.status == TaskStatus.DISABLED.value
+    entry = captured_audits["batches"][0][0]
+    assert entry.operator_id == 0
+    assert entry.audit_metadata["auto_disabled"] is True
+    assert entry.audit_metadata["fail_count"] == 5
+
+
+async def test_skip_does_not_write_run_audit(patched_db, lock, recheck, captured_audits):
+    await _task()
+    recheck["outcome"] = RecheckOutcome(app_state=AppState.OFFLINE, identity_state=IdentityState.OK)
+
+    await run_service.run_cycle(NOW, dispatch=_never, notify=_noop_notify)
+
+    assert captured_audits["batches"] == [] and captured_audits["direct"] == [], "跳过不是一次运行"
+
+
+async def test_reclaim_expired_writes_duration_and_system_audit(patched_db, lock, captured_audits):
+    task = await _task()
+    started = NOW - timedelta(seconds=30)
+    await ScheduledTaskDao.aclaim_lease(
+        task.id,
+        token="tok-reclaim",
+        now=started,
+        lease_expires_at=NOW - timedelta(seconds=1),
+        next_run_at=NOW + timedelta(days=1),
+        planned_at=NOW - timedelta(minutes=1),
+        trace_id="trace-reclaim",
+    )
+
+    await run_service.run_cycle(NOW, dispatch=_never, notify=_noop_notify)
+
+    row = await _read(patched_db, task.id)
+    assert row.last_status == RunStatus.FAILED.value
+    assert row.last_run_at == started
+    assert row.last_duration_ms == 30000
+    entry = captured_audits["batches"][0][0]
+    assert entry.operator_id == 0
+    assert entry.audit_metadata["disposition"] == "lease_timeout"
+    assert entry.audit_metadata["duration_ms"] == 30000
+    assert entry.audit_metadata["trace_id"] == "trace-reclaim"
+
+
+async def test_reclaim_expired_runs_without_tenant_context(patched_db, lock, captured_audits, monkeypatch):
+    """多租户 beat 没有租户上下文：回收必须先 bypass，否则整轮 NoTenantContextError。"""
+    from bisheng.common.services.config_service import settings
+    from bisheng.core.config.multi_tenant import MultiTenantConf
+    from bisheng.core.context.tenant import set_current_tenant_id
+
+    monkeypatch.setattr(settings, "multi_tenant", MultiTenantConf(enabled=True))
+    task = await _task()
+    await ScheduledTaskDao.aclaim_lease(
+        task.id,
+        token="tok-mt",
+        now=NOW - timedelta(seconds=10),
+        lease_expires_at=NOW - timedelta(seconds=1),
+        next_run_at=NOW + timedelta(days=1),
+        planned_at=NOW - timedelta(minutes=1),
+        trace_id="trace-mt",
+    )
+    set_current_tenant_id(None)
+    try:
+        stats = await run_service.run_cycle(NOW, dispatch=_never, notify=_noop_notify)
+    finally:
+        set_current_tenant_id(TENANT_ID)
+
+    assert stats.reclaimed == 1
+    row = await _read(patched_db, task.id)
+    assert row.last_status == RunStatus.FAILED.value
+    assert captured_audits["batches"], "回收审计即使无租户上下文也要落库"
+
+
+async def test_run_now_dispatch_failure_releases_lease_without_failure_count(patched_db, recheck, captured_audits):
+    task = await _task()
+
+    async def _boom(t, *, trace_id):
+        raise RuntimeError("broker down")
+
+    with pytest.raises(RuntimeError):
+        await run_service.run_now(task.id, dispatch=_boom, notify=_noop_notify)
+
+    row = await _read(patched_db, task.id)
+    assert row.run_lease_token is None
+    assert row.last_status == RunStatus.FAILED.value
+    assert row.consecutive_fail_count == 0, "AC-17：人工试跑失败不计连续失败"
+    assert row.last_duration_ms is not None
+    assert captured_audits["direct"], "人工派发失败也要留痕"
+
+
+async def test_run_now_dispatch_failure_keeps_once_task_enabled(patched_db, recheck, captured_audits):
+    task = await _task(
+        schedule_type=ScheduleType.ONCE.value,
+        run_at=NOW + timedelta(days=1),
+        next_run_at=NOW + timedelta(days=1),
+    )
+
+    async def _boom(t, *, trace_id):
+        raise RuntimeError("broker down")
+
+    with pytest.raises(RuntimeError):
+        await run_service.run_now(task.id, dispatch=_boom, notify=_noop_notify)
+
+    row = await _read(patched_db, task.id)
+    assert row.status == TaskStatus.ENABLED.value, "人工试跑失败不消耗一次性任务的唯一机会"
 
 
 # ── observe_runs ────────────────────────────────────────────────────

@@ -37,7 +37,12 @@
     "failed": "失敗",
     "skipped": "スキップ",
     "needs_input": "手動入力を待機中",
-    "noError": "エラー情報なし"
+    "noError": "エラー情報なし",
+    "startedAt": "開始 {{time}}",
+    "finishedAt": "結果 {{time}}",
+    "duration": "所要時間 {{duration}}",
+    "version": "バージョン {{version}}",
+    "viewMonitor": "前回実行の監視"
   },
   "form": {
     "editTitle": "定期タスクの編集",
@@ -67,5 +72,37 @@
     "presetKey": "入力項目名",
     "presetValue": "値",
     "noSessionHint": "定期実行はアプリの会話を作成しません。結果はタスク一覧とモニタリングで確認してください。"
+  },
+  "schedule": {
+    "listSeparator": "、",
+    "weekdayRange": "{{start}}〜{{end}}",
+    "weekday": {
+      "sun": "日曜日",
+      "mon": "月曜日",
+      "tue": "火曜日",
+      "wed": "水曜日",
+      "thu": "木曜日",
+      "fri": "金曜日",
+      "sat": "土曜日"
+    },
+    "day": {
+      "everyDay": "毎日",
+      "weekdays": "毎週{{weekdays}}",
+      "monthDays": "毎月 {{days}} 日",
+      "yearlyDays": "毎年 {{months}} {{days}} 日",
+      "yearlyWeekdays": "毎年 {{months}}の毎週{{weekdays}}",
+      "everyDayOfMonths": "毎年 {{months}}の毎日",
+      "or": "{{first}} または {{second}}"
+    },
+    "time": {
+      "everyMinute": "毎分",
+      "everyNMinutes": "{{n}} 分ごと",
+      "minutesOfHour": "毎時 {{minutes}} 分",
+      "everyNHoursAtMinute": "{{n}} 時間ごとの {{minute}} 分",
+      "everyNMinutesOfHour": "{{hour}} 時の {{n}} 分ごと",
+      "everyMinuteOfHours": "{{hours}} 時の毎分",
+      "onceAt": "{{time}} に1回"
+    },
+    "raw": "分 {{minute}}；時 {{hour}}；日 {{dayOfMonth}}；月 {{monthOfYear}}；曜日 {{dayOfWeek}}"
   }
 }

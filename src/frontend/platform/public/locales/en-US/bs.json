@@ -1620,7 +1620,10 @@
       "success": "Success",
       "failed": "Failed"
     },
-    "monitorTraceId": "Trace ID"
+    "monitorTraceId": "Trace ID",
+    "monitorTracePending": "This run has not been indexed in monitoring yet. Please refresh later.",
+    "auditBefore": "Before",
+    "auditAfter": "After"
   },
   "tag": {
     "labelMaxLength": "Label name cannot exceed 10 characters",

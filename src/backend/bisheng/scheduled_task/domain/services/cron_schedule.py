@@ -125,6 +125,141 @@ def describe(expression: str) -> str:
     return f"{day_text} {time_text}"
 
 
+def describe_parts(expression: str) -> dict:
+    """Human-readable schedule as **semantic tokens** (AC-59 i18n).
+
+    Unlike :func:`describe` (which renders Chinese directly), this returns a
+    structure the frontend can render in any locale:
+
+    - ``{"time": {"kind": ...}}`` / ``{"day": {...}, "time": {...}}``
+    - ``{"raw": {...}}`` for expressions outside the natural-language templates.
+
+    The branch tree mirrors :func:`describe`; keep the two in sync (the test
+    suite asserts both agree on which expressions fall back to ``raw``).
+    """
+    parsed = validate_and_parse(expression)
+    if all(field == "*" for field in parsed.fields):
+        return {"time": {"kind": "every_minute"}}
+
+    day = _describe_day_parts(parsed)
+    if day is None:
+        return {"raw": _raw_fields(parsed)}
+    time_part = _describe_time_parts(parsed)
+    if time_part is None:
+        return {"raw": _raw_fields(parsed)}
+
+    # Mirror describe(): “每天 每 N 分钟” is not natural language; the repeating
+    # time expression already carries the daily semantics.
+    if day.get("kind") == "every_day" and time_part["kind"] in _SELF_CONTAINED_TIME_KINDS:
+        return {"time": time_part}
+    return {"day": day, "time": time_part}
+
+
+#: 这些时间表述自带“每天”语义，前置 day=every_day 时省略（与 describe() 的
+#: `time_text.startswith("每")` 分支同口径）。
+_SELF_CONTAINED_TIME_KINDS = frozenset(
+    {"every_minute", "every_n_minutes", "minutes_of_hour", "every_n_hours_at_minute"}
+)
+
+
+def _raw_fields(parsed: ParsedCron) -> dict:
+    minute, hour, day_of_month, month_of_year, day_of_week = parsed.fields
+    return {
+        "minute": minute,
+        "hour": hour,
+        "day_of_month": day_of_month,
+        "month_of_year": month_of_year,
+        "day_of_week": day_of_week,
+    }
+
+
+def _describe_day_parts(parsed: ParsedCron) -> dict | None:
+    """日/月/周三段 → semantic tokens；枚举过长返回 None（交 raw 兜底）。"""
+    _, _, day_of_month_field, month_of_year_field, day_of_week_field = parsed.fields
+    day_of_month_restricted = day_of_month_field != "*"
+    month_of_year_restricted = month_of_year_field != "*"
+    day_of_week_restricted = day_of_week_field != "*"
+    if not (day_of_month_restricted or month_of_year_restricted or day_of_week_restricted):
+        return {"kind": "every_day"}
+    if (day_of_month_restricted and len(parsed.days_of_month) > _MAX_ENUMERATED) or (
+        day_of_week_restricted and len(parsed.days_of_week) > _MAX_ENUMERATED
+    ):
+        return None
+    if month_of_year_restricted and len(parsed.months_of_year) > _MAX_ENUMERATED:
+        return None
+
+    months = sorted(parsed.months_of_year)
+    if day_of_month_restricted:
+        days = sorted(parsed.days_of_month)
+        if month_of_year_restricted:
+            day_part: dict = {"kind": "yearly_days", "months": months, "days": days}
+        else:
+            day_part = {"kind": "month_days", "days": days}
+        if day_of_week_restricted:
+            # 日/周同时受限 → OR（与 next_runs/describe 同口径）。
+            return {"kind": "or", "parts": [day_part, _weekday_part(sorted(parsed.days_of_week))]}
+        return day_part
+    if day_of_week_restricted:
+        weekdays = sorted(parsed.days_of_week)
+        if month_of_year_restricted:
+            return {
+                "kind": "yearly_weekdays",
+                "months": months,
+                "weekdays": weekdays,
+                "range": _is_weekday_range(weekdays),
+            }
+        return _weekday_part(weekdays)
+    return {"kind": "every_day_of_months", "months": months}
+
+
+def _weekday_part(weekdays: list[int]) -> dict:
+    return {"kind": "weekdays", "weekdays": weekdays, "range": _is_weekday_range(weekdays)}
+
+
+def _is_weekday_range(weekdays: list[int]) -> bool:
+    """与 _weekdays_text 的折叠规则一致：>=3 个连续星期折叠为区间。"""
+    return len(weekdays) >= 3 and weekdays == list(range(weekdays[0], weekdays[-1] + 1))
+
+
+def _describe_time_parts(parsed: ParsedCron) -> dict | None:
+    """时/分两段 → semantic tokens；形态超出模板返回 None（交 raw 兜底）。"""
+    minute_field, hour_field, _, _, _ = parsed.fields
+    minute_numbers = None if minute_field == "*" else _number_list(minute_field)
+    hour_numbers = None if hour_field == "*" else _number_list(hour_field)
+    minute_step = _even_step(minute_field, 60)
+    hour_step = _even_step(hour_field, 24)
+
+    if hour_field == "*":
+        if minute_field == "*":
+            return {"kind": "every_minute"}
+        if minute_step is not None:
+            return {"kind": "every_n_minutes", "n": minute_step}
+        if minute_numbers is not None and len(minute_numbers) <= _MAX_ENUMERATED:
+            return {"kind": "minutes_of_hour", "minutes": minute_numbers}
+        return None
+    if hour_step is not None and minute_numbers is not None and len(minute_numbers) == 1:
+        return {"kind": "every_n_hours_at_minute", "n": hour_step, "minute": minute_numbers[0]}
+    if minute_step is not None and hour_numbers is not None and len(hour_numbers) == 1:
+        return {"kind": "every_n_minutes_of_hour", "n": minute_step, "hour": hour_numbers[0]}
+    if minute_field == "*" and hour_numbers is not None and len(hour_numbers) <= _MAX_ENUMERATED:
+        return {"kind": "every_minute_of_hours", "hours": hour_numbers}
+    if minute_numbers is not None and len(minute_numbers) == 1:
+        minute_value = minute_numbers[0]
+        if hour_numbers is not None and len(hour_numbers) <= _MAX_ENUMERATED:
+            return {
+                "kind": "at",
+                "times": [{"hour": hour, "minute": minute_value} for hour in hour_numbers],
+            }
+        return None
+    if hour_numbers is not None and len(hour_numbers) == 1 and minute_numbers is not None:
+        if len(minute_numbers) <= _MAX_ENUMERATED:
+            return {
+                "kind": "at",
+                "times": [{"hour": hour_numbers[0], "minute": minute} for minute in minute_numbers],
+            }
+    return None
+
+
 def next_runs(expression_or_parsed: str | ParsedCron, anchor: datetime, n: int) -> list[datetime]:
     """锚点之后（**严格大于**）的前 ``n`` 个触发时刻，秒与微秒归零。
 

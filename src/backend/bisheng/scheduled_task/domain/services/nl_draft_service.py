@@ -23,6 +23,7 @@ from bisheng.scheduled_task.domain.models.scheduled_task import ScheduleType
 from bisheng.scheduled_task.domain.services import run_service
 from bisheng.scheduled_task.domain.services.cron_schedule import (
     describe,
+    describe_parts,
     next_runs,
     normalize,
     validate_and_parse,
@@ -177,6 +178,7 @@ async def draft_from_text(*, tenant_id: int, user_id: int, text: str) -> dict:
             "cron_expression": normalized,
             "run_at": None,
             "schedule_description": describe(normalized),
+            "schedule_display": describe_parts(normalized),
             "next_runs": next_runs(normalized, anchor, conf.preview_count),
             "preset_inputs": _validate_presets(payload.get("preset_inputs")),
             "rationale": str(payload.get("rationale") or ""),
@@ -190,6 +192,7 @@ async def draft_from_text(*, tenant_id: int, user_id: int, text: str) -> dict:
         "cron_expression": None,
         "run_at": run_at,
         "schedule_description": run_at.strftime("%Y-%m-%d %H:%M"),
+        "schedule_display": {"day": None, "time": {"kind": "once", "run_at": run_at.isoformat()}},
         "next_runs": [run_at],
         "preset_inputs": _validate_presets(payload.get("preset_inputs")),
         "rationale": str(payload.get("rationale") or ""),

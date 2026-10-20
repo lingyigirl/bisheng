@@ -181,6 +181,7 @@ def test_create_task_and_list(client, state):
     state.task_id = task["id"]
 
     assert task["schedule_description"], "列表/详情应有可读的触发计划（AC-07）"
+    assert task["schedule_display"] == {"time": {"kind": "every_n_minutes", "n": 5}}, "AC-59：结构化描述供前端三语渲染"
     assert task["next_run_at"], "创建后即应有下次执行时间"
     assert task["status"] == "enabled"
 

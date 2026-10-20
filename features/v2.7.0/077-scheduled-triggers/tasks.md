@@ -94,6 +94,23 @@
 
 ---
 
+## 手工验收修复（2026-10-20）
+
+> 依据 `docs/report.md` 的 F076/F077 手工验收结论；设计说明见 design.md §7.1。
+
+| 项 | 文件 | 验证 |
+|---|---|---|
+| AC-52 `last_run_at`/耗时/版本/监控一跳/停用态展示 | `dao.py`、`run_service.py`、`scheduledTask/index.tsx`、`LogPage/index.tsx`、`agentMonitor/index.tsx` | claim 写 `last_run_at`；终态/回收写耗时；列表显示起始时间+耗时+版本；`?tab=monitor&trace_id=` 直达并自动打开详情 |
+| AC-50 系统处置留痕 | `run_service.py`、`constants.py` | 计划失败/超时回收/阈值停用/一次性终态以 `operator_id=0` 写 `schedule.run`；锁外批量 |
+| AC-49 管理审计前后取值 | `task_service.py`、`systemLog/index.tsx`、`bs.json` | create/update/enable/disable/delete 带 before/after；preset 只存 key；审计页备注列渲染 metadata |
+| AC-59 触发计划三语 | `cron_schedule.py`、`schemas/task.py`、`tasks.py`、`nl_draft_service.py`、`scheduledTask.json` ×3 | `schedule_display` 结构化描述；列表/预览/草稿按当前语言渲染；`pnpm check-i18n` OK |
+| AC-52 监控归因 | `assistant_runner.py` | `app_name=assistant.name`、`trace_id` 显式透传 |
+| F076 11806 | `open_api/api/dependencies.py` | 停用租户密钥 → 11806；Redis 故障回查 DB fail-closed |
+
+**门禁**：`pytest test/scheduled_task test/open_api` **394 passed**；`pnpm --filter bisheng typecheck` 423 strict 全过；`pnpm check-i18n` OK；改动文件 eslint 0 error；新增前端 `scheduleDisplay.test.ts` 6 条、审计筛选既有用例 3 条通过。`pnpm lint` 全量仍有**既有** suppression 计数漂移（`controllers/API/{workflow,dashboard,finetune}.ts`，非本轮文件），`lint:prune` 已移除本轮修复的 `LogPage/index.tsx` 旧抑制；全量 Vitest 另有 7 个**既有**失败文件（approval / permissionGrant / systemPage 等，均不涉及本轮改动）。
+
+---
+
 ## 实际偏差记录
 
 > **只留一行指针**，论证在 design.md（决策 / 坑），这里不重复（见 `docs/SDD-Guide.md` §4）。

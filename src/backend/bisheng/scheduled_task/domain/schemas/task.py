@@ -48,7 +48,8 @@ class CronPreviewReq(BaseModel):
 
 class CronPreviewResp(BaseModel):
     expression: str = Field(..., description="归一化后的表达式")
-    description: str = Field(..., description="人类可读解释")
+    description: str = Field(..., description="人类可读解释（中文兼容字段）")
+    schedule_display: dict | None = Field(default=None, description="结构化触发计划（前端三语渲染）")
     next_runs: list[datetime] = Field(default_factory=list, description="未来至多 N 次运行时间")
 
 
@@ -63,7 +64,8 @@ class ScheduledTaskItem(BaseModel):
     schedule_type: str
     cron_expression: str | None = None
     run_at: datetime | None = None
-    schedule_description: str = Field(default="", description="人类可读的触发计划")
+    schedule_description: str = Field(default="", description="人类可读的触发计划（中文兼容字段）")
+    schedule_display: dict | None = Field(default=None, description="结构化触发计划（前端三语渲染）")
     status: str
     next_run_at: datetime | None = None
     last_status: str | None = None
@@ -111,6 +113,7 @@ class NlDraftResp(BaseModel):
     cron_expression: str | None = None
     run_at: datetime | None = None
     schedule_description: str
+    schedule_display: dict | None = None
     next_runs: list[datetime] = Field(default_factory=list)
     preset_inputs: list[PresetInputItem] | None = None
     rationale: str = ""
