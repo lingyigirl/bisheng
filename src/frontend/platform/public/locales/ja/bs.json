@@ -1364,7 +1364,8 @@
       "tenant": "テナント管理",
       "llm": "モデル管理",
       "approval": "承認管理",
-      "docExtract": "文書抽出"
+      "docExtract": "文書抽出",
+      "schedule": "定期タスク"
     },
     "eventTypeEnum": {
       "createChat": "新規チャット作成",
@@ -1442,7 +1443,13 @@
       "docExtractTemplateUpdate": "文書抽出テンプレートの変更",
       "docExtractTemplateDelete": "文書抽出テンプレートの削除",
       "docExtractTemplateEnable": "文書抽出テンプレートの有効化",
-      "docExtractTemplateDisable": "文書抽出テンプレートの無効化"
+      "docExtractTemplateDisable": "文書抽出テンプレートの無効化",
+      "scheduleTaskCreate": "定期タスクの作成",
+      "scheduleTaskUpdate": "定期タスクの更新",
+      "scheduleTaskEnable": "定期タスクの有効化",
+      "scheduleTaskDisable": "定期タスクの無効化",
+      "scheduleTaskDelete": "定期タスクの削除",
+      "scheduleTaskRunNow": "定期タスクの即時実行"
     },
     "objectTypeEnum": {
       "none": "なし",
@@ -1597,7 +1604,10 @@
       "success": "成功",
       "failed": "失敗"
     },
-    "monitorTraceId": "トレースID"
+    "monitorTraceId": "トレースID",
+    "monitorTracePending": "この実行はまだ監視に登録されていません。しばらくしてから更新してください。",
+    "auditBefore": "変更前",
+    "auditAfter": "変更後"
   },
   "tag": {
     "labelMaxLength": "タグ名は 10 文字以内で入力してください",
@@ -1663,7 +1673,8 @@
     "embedIntoWebsite": "Web サイトに埋め込む",
     "styleOne": "スタイル1",
     "styleTwo": "スタイル2",
-    "embedCodeDescription": "以下のコードを Web サイトに埋め込んでください"
+    "embedCodeDescription": "以下のコードを Web サイトに埋め込んでください",
+    "scheduledTasks": "定期タスク"
   },
   "dataset": {
     "confirmDelete": "このデータセットを削除します！",

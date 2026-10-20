@@ -8,6 +8,7 @@ import ApiAccess from './ApiAccess';
 import ApiAccessFlow from './ApiAccessFlow';
 import ApiAccessSkill from './ApiAccessSkill';
 import ChatLink from './ChatLink';
+import { ScheduledTaskPanel } from './scheduledTask';
 
 enum API_TYPE {
     ASSISTANT = 'assistant',
@@ -35,31 +36,48 @@ const ApiMainPage = ({ type = API_TYPE.ASSISTANT }: ApiMainPageProps) => {
     const { id } = useParams();
     const permissionType = type === API_TYPE.ASSISTANT ? 'assistant' : 'workflow';
     const resourceIds = id ? [String(id)] : [];
-    const { permissions, loading } = usePermissionIds(permissionType as any, resourceIds, ['share_app']);
+    // F077: the scheduled-task tab is gated by `edit_app`, NOT by the panel's
+    // existing `share_app` gate (AC-57) -- an editor without share rights must
+    // still be able to schedule. The first three tabs keep their old gate.
+    const { permissions, loading } = usePermissionIds(permissionType as any, resourceIds, ['share_app', 'edit_app']);
     const canManageShare = id ? hasPermissionId(permissions, id, 'share_app') : false;
+    const canEditApp = id ? hasPermissionId(permissions, id, 'edit_app') : false;
 
-    // 菜单配置项
-    const menuItems = useMemo((): MenuItem[] => [
-        {
-            key: 'api-access',
-            labelKey: t('api.apiAccess'),
-            component: getApiAccessComponent(type)
-        },
-        {
-            key: 'no-login-link',
-            labelKey: t('api.noLoginLink'),
-            component: <ChatLink noLogin type={type} />
-        },
-        {
-            key: 'login-link',
-            labelKey: t('api.loginLink'),
-            component: <ChatLink type={type} />
+    // 菜单配置项：前 3 项沿用 `share_app` 门（口径不变），第 4 项按 `edit_app` 单独判。
+    const menuItems = useMemo((): MenuItem[] => {
+        const items: MenuItem[] = [];
+        if (canManageShare) {
+            items.push(
+                {
+                    key: 'api-access',
+                    labelKey: t('api.apiAccess'),
+                    component: getApiAccessComponent(type)
+                },
+                {
+                    key: 'no-login-link',
+                    labelKey: t('api.noLoginLink'),
+                    component: <ChatLink noLogin type={type} />
+                },
+                {
+                    key: 'login-link',
+                    labelKey: t('api.loginLink'),
+                    component: <ChatLink type={type} />
+                }
+            );
         }
-    ], [type]);
+        if (canEditApp) {
+            items.push({
+                key: 'scheduled-tasks',
+                labelKey: t('api.scheduledTasks'),
+                component: <ScheduledTaskPanel appId={String(id)} appType={type === API_TYPE.ASSISTANT ? 5 : 10} />
+            });
+        }
+        return items;
+    }, [type, canManageShare, canEditApp, id]);
 
-    // 当前活动内容
-    const activeContent = useMemo(
-        () => menuItems.find(item => item.key === activeMenu)?.component,
+    // 当前活动内容：默认项按第一个可用项兜底（否则 edit_app-only 用户会落在不可见页签上）。
+    const activeItem = useMemo(
+        () => menuItems.find(item => item.key === activeMenu) ?? menuItems[0],
         [activeMenu, menuItems]
     );
 
@@ -71,7 +89,7 @@ const ApiMainPage = ({ type = API_TYPE.ASSISTANT }: ApiMainPageProps) => {
         );
     }
 
-    if (!canManageShare) {
+    if (!canManageShare && !canEditApp) {
         return (
             <div className="p-4">
                 <Alert>
@@ -86,13 +104,13 @@ const ApiMainPage = ({ type = API_TYPE.ASSISTANT }: ApiMainPageProps) => {
             {/* 左侧菜单组件 */}
             <MenuPanel
                 items={menuItems}
-                activeKey={activeMenu}
+                activeKey={activeItem?.key ?? ''}
                 onChange={setActiveMenu}
             />
 
             {/* 右侧内容区 */}
             <main className="flex-1 p-2 pl-0 overflow-y-auto" style={{ scrollBehavior: 'smooth' }}>
-                {activeContent}
+                {activeItem?.component}
             </main>
         </div>
     );

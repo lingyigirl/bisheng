@@ -94,6 +94,8 @@ def fake_redis(monkeypatch):
         return fake
 
     monkeypatch.setattr(cred_service, "_get_redis", _get)
+    # 11806 tenant-status check also consults Redis; share the fake.
+    monkeypatch.setattr(deps, "_get_redis", _get)
     monkeypatch.setattr(cred_service, "_credential_cache_ttl", lambda: 3)
     return fake
 
@@ -181,7 +183,9 @@ async def test_create_failure_leaves_no_residue(patched_db, monkeypatch):
     async def _no_dup(name: str, *, tenant_id: int) -> bool:
         return False
 
-    monkeypatch.setattr('bisheng.open_api.domain.services.service_account_service.ServiceAccountDao.aname_exists', _no_dup)
+    monkeypatch.setattr(
+        "bisheng.open_api.domain.services.service_account_service.ServiceAccountDao.aname_exists", _no_dup
+    )
 
     from sqlalchemy.exc import IntegrityError
 
@@ -199,17 +203,12 @@ async def test_create_failure_leaves_no_residue(patched_db, monkeypatch):
 
 async def test_explicit_admin_owner_rejected(patched_db, monkeypatch):
     _stub_payload(monkeypatch, _StubPayload(global_super=True))
-    async with AsyncSession(bind=patched_db, expire_on_commit=False) as session:
-        user = User(user_name="admin-candidate", password="x", source="local", external_id=None, delete=0)
-        session.add(user)
-        await session.commit()
-        await session.refresh(user)
-        session.add(UserTenant(user_id=user.user_id, tenant_id=TENANT_ID, is_active=1, is_default=1, status="active"))
-        await session.commit()
-        admin_id = user.user_id
+    # 走 11810 的“已提权 owner”分支即可：用户/成员读取打桩，避免本用例
+    # 依赖真实 DB（全局 engine 跨 event loop 会污染同进程后续用例）。
+    _stub_identity_reads(monkeypatch)
 
     with pytest.raises(OpenApiOwnerNotAllowedError):
-        await svc.create_service_account(tenant_id=TENANT_ID, name="对接系统", resource_owner_user_id=admin_id)
+        await svc.create_service_account(tenant_id=TENANT_ID, name="对接系统", resource_owner_user_id=987654)
 
 
 def _stub_identity_reads(monkeypatch, *, delete: int = 0, status: str = "active"):

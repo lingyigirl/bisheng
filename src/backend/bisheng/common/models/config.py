@@ -35,6 +35,10 @@ class ConfigKeyEnum(Enum):
     # unset the feature falls back to the conversation model WITHOUT error
     # (spec AC-27), which is why this slot has no "required" handling anywhere.
     DATASOURCE_SQL_LLM = "datasource_sql_llm"
+    # F077: turning a natural-language description into a schedule draft. Its own
+    # slot for the same reason F058/F061 have one; unset means "fall back to the
+    # tenant's conversation model without error" (spec AC-41).
+    SCHEDULED_TASK_LLM = "scheduled_task_llm"
 
 
 class ConfigBase(SQLModelSerializable):

@@ -19,12 +19,16 @@ from bisheng.open_api.domain.scopes import (
 )
 
 
-def test_registry_covers_44_routes():
-    """/api/v2 实测 44 条路由 = 42 HTTP + 2 WS(design §4.2 的端点全集)。"""
+def test_registry_covers_all_v2_routes():
+    """/api/v2 实测 45 条路由 = 43 HTTP + 2 WS。
+
+    44 → 45：F077 追加 `POST /api/v2/schedule/trigger`（事件触发面）。
+    这个数字随注册表走——新端点必须在这里露面，否则说明只加了路由没登记权限位。
+    """
     pairs = all_registered_endpoints()
-    assert len(pairs) == 44
+    assert len(pairs) == 45
     assert len([p for p in pairs if p[0] == WS]) == 2
-    assert len(pairs) - len([p for p in pairs if p[0] == WS]) == 42
+    assert len(pairs) - len([p for p in pairs if p[0] == WS]) == 43
 
 
 def test_registry_has_no_duplicate_endpoint():
@@ -37,8 +41,8 @@ def test_registry_has_no_duplicate_endpoint():
 
 
 def test_registry_shape():
-    """8 项权限位;delegate 为二期预留(当前无端点)。"""
-    assert len(OPEN_API_SCOPES) == 8
+    """9 项权限位;delegate 为二期预留(当前无端点),schedule:trigger 由 F077 引入。"""
+    assert len(OPEN_API_SCOPES) == 9
     assert OPEN_API_SCOPE_CODES == {
         "workflow:invoke",
         "workflow:read",
@@ -47,6 +51,7 @@ def test_registry_shape():
         "chat:invoke",
         "knowledge:read",
         "knowledge:write",
+        "schedule:trigger",
         "delegate",
     }
     delegate = next(s for s in OPEN_API_SCOPES if s.code == "delegate")

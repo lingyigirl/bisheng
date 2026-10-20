@@ -154,6 +154,45 @@ services:
       openfga:
         condition: service_started
 
+  # F077: Celery beat — publishes the periodic schedule (scheduled-task scan,
+  # telemetry sync, FGA retry, channel polling, tmp cleanup, ...). Without it the
+  # 定时任务 never fires (manual "run now" and event triggers still work).
+  # **Only one beat per broker**: running a second one (another compose stack or
+  # a host process pointed at the same Redis) fires every schedule twice.
+  # The default queue consumed by `backend_worker` (entrypoint `worker` mode uses
+  # `start_min_worker -Q knowledge_celery,ocr_celery,workflow_celery,celery`)
+  # executes the scans — no extra worker needed.
+  backend_beat:
+    container_name: bisheng-backend-beat
+    image: dataelement/bisheng-backend:v2.6.0-fix2
+    environment:
+      TZ: Asia/Shanghai
+      BS_SSO_SYNC__GATEWAY_HMAC_SECRET: "bisheng-local-hmac-20260422"
+      BS_MILVUS_CONNECTION_ARGS: '{"host":"milvus","port":"19530","user":"","password":"","secure":false}'
+      BS_MILVUS_IS_PARTITION: 'true'
+      BS_MILVUS_PARTITION_SUFFIX: '1'
+      BS_ELASTICSEARCH_URL: 'http://elasticsearch:9200'
+      BS_ELASTICSEARCH_SSL_VERIFY: '{}'
+      BS_MINIO_SCHEMA: 'false'
+      BS_MINIO_CERT_CHECK: 'false'
+      BS_MINIO_ENDPOINT: 'minio:9000'
+      BS_MINIO_SHAREPOINT: 'minio:9000'
+      BS_MINIO_ACCESS_KEY: 'minioadmin'
+      BS_MINIO_SECRET_KEY: 'minioadmin'
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/bisheng/config/config.yaml:/app/bisheng/config.yaml
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/bisheng/entrypoint.sh:/app/entrypoint.sh
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/data/bisheng:/app/data
+    security_opt:
+      - seccomp:unconfined
+    command: sh entrypoint.sh beat  # 启动celery beat（周期任务发布者）
+    restart: on-failure
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
   frontend:
     container_name: bisheng-frontend
     image: dataelement/bisheng-frontend:v2.6.0-fix2

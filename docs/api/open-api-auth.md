@@ -2,6 +2,7 @@
 
 > 面向：**对接方开发**（携带密钥调用 `/api/v2`）与**平台运维**（签发/吊销/排障）
 > 适用范围：`/api/v2` 的全部端点（HTTP 与 WebSocket）
+> 平台内查看与导出：控制台「系统 → 服务账号 → 接入指南」提供对接方直接可用的接入说明（接入地址按环境实时替换、curl 示例、权限位与错误码全表），可复制全文或导出 Markdown，内容与本文同源
 > 配套：[`开放API密钥鉴权迁移指引.md`](../开放API密钥鉴权迁移指引.md)（存量调用方切换与回退）、[`filelib-retrieve.md`](filelib-retrieve.md)（纯检索接口参考）、[`知识库接口文档.md`](知识库接口文档.md)（知识空间/知识库接口）
 
 ---
@@ -16,7 +17,7 @@ POST   /api/v1/service-accounts/{id}/keys           签发密钥(明文仅本响
 PATCH  /api/v1/service-accounts/{id}/keys/{key_id}  改名称/权限位/有效期(立即生效)
 POST   /api/v1/service-accounts/{id}/keys/{key_id}/revoke   单把吊销
 POST   /api/v1/service-accounts/{id}/keys/revoke-all        全量吊销(轮换收尾)
-GET    /api/v1/open-api/scopes                      可签发权限位目录(8 项)
+GET    /api/v1/open-api/scopes                      可签发权限位目录(9 项)
 ```
 
 - **密钥格式**：`bs-sak-` + 43 字符随机串，共 50 字符。
@@ -53,6 +54,7 @@ Authorization: Bearer bs-sak-<43 字符>
 | `knowledge:read` | 知识库与文件读取、检索（`/filelib/retrieve` 等）、引用详情 |
 | `knowledge:write` | 知识库与文件的增删改、问答与元数据写入 |
 | `delegate` | 预留位：本期可签发但**不产生任何生效行为** |
+| `schedule:trigger` | 定时任务的事件触发端点（`POST /api/v2/schedule/trigger`） |
 
 - 目录端点 `GET /api/v1/open-api/scopes` 返回可签发清单（`code`/`group`/`endpoint_count`），以它为准。
 - **隐含规则**：授予 `knowledge:write` 即同时具备 `knowledge:read`。

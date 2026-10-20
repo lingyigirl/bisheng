@@ -43,6 +43,11 @@ def delete_flow(*,
         ['delete_app'],
     ):
         return UnAuthorizedError.return_resp()
+    # F077 AC-30: 有启用中的定时任务时拒绝删除（回带数量与下一步引导）。
+    # 放在权限校验之后——无权限者不应从错误里得知任务的存在。
+    from bisheng.scheduled_task.domain.services.task_service import assert_app_deletable
+
+    assert_app_deletable(str(flow_id), FlowType.WORKFLOW.value)
     FlowDao.delete_flow(db_flow)
     telemetry_service.log_event_sync(
         user_id=login_user.user_id,

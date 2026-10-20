@@ -2233,5 +2233,7 @@
   },
   "com_linsight_error_title_recovery_blocked": "Automatic recovery stopped",
   "com_linsight_error_desc_recovery_blocked": "The previous tool outcome is uncertain, or required execution state cannot be restored.",
-  "com_linsight_error_hint_recovery_blocked": "Review the details and verify external results before starting a new task."
+  "com_linsight_error_hint_recovery_blocked": "Review the details and verify external results before starting a new task.",
+  "com_notifications_action_scheduled_task_failed": "Scheduled task failed",
+  "com_notifications_action_scheduled_task_needs_input": "Scheduled task is waiting for input"
 }

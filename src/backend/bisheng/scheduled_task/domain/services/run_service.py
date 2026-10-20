@@ -1,0 +1,1062 @@
+"""F077 调度编排：一轮扫描（``run_cycle``）与运行监督（``observe_runs``）。
+
+**本模块只做编排，不做判定**：判定在 ``run_planner``（纯函数），复检在
+``trigger_guard``，写回在 DAO 的原子原语。编排顺序即 design 决策 2/4：
+
+    平台级 Redis 锁 → 租约回收 → 跨租户枚举到期 → 逐条（设租户 → 复检 →
+    classify → 原子写回 → 派发）→ 运行监督（终态回写 / INPUT 处理）
+
+**失败记账的单一写入者**：只有计划轮次（本模块）写失败状态与连续失败计数；
+事件触发与立即运行由端点走 ``run_planner`` 后直接回 119 段错误、不落库。
+
+**可测试性**：派发（``dispatch``）、运行态读取（``read_state``）、通知（``notify``）
+都是可注入的；测试用桩覆盖全部分支，不碰 broker、不碰真实 Redis 队列。
+"""
+
+from __future__ import annotations
+
+import copy
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from loguru import logger
+
+from bisheng.common.services.config_service import settings
+from bisheng.core.cache.redis_manager import get_redis_client
+from bisheng.core.context.tenant import (
+    DEFAULT_TENANT_ID,
+    bypass_tenant_filter,
+    get_current_tenant_id,
+    set_current_tenant_id,
+)
+from bisheng.database.models.audit_log import AuditLog, AuditLogDao
+from bisheng.database.models.flow import FlowDao, FlowType
+from bisheng.scheduled_task.domain.constants import ScheduledTaskAuditAction
+from bisheng.scheduled_task.domain.models.dao import ScheduledTaskDao
+from bisheng.scheduled_task.domain.models.scheduled_task import (
+    BlockedReason,
+    RunStatus,
+    ScheduledTask,
+    ScheduleType,
+    TaskStatus,
+)
+from bisheng.scheduled_task.domain.services import trigger_guard
+from bisheng.scheduled_task.domain.services.cron_schedule import next_runs
+from bisheng.scheduled_task.domain.services.run_planner import (
+    PlanReason,
+    PlanVariant,
+    TaskSnapshot,
+    TriggerKind,
+    cap_room,
+    classify,
+)
+from bisheng.utils import generate_uuid
+from bisheng.worker.knowledge.lua_scripts import RELEASE_LOCK
+
+SERVER_TZ = ZoneInfo("Asia/Shanghai")
+
+#: 平台级"一轮只有一个派发者"锁（多 beat 实例共存时串行化；DB 原子 claim 兜底）。
+DISPATCH_LOCK_KEY = "scheduled_task:dispatch:lock"
+
+#: 审计与通知的稳定标识。
+TARGET_TYPE = "scheduled_task"
+ACTION_FAILED = "scheduled_task_failed"
+ACTION_NEEDS_INPUT = "scheduled_task_needs_input"
+
+
+@dataclass
+class CycleStats:
+    """一轮的计数（日志/指标用；字段名即 `schedule.scan.round` 的键）。"""
+
+    lock_skipped: bool = False
+    reclaimed: int = 0
+    due: int = 0
+    claimed: int = 0
+    skipped: int = 0
+    failed: int = 0
+    deferred: int = 0
+    dispatch_errors: int = 0
+    observed: int = 0
+    reasons: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        return {
+            "lock_skipped": self.lock_skipped,
+            "reclaimed": self.reclaimed,
+            "due": self.due,
+            "claimed": self.claimed,
+            "skipped": self.skipped,
+            "failed": self.failed,
+            "deferred": self.deferred,
+            "dispatch_errors": self.dispatch_errors,
+            "observed": self.observed,
+        }
+
+
+def _conf():
+    return settings.scheduled_task
+
+
+def _now() -> datetime:
+    """调度链路的 `now`（**naive 本地时间**）。
+
+    平台列惯例：库里的时间列是 naive 本地时间（`enable_utc=False`）。tz-aware 只在
+    `cron_schedule` 的求值边界出现——把它扩散到 DB 比较或 planner 会引入
+    "aware 与 naive 混比"的 TypeError / 字符串比较错序（W2 实现期实测）。
+    """
+    return datetime.now(SERVER_TZ).replace(tzinfo=None)
+
+
+# ── 平台级锁 ─────────────────────────────────────────────────────────
+
+
+async def _acquire_lock(ttl_seconds: int) -> str | None:
+    """`SET NX EX` 单次往返占锁；Redis 不可用时返回 None（本轮跳过，不派发）。"""
+    try:
+        redis = await get_redis_client()
+        token = generate_uuid()
+        acquired = await redis.async_connection.set(DISPATCH_LOCK_KEY, token, nx=True, ex=ttl_seconds)
+        return token if acquired else None
+    except Exception:
+        # 调度是后台能力：Redis 抖动时宁可本轮不跑（下一 tick 再来），也不要把
+        # 异常抛给 beat（会让整个 beat 条目按 celery 重试策略堆积）。
+        logger.exception("scheduled_task: could not acquire dispatch lock; skipping round")
+        return None
+
+
+async def _release_lock(token: str) -> None:
+    try:
+        redis = await get_redis_client()
+        await redis.async_connection.eval(RELEASE_LOCK, 1, DISPATCH_LOCK_KEY, token)
+    except Exception:
+        # 锁有 TTL（略小于 tick），释放失败最多让下一轮晚一个 tick 开始。
+        logger.warning("scheduled_task: dispatch lock release failed (will expire by TTL)")
+
+
+# ── 一轮 ─────────────────────────────────────────────────────────────
+
+
+async def run_cycle(now: datetime | None = None, *, dispatch=None, notify=None) -> CycleStats:
+    """计划轮次：回收过期租约 → 枚举到期 → 逐条判定/写回/派发 → 运行监督。"""
+    now = now or _now()
+    conf = _conf()
+    stats = CycleStats()
+
+    lock_token = await _acquire_lock(conf.dispatch_lock_ttl_seconds)
+    if lock_token is None:
+        stats.lock_skipped = True
+        return stats
+
+    dispatch = dispatch or _dispatch
+    notify = notify or _notify
+
+    # 系统处置审计（计划失败/超时回收）先累积、锁释放后批量落库：派发锁 TTL
+    # 默认只有 15s，逐条 ainsert_v2（各自开会话 + commit + refresh）在故障风暴
+    # （最多 200 到期 + 200 过期）时会明显拉长持锁时间。
+    system_audits: list[AuditLog] = []
+    try:
+        stats.reclaimed = await _reclaim_expired(now, notify, system_audits)
+
+        # 跨租户枚举（beat tick 没有租户 header，见 design §5 坑 10）。
+        with bypass_tenant_filter():
+            due = await ScheduledTaskDao.alist_due(now)
+            running = await ScheduledTaskDao.acount_running(now)
+        room = cap_room(running, conf.global_max_running)
+        stats.due = len(due)
+
+        for task in due:
+            previous_tenant = get_current_tenant_id()
+            set_current_tenant_id(task.tenant_id)
+            try:
+                used = await _process_task(task, now, room, stats, dispatch, notify, system_audits)
+                room -= used
+            except Exception:
+                # 单条失败不拖垮整轮（下一 tick 会重新判定它）。
+                logger.exception("scheduled_task: processing task {} failed", task.id)
+                stats.dispatch_errors += 1
+            finally:
+                set_current_tenant_id(previous_tenant)
+
+        stats.observed = await observe_runs(now, notify=notify)
+    finally:
+        try:
+            await _release_lock(lock_token)
+        finally:
+            await _flush_system_audits(system_audits)
+
+    logger.info("schedule.scan.round {}", stats.as_dict())
+    return stats
+
+
+def _next_fire_for(task: ScheduledTask):
+    """给 planner 注入的"下一跳"回调；一次性任务不会调用它（keep 语义）。"""
+
+    def _next(anchor: datetime) -> datetime:
+        aware = anchor.replace(tzinfo=SERVER_TZ) if anchor.tzinfo is None else anchor
+        return next_runs(task.cron_expression, aware, 1)[0].replace(tzinfo=None)
+
+    return _next
+
+
+def _snapshot(task: ScheduledTask) -> TaskSnapshot:
+    return TaskSnapshot(
+        id=task.id,
+        schedule_type=ScheduleType(task.schedule_type),
+        next_run_at=task.next_run_at,
+        lease_expires_at=task.lease_expires_at,
+        status=TaskStatus(task.status),
+        last_status=RunStatus(task.last_status) if task.last_status else None,
+        last_planned_at=task.last_planned_at,
+        blocked_reason=task.blocked_reason,
+        name=task.name,
+        created_by=task.created_by,
+        run_identity_user_id=task.run_identity_user_id,
+        service_account_id=task.service_account_id,
+    )
+
+
+async def _process_task(
+    task, now, room, stats: CycleStats, dispatch, notify, system_audits: list[AuditLog] | None = None
+) -> int:
+    """处理一条到期任务；返回本轮占用的并发名额（0 或 1）。"""
+    recheck = await trigger_guard.recheck_task(task)
+    decision = classify(
+        _snapshot(task),
+        now,
+        recheck,
+        cap_room=room,
+        trigger_kind=TriggerKind.SCHEDULED,
+        next_fire=_next_fire_for(task),
+    )
+    stats.reasons.append(f"{task.id}:{decision.variant.value}:{decision.reason.value if decision.reason else ''}")
+
+    if decision.variant is PlanVariant.NORMAL:
+        token = generate_uuid()
+        lease = now + timedelta(seconds=_conf().run_timeout_seconds)
+        claimed = await ScheduledTaskDao.aclaim_lease(
+            task.id,
+            token=token,
+            now=now,
+            lease_expires_at=lease,
+            next_run_at=decision.next_run_at,
+            planned_at=decision.last_planned_at,
+            trace_id=token,
+        )
+        if claimed != 1:
+            # 另一个入口（立即运行/事件触发）刚抢走，或槽位已被别的轮次处理。
+            logger.info("scheduled_task: task {} lost the claim race; skipping", task.id)
+            return 0
+        stats.claimed += 1
+        # claim 成功后重读：本次的 last_run_at / last_trace_id / run_started_at
+        # 已在原子写里落库，_finalize（含派发失败路径）必须用新值，不能用 claim
+        # 前加载的内存对象。
+        task = await ScheduledTaskDao.aget(task.id) or task
+        try:
+            await dispatch(task, trace_id=token)
+        except Exception:
+            logger.exception("scheduled_task: dispatch failed for task {}", task.id)
+            stats.dispatch_errors += 1
+            await _finalize(
+                task,
+                token=token,
+                status=RunStatus.FAILED,
+                error="dispatch failed",
+                now=now,
+                notify=notify,
+                count_failure=True,
+                started_at=now,
+                trace_id=token,
+            )
+        return 1
+
+    if decision.variant is PlanVariant.SKIP:
+        await ScheduledTaskDao.amark_skipped(
+            task.id,
+            slot=task.next_run_at,
+            next_run_at=decision.next_run_at,
+            reason=decision.last_error or PlanReason.OVERLAP.value,
+            now=now,
+        )
+        stats.skipped += 1
+        return 0
+
+    if decision.variant is PlanVariant.FAIL:
+        await _apply_failure(task, decision, now, notify, system_audits)
+        stats.failed += 1
+        return 0
+
+    # DEFER（含一次性任务等待上线）：不消费任何计划状态。
+    if decision.mark_offline:
+        await ScheduledTaskDao.aset_blocked(task.id, BlockedReason.APP_OFFLINE, now=now)
+    stats.deferred += 1
+    return 0
+
+
+async def _apply_failure(task, decision, now, notify, system_audits: list[AuditLog] | None = None) -> None:
+    """计划轮次的失败记账 + 首败/阈值/删除三类通知（每轮至多一条）。"""
+    reason = decision.last_error or PlanReason.IDENTITY_UNAVAILABLE.value
+    updated = await ScheduledTaskDao.amark_failed(
+        task.id,
+        slot=task.next_run_at,
+        next_run_at=decision.next_run_at,
+        reason=reason,
+        now=now,
+        disable=decision.disable,
+    )
+    if updated != 1:
+        return
+
+    threshold = _conf().consecutive_failure_threshold
+    prior = int(task.consecutive_fail_count or 0)
+    disabled_at_threshold = False
+    if not decision.disable and prior + 1 >= threshold:
+        await ScheduledTaskDao.aupdate_fields(task.id, {"status": TaskStatus.DISABLED.value}, tenant_id=task.tenant_id)
+        disabled_at_threshold = True
+
+    # AC-50：计划轮次 FAIL 是系统自动处置（没有 claim/运行身份），以系统身份
+    # 留一条 schedule.run 取证行；该动作不进审计页白名单。
+    if system_audits is not None:
+        system_audits.append(
+            _system_audit_entry(
+                tenant_id=task.tenant_id,
+                task_id=task.id,
+                name=task.name,
+                status=RunStatus.FAILED,
+                reason=reason,
+                trace_id=None,
+                metadata={
+                    "slot": _iso(task.next_run_at),
+                    "next_run_at": _iso(decision.next_run_at),
+                    "auto_disabled": bool(decision.disable or disabled_at_threshold),
+                    "fail_count": prior + 1,
+                    "disposition": "plan_failure",
+                },
+            )
+        )
+
+    if decision.disable:
+        # AC-31：应用已删除 —— fail-closed 并自动停用，恒通知。
+        await notify(
+            task,
+            ACTION_FAILED,
+            "定时任务已自动停用",
+            f"任务「{task.name}」的目标应用已被删除，已自动停用。",
+        )
+    elif prior == 0:
+        # AC-54：同一连续失败序列只发首败一条。
+        await notify(
+            task,
+            ACTION_FAILED,
+            "定时任务运行失败",
+            f"任务「{task.name}」本次运行失败：{decision.last_error or 'unknown'}",
+        )
+    elif disabled_at_threshold:
+        await notify(
+            task,
+            ACTION_FAILED,
+            "定时任务已自动停用",
+            f"任务「{task.name}」连续失败 {prior + 1} 次，已自动停用。",
+        )
+
+
+async def _reclaim_expired(now: datetime, notify, system_audits: list[AuditLog] | None = None) -> int:
+    """租约回收（AC-15）：判失败、释放互斥，并做与计划轮次同口径的通知决策。"""
+    threshold = _conf().consecutive_failure_threshold
+    # 调度路径必须跨租户读取：run_cycle 在设置任何任务租户上下文之前调用本函数，
+    # multi_tenant 开启时没有上下文会直接触发 NoTenantContextError。
+    with bypass_tenant_filter():
+        reclaimed = await ScheduledTaskDao.areclaim_expired(now)
+    for row in reclaimed:
+        previous_tenant = get_current_tenant_id()
+        set_current_tenant_id(row["tenant_id"])
+        try:
+            auto_disabled = row["fail_count_before"] + 1 >= threshold
+            if auto_disabled:
+                try:
+                    await ScheduledTaskDao.aupdate_fields(
+                        row["id"], {"status": TaskStatus.DISABLED.value}, tenant_id=row["tenant_id"]
+                    )
+                except Exception:
+                    # 停用失败不阻断后续通知/审计；下一轮若再次超时仍会重试。
+                    logger.exception("scheduled_task: auto-disable failed for reclaimed task {}", row["id"])
+                    auto_disabled = False
+
+            if system_audits is not None:
+                system_audits.append(
+                    _system_audit_entry(
+                        tenant_id=row["tenant_id"],
+                        task_id=row["id"],
+                        name=row["name"],
+                        status=RunStatus.FAILED,
+                        reason="run lease expired (timeout)",
+                        trace_id=row.get("trace_id"),
+                        metadata={
+                            "slot": _iso(row.get("last_planned_at")),
+                            "auto_disabled": auto_disabled,
+                            "fail_count": row["fail_count_after"],
+                            "duration_ms": row.get("duration_ms"),
+                            "disposition": "lease_timeout",
+                        },
+                    )
+                )
+
+            if row["fail_count_before"] == 0:
+                await notify(
+                    _LightTask(row),
+                    ACTION_FAILED,
+                    "定时任务运行失败",
+                    f"任务「{row['name']}」运行超时，已判定失败。",
+                )
+            elif row["fail_count_before"] + 1 == threshold:
+                await notify(
+                    _LightTask(row),
+                    ACTION_FAILED,
+                    "定时任务已自动停用",
+                    f"任务「{row['name']}」连续失败 {threshold} 次，已自动停用。",
+                )
+        except Exception:
+            # 单行失败不拖垮其余回收行（审计已在上面追加，仍会随本轮 flush）。
+            logger.exception("scheduled_task: reclaim post-processing failed for task {}", row.get("id"))
+        finally:
+            set_current_tenant_id(previous_tenant)
+    return len(reclaimed)
+
+
+@dataclass
+class _LightTask:
+    """回收路径只带必要字段（行已不在会话里），供 `_notify` 统一取用。"""
+
+    _row: dict
+
+    @property
+    def id(self):
+        return self._row["id"]
+
+    @property
+    def tenant_id(self):
+        return self._row["tenant_id"]
+
+    @property
+    def name(self):
+        return self._row["name"]
+
+    @property
+    def created_by(self):
+        return self._row["created_by"]
+
+
+# ── 派发 ─────────────────────────────────────────────────────────────
+
+
+async def _dispatch(task: ScheduledTask, *, trace_id: str) -> None:
+    """按应用类型派发一轮（工作流走 RedisCallback + execute_workflow；助手走自有运行器）。"""
+    if task.app_type == FlowType.WORKFLOW.value:
+        await _dispatch_workflow(task, trace_id)
+        return
+    from bisheng.worker.scheduled_task.assistant_runner import execute_assistant_run
+
+    execute_assistant_run.apply_async(args=[task.id, trace_id], queue="celery")
+
+
+async def _dispatch_workflow(task: ScheduledTask, trace_id: str) -> None:
+    """F054 序列：预写 data → WAITING → 派到绑定节点（**显式 queue**）。"""
+    from bisheng.database.models.flow_version import FlowVersionDao
+    from bisheng.worker.workflow.redis_callback import RedisCallback
+    from bisheng.worker.workflow.tasks import execute_workflow, workflow_stateful_worker
+    from bisheng.workflow.common.workflow import WorkflowStatus
+
+    flow = await FlowDao.aget_flow_by_id(str(task.app_id))
+    if flow is None:
+        raise RuntimeError(f"flow {task.app_id} disappeared before dispatch")
+
+    callback = RedisCallback(trace_id, str(task.app_id), "", task.run_identity_user_id, tenant_id=task.tenant_id)
+    callback.set_workflow_data(copy.deepcopy(flow.data))
+    callback.set_workflow_status(WorkflowStatus.WAITING.value)
+
+    # 版本标识：ONLINE 下禁切版本/改数据，故当前版本即本次运行所用版本（AC-52）。
+    version = FlowVersionDao.get_version_by_flow(str(task.app_id))
+    if version is not None:
+        await ScheduledTaskDao.aupdate_fields(
+            task.id, {"last_app_version_id": str(version.id)}, tenant_id=task.tenant_id
+        )
+
+    worker_node = workflow_stateful_worker.find_task_node_sync(trace_id)
+    execute_workflow.apply_async([trace_id, str(task.app_id), "", task.run_identity_user_id], queue=worker_node)
+
+
+# ── 运行监督（并入 tick 的无状态过，design 决策 6） ────────────────────
+
+
+async def observe_runs(now: datetime | None = None, *, read_state=None, notify=None) -> int:
+    """对持有未过期租约的任务读运行态：终态回写、INPUT 处理、超时回收留给 run_cycle。
+
+    助手运行器自己回写终态（design 决策 5），故本函数只观察**工作流**运行。
+    """
+    now = now or _now()
+    read_state = read_state or _read_workflow_state
+    notify = notify or _notify
+
+    with bypass_tenant_filter():
+        tasks = await ScheduledTaskDao.alist_with_live_lease(now)
+
+    observed = 0
+    for task in tasks:
+        if task.app_type != FlowType.WORKFLOW.value or not task.last_trace_id:
+            continue
+        previous_tenant = get_current_tenant_id()
+        set_current_tenant_id(task.tenant_id)
+        try:
+            state = await read_state(task.last_trace_id)
+            if not state:
+                continue
+            status = state.get("status")
+            if status == "SUCCESS":
+                await _finalize(
+                    task, token=task.run_lease_token, status=RunStatus.SUCCESS, error=None, now=now, notify=notify
+                )
+            elif status == "FAILED":
+                await _finalize(
+                    task,
+                    token=task.run_lease_token,
+                    status=RunStatus.FAILED,
+                    error=(state.get("reason") or "run failed")[:480],
+                    now=now,
+                    notify=notify,
+                    count_failure=True,
+                )
+            elif status == "INPUT":
+                await _handle_input(task, notify)
+            else:
+                continue
+            observed += 1
+        except Exception:
+            logger.exception("scheduled_task: observing task {} failed", task.id)
+        finally:
+            set_current_tenant_id(previous_tenant)
+    return observed
+
+
+async def _read_workflow_state(trace_id: str) -> dict | None:
+    """读运行的 Redis 终态（工作流）。异常按"读不到"处理，下一 tick 再看。"""
+    from bisheng.core.cache.redis_manager import get_redis_client_sync
+
+    try:
+        return get_redis_client_sync().get(f"workflow:{trace_id}:status")
+    except Exception:
+        logger.warning("scheduled_task: reading run state failed for trace {}", trace_id)
+        return None
+
+
+async def _handle_input(task: ScheduledTask, notify) -> None:
+    """INPUT 暂停态：有预设输入则按 F054 协议自动提交；否则置 needs_input 并通知一次。"""
+    from bisheng.worker.workflow.redis_callback import RedisCallback
+    from bisheng.worker.workflow.tasks import continue_workflow, workflow_stateful_worker
+    from bisheng.workflow.common.workflow import WorkflowStatus
+
+    callback = RedisCallback(
+        task.last_trace_id, str(task.app_id), "", task.run_identity_user_id, tenant_id=task.tenant_id
+    )
+    # 事件列表是 Redis list（`lpop` 消费）：暂停中的运行没有别的消费者，这里读空它
+    # 是安全的；`Category == 'input'` 即 INPUT 节点事件（WorkflowEventType.UserInput）。
+    input_event = None
+    while True:
+        response = callback.get_workflow_response()
+        if response is None:
+            break
+        if getattr(response, "category", None) == "input":
+            input_event = response
+            break
+    if input_event is None:
+        return
+
+    node_id = input_event.message.get("node_id")
+    input_schema = input_event.message.get("input_schema") or {}
+    payload, error = _build_preset_payload(input_schema, task.preset_inputs)
+
+    if not task.preset_inputs or error:
+        # 没有可用的预设输入：置暂停态（CAS 兼作"已通知"哨兵），由租约到期回收为失败。
+        first_time = await ScheduledTaskDao.amark_needs_input(
+            task.id,
+            token=task.run_lease_token or "",
+            error=error or "waiting for human input",
+            now=_now(),
+        )
+        if first_time == 1:
+            await notify(
+                task,
+                ACTION_NEEDS_INPUT,
+                "定时任务等待人工输入",
+                f"任务「{task.name}」在人工输入节点暂停，未配置可用的预设输入；"
+                f"若无人处理，将在运行时长上限后判定失败。",
+            )
+        return
+
+    # F054 协议：先写 input、再置 INPUT_OVER、再把 continue 派回绑定节点（顺序不可反）。
+    callback.set_user_input({node_id: payload})
+    callback.set_workflow_status(WorkflowStatus.INPUT_OVER.value)
+    worker_node = workflow_stateful_worker.find_task_node_sync(task.last_trace_id)
+    continue_workflow.apply_async(
+        [task.last_trace_id, str(task.app_id), "", task.run_identity_user_id], queue=worker_node
+    )
+    logger.info("schedule.run.input_submitted task={} trace={}", task.id, task.last_trace_id)
+
+
+def _build_preset_payload(input_schema: dict, presets: list | None) -> tuple[dict | None, str]:
+    """把任务的预设输入（静态 label/key）映射到本轮运行时 schema 的字段 key。
+
+    文件类输入在一期已被 AC-47 创建期拒绝；此处理论上不会遇到，仍显式报错
+    （不静默丢一项，否则运行会"成功"但少填）。
+    """
+    items = (input_schema or {}).get("value") or []
+    by_label: dict[str, dict] = {}
+    for item in items:
+        label = item.get("value") or item.get("label") or ""
+        if label in by_label:
+            return None, f"duplicate input label: {label}"
+        by_label[label] = item
+
+    values = {}
+    for preset in presets or []:
+        key = preset.get("key") or preset.get("label")
+        if key:
+            values[key] = preset.get("value")
+
+    payload: dict = {}
+    for label, item in by_label.items():
+        if item.get("type") == "file":
+            return None, f"file input is not supported on schedules: {label}"
+        raw = values.get(label)
+        if raw is None and item.get("required"):
+            return None, f"missing required preset input: {label}"
+        payload[item["key"]] = "" if raw is None else str(raw)
+    return payload, ""
+
+
+# ── 终态回写 ─────────────────────────────────────────────────────────
+
+
+async def _finalize(
+    task,
+    *,
+    token: str | None,
+    status: RunStatus,
+    error: str | None,
+    now: datetime,
+    notify,
+    count_failure: bool = False,
+    started_at: datetime | None = None,
+    trace_id: str | None = None,
+    notify_failure: bool = True,
+    disable_once: bool = True,
+) -> None:
+    """释放租约 + 写最近结果 + 一次性任务自动停用 + 失败通知 + 运行留痕。"""
+    # 起始时间由调用方显式给或从 claim 写入的字段取：不能依赖调用方内存对象的
+    # “新鲜度”（派发失败路径曾传入 claim 前的对象，导致耗时/trace 都取旧值）。
+    effective_started = started_at or task.last_run_at or task.run_started_at
+    duration_ms = None
+    if effective_started is not None:
+        duration_ms = max(int((now - effective_started).total_seconds() * 1000), 0)
+    effective_trace_id = trace_id or task.last_trace_id
+
+    threshold = _conf().consecutive_failure_threshold
+    prior = int(task.consecutive_fail_count or 0)
+    # AC-08：一次性任务终态自动停用；AC-17 的人工试跑派发失败传 disable_once=False，
+    # 不消耗唯一一次机会。
+    once_terminal = disable_once and task.schedule_type == ScheduleType.ONCE.value
+    disable = once_terminal
+    disabled_at_threshold = False
+    if count_failure and not disable and prior + 1 >= threshold:
+        disable = True
+        disabled_at_threshold = True
+
+    updated = await ScheduledTaskDao.afinalize(
+        task.id,
+        token=token,
+        status=status,
+        error=error,
+        now=now,
+        duration_ms=duration_ms,
+        trace_id=effective_trace_id,
+        disable=disable,
+        reset_fail_count=(status is RunStatus.SUCCESS),
+        # AC-17：人工/事件触发的失败不进入连续失败计数（只有计划轮次与定时运行计数）。
+        increment_fail_count=(status is RunStatus.FAILED and count_failure),
+    )
+    if updated != 1:
+        # 令牌不匹配：租约已被回收或换了主人（例如超时判定先行），本次回写作废。
+        logger.warning("scheduled_task: finalize for task {} did not own the lease", task.id)
+        return
+
+    if notify_failure and status is RunStatus.FAILED:
+        if prior == 0:
+            await notify(
+                task,
+                ACTION_FAILED,
+                "定时任务运行失败",
+                f"任务「{task.name}」本次运行失败：{error or 'unknown'}",
+            )
+        elif disabled_at_threshold:
+            await notify(
+                task,
+                ACTION_FAILED,
+                "定时任务已自动停用",
+                f"任务「{task.name}」连续失败 {prior + 1} 次，已自动停用。",
+            )
+
+    auto_disabled = disabled_at_threshold or once_terminal
+    await _audit_run(
+        task,
+        status=status,
+        error=error,
+        trace_id=effective_trace_id,
+        auto_disabled=auto_disabled,
+    )
+    if auto_disabled:
+        # AC-50：自动停用是系统处置，额外以系统身份留痕（运行行仍归运行身份）。
+        await _audit_system_disposition(
+            task,
+            status=status,
+            trace_id=effective_trace_id,
+            reason="failure_threshold" if disabled_at_threshold else "once_auto_disabled",
+        )
+
+
+def _iso(value: datetime | None) -> str | None:
+    """metadata 只放 JSON 原语：datetime 统一转 ISO 字符串。"""
+    return value.isoformat() if value is not None else None
+
+
+def _system_audit_entry(
+    *,
+    tenant_id: int,
+    task_id: int,
+    name: str,
+    status: RunStatus,
+    reason: str | None,
+    trace_id: str | None,
+    metadata: dict,
+) -> AuditLog:
+    """构造一条待批量落库的系统留痕（operator_id=0 → 'system'）。"""
+    return AuditLog(
+        tenant_id=tenant_id,
+        operator_id=0,
+        operator_name="system",
+        operator_tenant_id=DEFAULT_TENANT_ID,
+        action=ScheduledTaskAuditAction.RUN.value,
+        target_type=TARGET_TYPE,
+        target_id=str(task_id),
+        reason=reason,
+        audit_metadata={"status": status.value, "trace_id": trace_id, **metadata},
+        object_name=name,
+    )
+
+
+async def _flush_system_audits(entries: list[AuditLog]) -> None:
+    """锁释放后批量落库：best-effort，写失败不得影响调度结果。"""
+    if not entries:
+        return
+    try:
+        # 与 call_audit_service 同口径：行自带显式 tenant_id，落库时绕过租户过滤，
+        # 避免 beat 无上下文时 before_flush 参与改写。
+        with bypass_tenant_filter():
+            await AuditLogDao.ainsert_audit_logs(entries)
+    except Exception:
+        logger.exception("scheduled_task: system audit batch write failed ({} rows)", len(entries))
+
+
+async def _audit_run(
+    task,
+    *,
+    status: RunStatus,
+    error: str | None,
+    trace_id: str | None,
+    auto_disabled: bool,
+) -> None:
+    """运行留痕（`schedule.run`）：只落库取证、不进审计页白名单（AC-50）。"""
+    try:
+        await AuditLogDao.ainsert_v2(
+            tenant_id=task.tenant_id,
+            operator_id=task.run_identity_user_id,
+            operator_tenant_id=task.tenant_id,
+            action=ScheduledTaskAuditAction.RUN.value,
+            target_type=TARGET_TYPE,
+            target_id=str(task.id),
+            reason=error,
+            metadata={
+                "status": status.value,
+                "trace_id": trace_id or task.last_trace_id,
+                "auto_disabled": auto_disabled,
+            },
+            object_name=task.name,
+        )
+    except Exception:
+        # 留痕是 best-effort：写失败不得改变运行结果（与遥测 finally 同口径）。
+        logger.exception("scheduled_task: run audit write failed for task {}", task.id)
+
+
+async def _audit_system_disposition(
+    task,
+    *,
+    status: RunStatus,
+    trace_id: str | None,
+    reason: str,
+) -> None:
+    """系统自动处置（阈值停用/一次性终态停用）以系统身份补一条取证行。"""
+    try:
+        await AuditLogDao.ainsert_v2(
+            tenant_id=task.tenant_id,
+            operator_id=0,
+            operator_tenant_id=DEFAULT_TENANT_ID,
+            action=ScheduledTaskAuditAction.RUN.value,
+            target_type=TARGET_TYPE,
+            target_id=str(task.id),
+            reason=reason,
+            metadata={
+                "status": status.value,
+                "trace_id": trace_id,
+                "auto_disabled": True,
+                "disposition": reason,
+            },
+            object_name=task.name,
+        )
+    except Exception:
+        logger.exception("scheduled_task: system disposition audit write failed for task {}", task.id)
+
+
+# ── 通知 ─────────────────────────────────────────────────────────────
+
+
+async def _notify(task, action_code: str, title: str, body: str) -> None:
+    """站内信（best-effort）：收件人 = 创建者；不可用时兜底租户管理员/超管（AC-32）。"""
+    try:
+        recipients = await _resolve_recipients(task)
+        if not recipients:
+            logger.error(
+                "scheduled_task: no recipient for notification of task {} (creator={})",
+                task.id,
+                getattr(task, "created_by", None),
+            )
+            return
+        from bisheng.core.database import get_async_db_session
+        from bisheng.message.domain.models.inbox_message import (
+            MessageStatusEnum,
+            MessageTypeEnum,
+        )
+        from bisheng.message.domain.repositories.implementations.inbox_message_read_repository_impl import (
+            InboxMessageReadRepositoryImpl,
+        )
+        from bisheng.message.domain.repositories.implementations.inbox_message_repository_impl import (
+            InboxMessageRepositoryImpl,
+        )
+        from bisheng.message.domain.services.message_service import MessageService
+
+        async with get_async_db_session() as session:
+            service = MessageService(
+                message_repository=InboxMessageRepositoryImpl(session),
+                message_read_repository=InboxMessageReadRepositoryImpl(session),
+            )
+            await service.send_message(
+                content=[{"type": "text", "title": title, "body": body}],
+                sender=0,
+                message_type=MessageTypeEnum.NOTIFY,
+                receiver=recipients,
+                status=MessageStatusEnum.APPROVED,
+                action_code=action_code,
+            )
+    except Exception:
+        # 通知是 best-effort：失败不得改变调度的记账结果（权威轨迹在 audit_log）。
+        logger.exception("scheduled_task: notification failed for task {}", task.id)
+
+
+async def _resolve_recipients(task) -> list[int]:
+    """创建者优先；其账号不可用时兜底本租户管理员 + 全局超管。"""
+    creator = int(getattr(task, "created_by", 0) or 0)
+    if creator:
+        try:
+            from bisheng.user.domain.models.user import UserDao
+
+            user = await UserDao.aget_user(creator)
+            if user is not None and int(getattr(user, "delete", 0) or 0) == 0:
+                return [creator]
+        except Exception:
+            logger.warning("scheduled_task: creator lookup failed for user {}", creator)
+
+    fallback: list[int] = []
+    try:
+        from bisheng.tenant.domain.services.inbox_helper import list_global_super_admin_ids
+
+        fallback.extend(await list_global_super_admin_ids())
+    except Exception:
+        logger.warning("scheduled_task: could not resolve global super admins")
+    return sorted(set(fallback))
+
+
+# ── 立即运行（人工触发，AC-17）────────────────────────────────────────
+
+
+def _rejection_error(decision, trigger_kind: TriggerKind = TriggerKind.MANUAL):
+    """把 planner 的拒绝原因映射成 119 段错误（端点据此回真状态码）。
+
+    事件触发与立即运行共享拒绝语义，但**互斥拒绝的码不同**：事件触发是 11910
+    （该任务已有运行中），立即运行是 11909（同步触发被拒）——对接方与人工用户
+    对同一情形的自助动作不同（AC-38 vs AC-17）。
+    """
+    from bisheng.common.errcode.scheduled_task import (
+        ScheduledTaskAlreadyRunningError,
+        ScheduledTaskAppUnavailableError,
+        ScheduledTaskIdentityUnavailableError,
+        ScheduledTaskRunRejectedError,
+    )
+
+    if decision.reason in (PlanReason.APP_OFFLINE, PlanReason.APP_DELETED):
+        return ScheduledTaskAppUnavailableError()
+    if decision.reason is PlanReason.IDENTITY_UNAVAILABLE:
+        return ScheduledTaskIdentityUnavailableError()
+    if trigger_kind is TriggerKind.EVENT and decision.reason is PlanReason.OVERLAP:
+        return ScheduledTaskAlreadyRunningError()
+    return ScheduledTaskRunRejectedError()
+
+
+async def run_now(
+    task_id: int,
+    *,
+    dispatch=None,
+    trigger_kind: TriggerKind = TriggerKind.MANUAL,
+    notify=None,
+) -> str:
+    """立即运行一轮（`manual` 语义）：不排队、不重试、不改变既定计划（AC-17）。
+
+    与计划轮次共用同一套复检/判定/原子写回/派发；差别只有三点：`trigger_kind=MANUAL`、
+    claim 不要求到期（``require_due=False``）、不推进计划（``keep_next_run_at=True``）。
+    """
+    task = await ScheduledTaskDao.aget(task_id)
+    if task is None:
+        from bisheng.common.errcode.http_error import NotFoundError
+
+        raise NotFoundError()
+
+    dispatch = dispatch or _dispatch
+    notify = notify or _notify
+    now = _now()
+    recheck = await trigger_guard.recheck_task(task)
+    running = await ScheduledTaskDao.acount_running(now)
+    decision = classify(
+        _snapshot(task),
+        now,
+        recheck,
+        cap_room=cap_room(running, _conf().global_max_running),
+        trigger_kind=trigger_kind,
+        next_fire=_next_fire_for(task),
+    )
+    if decision.variant is not PlanVariant.NORMAL:
+        raise _rejection_error(decision, trigger_kind)
+
+    token = generate_uuid()
+    claimed = await ScheduledTaskDao.aclaim_lease(
+        task.id,
+        token=token,
+        now=now,
+        lease_expires_at=now + timedelta(seconds=_conf().run_timeout_seconds),
+        next_run_at=None,
+        planned_at=None,
+        trace_id=token,
+        keep_next_run_at=True,
+        require_due=False,
+    )
+    if claimed != 1:
+        # 复检与 claim 之间被计划轮次/别的入口抢走：按入口给"已有运行中"的对应码。
+        from bisheng.scheduled_task.domain.services.run_planner import PlanDecision
+
+        raise _rejection_error(
+            PlanDecision(variant=PlanVariant.REJECT, trigger_kind=trigger_kind, reason=PlanReason.OVERLAP),
+            trigger_kind,
+        )
+
+    # claim 后重读：last_run_at / last_trace_id / run_started_at 已落库，派发异常时
+    # _finalize 必须基于本次运行的新值。
+    task = await ScheduledTaskDao.aget(task.id) or task
+    try:
+        await dispatch(task, trace_id=token)
+    except Exception:
+        # broker/Redis 派发失败：释放租约并留痕，避免白占 run_timeout_seconds。
+        # 人工/事件触发不计连续失败、不发首败通知，也不消耗一次性任务的唯一机会（AC-17）。
+        logger.exception("scheduled_task: dispatch failed for manual/event run of task {}", task.id)
+        try:
+            await _finalize(
+                task,
+                token=token,
+                status=RunStatus.FAILED,
+                error="dispatch failed",
+                now=now,
+                notify=notify,
+                count_failure=False,
+                started_at=now,
+                trace_id=token,
+                notify_failure=False,
+                disable_once=False,
+            )
+        except Exception:
+            # 终态回写自身失败不得掩盖原始派发异常（端点仍需给出真实原因）。
+            logger.exception("scheduled_task: finalize after dispatch failure failed for task {}", task.id)
+        raise
+    return token
+
+
+# ── 事件触发的防重放与频控（T-19，design 决策 12.3/12.6）───────────────
+
+
+def _trigger_redis_error():
+    from bisheng.common.errcode.open_api import OpenApiAuthBackendUnavailableError
+
+    return OpenApiAuthBackendUnavailableError()
+
+
+async def assert_not_replayed(timestamp: int | None, nonce: str | None, *, now_epoch: int | None = None) -> None:
+    """时间窗 + 一次性随机数（spec AC-37）。
+
+    ``SET NX EX`` **单次往返**占 nonce（TTL = 2×窗口，覆盖窗口边界上的最后一次重放）；
+    不用两步 setnx+expire。缺头/超窗/重复 → 400/11912；Redis 不可用 → 503/11812。
+    """
+    import time as _time
+
+    from bisheng.common.errcode.scheduled_task import ScheduledTaskReplayRejectedError
+
+    window = _conf().replay_window_seconds
+    now_epoch = int(_time.time()) if now_epoch is None else now_epoch
+    if not timestamp or not nonce or abs(now_epoch - int(timestamp)) > window:
+        raise ScheduledTaskReplayRejectedError(msg="missing/expired X-Bs-Timestamp or X-Bs-Nonce")
+
+    try:
+        redis = await get_redis_client()
+        accepted = await redis.async_connection.set(f"scheduled_task:nonce:{nonce}", 1, nx=True, ex=window * 2)
+    except Exception:
+        logger.exception("scheduled_task: replay guard unavailable")
+        raise _trigger_redis_error()
+    if not accepted:
+        raise ScheduledTaskReplayRejectedError(msg="X-Bs-Nonce already used")
+
+
+async def consume_trigger_quota(task_id: int, *, now_epoch: int | None = None) -> None:
+    """任务级触发频率上限（spec AC-38 的放大量护栏，≠ 平台 API 限流）。
+
+    固定窗口 ``INCR + 首写 EXPIRE``；超限 → 429/11911。Redis 不可用 → 503/11812。
+    """
+    import time as _time
+
+    from bisheng.common.errcode.scheduled_task import ScheduledTaskTriggerRateLimitedError
+
+    limit = _conf().event_rate_limit_per_minute
+    now_epoch = int(_time.time()) if now_epoch is None else now_epoch
+    bucket = now_epoch // 60
+    key = f"scheduled_task:rate:{task_id}:{bucket}"
+    try:
+        redis = await get_redis_client()
+        count = await redis.async_connection.incr(key)
+        if count == 1:
+            await redis.async_connection.expire(key, 120)
+    except Exception:
+        logger.exception("scheduled_task: trigger rate limiter unavailable")
+        raise _trigger_redis_error()
+    if count > limit:
+        raise ScheduledTaskTriggerRateLimitedError(exception=f"per-minute limit {limit} exceeded")

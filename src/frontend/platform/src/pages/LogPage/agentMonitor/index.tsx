@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
+import { message } from "@/components/bs-ui/toast/use-toast";
 import FilterByApp from "@/components/bs-comp/filterTableDataComponent/FilterByApp";
 import FilterByDate from "@/components/bs-comp/filterTableDataComponent/FilterByDate";
 import { Button } from "@/components/bs-ui/button";
@@ -43,13 +45,22 @@ function durationLabel(processTimeMs: number | null | undefined): string {
 
 export function AgentMonitor() {
     const { t } = useTranslation();
+    const [searchParams] = useSearchParams();
+    // AC-52: the task list links here with `trace_id=<last_trace_id>`; seed the
+    // keyword filter so the list narrows to that single transaction.
+    const traceId = searchParams.get("trace_id") || "";
     const [records, setRecords] = useState<AgentTransactionRecord[]>([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(false);
-    const [filters, setFilters] = useState<MonitorFilters>(INIT_FILTERS);
-    const [applied, setApplied] = useState<MonitorFilters>(INIT_FILTERS);
+    const [filters, setFilters] = useState<MonitorFilters>({ ...INIT_FILTERS, keyword: traceId });
+    const [applied, setApplied] = useState<MonitorFilters>({ ...INIT_FILTERS, keyword: traceId });
     const [current, setCurrent] = useState<AgentTransactionRecord | null>(null);
+    const openedRef = useRef<string | null>(null);
+    const retryRef = useRef(0);
+    const traceIdRef = useRef(traceId);
+    const prevTraceRef = useRef(traceId);
+    traceIdRef.current = traceId;
 
     const load = useCallback(
         (p: number, f: MonitorFilters) => {
@@ -68,6 +79,29 @@ export function AgentMonitor() {
                 .then((res) => {
                     setRecords(res.records);
                     setTotal(res.total);
+                    // Telemetry is written asynchronously; retry a few times before
+                    // telling the user the run has not been indexed yet.
+                    if (traceId && openedRef.current !== traceId) {
+                        const hit = res.records.find((record) => record.trace_id === traceId);
+                        if (hit) {
+                            setCurrent(hit);
+                            openedRef.current = traceId;
+                            retryRef.current = 0;
+                        } else if (retryRef.current < 3) {
+                            retryRef.current += 1;
+                            setTimeout(() => {
+                                // Skip a stale retry after the user navigated to another trace.
+                                if (traceIdRef.current === traceId) load(p, f);
+                            }, retryRef.current * 1000);
+                        } else {
+                            openedRef.current = traceId;
+                            retryRef.current = 0;
+                            message({
+                                title: t("log.agentMonitor"),
+                                description: t("log.monitorTracePending"),
+                            });
+                        }
+                    }
                 })
                 .catch(() => {
                     setRecords([]);
@@ -75,8 +109,21 @@ export function AgentMonitor() {
                 })
                 .finally(() => setLoading(false));
         },
-        []
+        [traceId, t]
     );
+
+    useEffect(() => {
+        // Skip the mount run: state above is already seeded with `traceId`, so
+        // resetting here would trigger a duplicate initial request.
+        if (prevTraceRef.current === traceId) return;
+        prevTraceRef.current = traceId;
+        const next = traceId ? { ...INIT_FILTERS, keyword: traceId } : INIT_FILTERS;
+        setFilters(next);
+        setApplied(next);
+        setPage(1);
+        openedRef.current = null;
+        retryRef.current = 0;
+    }, [traceId]);
 
     useEffect(() => {
         load(page, applied);

@@ -155,3 +155,12 @@ logger_conf:
       rotation: "00:00"
       retention: "3 Days"
       enqueue: ture
+
+# F076/F077: 开放 API 鉴权总闸与定时任务事件触发
+# 说明：`enforce_keys` 是部署级总闸（false = 完全旧行为，连密钥都不校验），改动后必须重启；
+#       `default_tenant_enforce_keys` 只是"启动播种"——默认租户【尚无】策略行时按此值写入，
+#       已有行不覆盖（DB 是事实源，运维手动关掉不会因重启被改回来）。
+# open_api:
+#   enforce_keys: true
+#   credential_cache_ttl_seconds: 3
+#   default_tenant_enforce_keys: false

@@ -186,7 +186,7 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
                                             ) : (
                                                 row.scopes.map((code) => (
                                                     <Badge key={code} variant="secondary" title={code}>
-                                                        {t(scopeLocaleKey(code))}
+                                                        {t(scopeLocaleKey(code), { defaultValue: code })}
                                                     </Badge>
                                                 ))
                                             )}

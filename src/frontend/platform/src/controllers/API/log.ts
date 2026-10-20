@@ -92,6 +92,10 @@ export async function getModulesApi(): Promise<{ data: any[] }> {
             // in `database/models/audit_log.py` -- without this entry the rows
             // are written but no filter can reach them.
             { name: 'log.systemIdEnum.docExtract', value: 'doc_extract' },
+            // F077: scheduled-task lifecycle. Mirrors the 'schedule' entry in
+            // `_V2_NAMESPACE_TO_ACTION_PREFIX` (database/models/audit_log.py);
+            // the backend lockstep test asserts both sides agree.
+            { name: 'log.systemIdEnum.schedule', value: 'schedule' },
         ],
 
     }
@@ -162,6 +166,15 @@ const actions = [
     { name: 'log.eventTypeEnum.docExtractTemplateDelete', value: 'doc_extract.template.delete' },
     { name: 'log.eventTypeEnum.docExtractTemplateEnable', value: 'doc_extract.template.enable' },
     { name: 'log.eventTypeEnum.docExtractTemplateDisable', value: 'doc_extract.template.disable' },
+    // F077: scheduled-task management actions. Editing a task silently changes
+    // what every later round does, so these must be reviewable. `schedule.run`
+    // is deliberately absent (forensics only, like open_api.call).
+    { name: 'log.eventTypeEnum.scheduleTaskCreate', value: 'schedule.task.create' },
+    { name: 'log.eventTypeEnum.scheduleTaskUpdate', value: 'schedule.task.update' },
+    { name: 'log.eventTypeEnum.scheduleTaskEnable', value: 'schedule.task.enable' },
+    { name: 'log.eventTypeEnum.scheduleTaskDisable', value: 'schedule.task.disable' },
+    { name: 'log.eventTypeEnum.scheduleTaskDelete', value: 'schedule.task.delete' },
+    { name: 'log.eventTypeEnum.scheduleTaskRunNow', value: 'schedule.task.run_now' },
 ];
 
 // 全部操作行为
@@ -182,6 +195,10 @@ export async function getActionsByModuleApi(moduleId) {
         case 'tenant': return actions.filter(a => a.value.startsWith('tenant.'))
         case 'llm': return actions.filter(a => a.value.startsWith('llm.server.'))
         case 'approval': return actions.filter(a => a.value.startsWith('approval.'))
+        case 'schedule': return actions.filter(a => a.value.startsWith('schedule.'))
+        // F058 起就缺的这一档：模块能选、动作下拉却为空（后端白名单与镜像表
+        // 都对得上，唯独这里没有分支）。F077 补 case 时顺手补齐。
+        case 'doc_extract': return actions.filter(a => a.value.startsWith('doc_extract.'))
     }
 }
 

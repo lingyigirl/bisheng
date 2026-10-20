@@ -3,6 +3,10 @@
 // Visual tokens mirror the Claude Design `renderSkillDetail` spec: a clean
 // white drawer, a pale-blue status pill, soft #ECEEF2 panes, and restrained
 // Markdown typography (20px h1, 14px/1.7 body) rather than oversized prose.
+// The Markdown typography itself moved to the shared MarkdownDoc renderer
+// (F076 extracted it so the service-account access guide renders the same
+// document style); this sheet keeps its own look by leaving codeCopy off.
+import { MarkdownDoc } from "@/components/bs-comp/markdown/MarkdownDoc";
 import { Button } from "@/components/bs-ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/bs-ui/sheet";
 import { toast } from "@/components/bs-ui/toast/use-toast";
@@ -10,33 +14,9 @@ import { SkillDetail, skillApi } from "@/controllers/API/linsight";
 import { Download, FileText, Info, Pencil, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { getSkillErrorMessage } from "./skillErrors";
 
 const SKILL_MD = 'SKILL.md';
-
-// Restrained Markdown typography matching the design's renderMarkdown() — small,
-// quiet headings and 14px/1.7 body, not the oversized default `prose` scale.
-const MD_COMPONENTS: Components = {
-    h1: ({ children }) => <h1 className="text-[20px] leading-[1.35] font-bold tracking-tight text-[#161B26] dark:text-gray-100 mt-0 mb-3 break-words">{children}</h1>,
-    h2: ({ children }) => <h2 className="text-[15.5px] leading-snug font-semibold text-[#1F2430] dark:text-gray-100 mt-[18px] mb-2 break-words">{children}</h2>,
-    h3: ({ children }) => <h3 className="text-[14px] leading-snug font-semibold text-[#1F2430] dark:text-gray-100 mt-3.5 mb-1.5 break-words">{children}</h3>,
-    p: ({ children }) => <p className="text-[14px] leading-[1.7] text-[#3F4654] dark:text-gray-300 my-0 mb-3 break-words">{children}</p>,
-    ul: ({ children }) => <ul className="list-disc pl-5 my-2.5 space-y-1.5 text-[14px] leading-[1.7] text-[#3F4654] dark:text-gray-300">{children}</ul>,
-    ol: ({ children }) => <ol className="list-decimal pl-5 my-2.5 space-y-1.5 text-[14px] leading-[1.7] text-[#3F4654] dark:text-gray-300">{children}</ol>,
-    li: ({ children }) => <li className="leading-[1.7] pl-1 break-words">{children}</li>,
-    a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2 break-words">{children}</a>,
-    strong: ({ children }) => <strong className="font-semibold text-[#1F2430] dark:text-gray-100">{children}</strong>,
-    em: ({ children }) => <em className="italic">{children}</em>,
-    code: ({ children }) => <code className="px-1.5 py-0.5 rounded bg-muted text-[13px] font-mono text-[#1F2430] dark:text-gray-200">{children}</code>,
-    pre: ({ children }) => <pre className="bg-[#1F2430] text-[#E6EAF2] rounded-[10px] p-3.5 overflow-x-auto text-[12.5px] leading-relaxed my-3 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">{children}</pre>,
-    blockquote: ({ children }) => <blockquote className="border-l-2 border-border pl-3 text-muted-foreground my-3">{children}</blockquote>,
-    hr: () => <hr className="my-4 border-border" />,
-    table: ({ children }) => <table className="border-collapse my-3 text-[13px]">{children}</table>,
-    th: ({ children }) => <th className="border border-border px-2.5 py-1.5 bg-muted text-left font-medium">{children}</th>,
-    td: ({ children }) => <td className="border border-border px-2.5 py-1.5">{children}</td>,
-};
 
 interface SkillDetailSheetProps {
     detail: SkillDetail | null;
@@ -170,7 +150,7 @@ export function SkillDetailSheet({ detail, onOpenChange, onEdit, onDelete }: Ski
                             </div>
                             {isRenderedPreview ? (
                                 <div className="flex-1 min-h-0 overflow-auto border border-[#ECEEF2] dark:border-gray-800 rounded-[11px] bg-background px-6 py-5">
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{detail.preview}</ReactMarkdown>
+                                    <MarkdownDoc markdown={detail.preview} />
                                 </div>
                             ) : (
                                 <pre className="flex-1 min-h-0 overflow-auto border border-[#ECEEF2] dark:border-gray-800 rounded-[11px] bg-[#FBFCFD] dark:bg-gray-900/40 px-6 py-5 text-[12.5px] leading-[1.7] font-mono text-[#3A4358] dark:text-gray-300 whitespace-pre-wrap break-words">

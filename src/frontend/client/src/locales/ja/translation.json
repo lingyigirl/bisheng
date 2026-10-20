@@ -2156,5 +2156,7 @@
   },
   "com_linsight_error_title_recovery_blocked": "自動再開を停止しました",
   "com_linsight_error_desc_recovery_blocked": "前回のツール実行結果が不明、または必要な実行状態を復元できません。",
-  "com_linsight_error_hint_recovery_blocked": "詳細と外部システムの実行結果を確認してから、新しいタスクを開始してください。"
+  "com_linsight_error_hint_recovery_blocked": "詳細と外部システムの実行結果を確認してから、新しいタスクを開始してください。",
+  "com_notifications_action_scheduled_task_failed": "定期タスクの実行に失敗しました",
+  "com_notifications_action_scheduled_task_needs_input": "定期タスクが手動入力を待っています"
 }

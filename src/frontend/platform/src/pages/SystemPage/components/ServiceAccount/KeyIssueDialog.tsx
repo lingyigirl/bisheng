@@ -222,7 +222,7 @@ export function KeyIssueDialog({
                             multiple
                             className="mt-1"
                             options={scopes.map((scope) => ({
-                                label: `${t(scopeLocaleKey(scope.code))} (${scope.code})`,
+                                label: `${t(scopeLocaleKey(scope.code), { defaultValue: scope.code })} (${scope.code})`,
                                 value: scope.code,
                             }))}
                             value={selected}
