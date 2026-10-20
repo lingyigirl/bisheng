@@ -251,8 +251,8 @@ async def r3_subagent_degrade_continues():
     from langchain.agents import create_agent
 
     from bisheng.linsight.domain.services.resilience_middleware import (
-        _DEGRADE_MESSAGE,
         LinsightModelResilienceMiddleware,
+        is_degraded_result,
     )
 
     model = _build_model().configure([_content_filter_exc()])
@@ -270,7 +270,7 @@ async def r3_subagent_degrade_continues():
 
     record(
         "R3 subagent content-filter degraded → loop continues with synthetic reply (Layer B)",
-        raised is None and final == _DEGRADE_MESSAGE,
+        raised is None and is_degraded_result(final),
         f"raised={type(raised).__name__ if raised else None} final={str(final)[:60]!r} calls={model.calls}",
     )
 

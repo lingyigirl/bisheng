@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.prompts import HumanMessagePromptTemplate
 from loguru import logger
 
-# F067 (design 决策 6): the 4th bucket — statements from the answer that contradict
+# F090 (design 决策 6): the 4th bucket — statements from the answer that contradict
 # the ground truth. Appended to the judge prompt OUTSIDE the {placeholders} so it
 # reaches the model whether the caller uses the default few-shot prompt or their own.
 HALLUCINATION_INSTRUCTION = """
@@ -259,7 +259,7 @@ def compute_answer_correctness(
         "statements_num_answer_only": [],
         "statements_overlap": [],
         "statements_num_overlap": [],
-        # F067: hallucination inputs — contradicted claims (⊆ answer-only) and the
+        # F090: hallucination inputs — contradicted claims (⊆ answer-only) and the
         # answer's total statement count (overlap + answer-only).
         "statements_contradicted": [],
         "statements_contradicted_num": [],

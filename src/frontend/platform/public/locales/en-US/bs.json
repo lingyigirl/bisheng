@@ -1644,6 +1644,17 @@
     "monitorTransactionId": "Transaction",
     "monitorKeywordPlaceholder": "Search transaction / trace ID",
     "monitorRefresh": "Refresh",
+    "monitorFeedback": "Feedback filter",
+    "monitorFeedbackEnum": {
+        "exclude_disliked": "Exclude disliked",
+        "liked": "Liked only",
+        "all": "All feedback"
+    },
+    "monitorExport": "Export fine-tuning data",
+    "monitorExporting": "Exporting...",
+    "monitorExportTitle": "Export confirmation",
+    "monitorExportConfirm": "The current filter will be exported as single-turn question–answer pairs in fine-tuning JSON. The file contains raw conversation content and may include sensitive customer data; store and use it according to your data-security policy.",
+    "monitorExportConfirmOk": "Export",
     "monitorDetail": "Transaction Detail",
     "monitorRunInfo": "Run Info",
     "monitorNodeView": "Node Execution",

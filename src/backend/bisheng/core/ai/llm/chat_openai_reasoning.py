@@ -46,11 +46,77 @@ def _convert_standard_image_block(content_part: Any) -> Any:
     return {"type": "image_url", "image_url": image_url}
 
 
+_TOOL_IMAGE_NOTICE = "Images returned by the preceding tool result(s):"
+
+
+def _extract_tool_images(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """Move images out of a tool message while preserving its text result.
+
+    Chat Completions permits text content parts on ``tool`` messages and image
+    parts on ``user`` messages. Some OpenAI-compatible providers enforce that
+    split strictly (Mercury-3 rejects image parts in a tool turn), so the
+    outbound payload follows the stricter standard even when another provider
+    would tolerate the mixed shape.
+    """
+    content = message.get("content")
+    if not isinstance(content, list):
+        return []
+
+    images: list[dict[str, Any]] = []
+    text_blocks: list[dict[str, Any]] = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "image_url":
+            images.append(block)
+        else:
+            text_blocks.append(block)
+    if not images:
+        return []
+
+    # A tool message must retain a non-empty textual result and its call id.
+    message["content"] = text_blocks or [{"type": "text", "text": "The tool returned an image attachment."}]
+    return images
+
+
 def _normalize_openai_image_content(payload: dict[str, Any]) -> None:
+    """Normalize image parts and emit tool images in a standard user turn.
+
+    Consecutive tool results are kept together (including their ``tool_call_id``
+    fields), then one user message carries all images from that result group.
+    This keeps parallel tool-call results valid without creating a separate
+    synthetic turn after every individual result.
+    """
+    normalized_messages: list[dict[str, Any]] = []
+    pending_images: list[dict[str, Any]] = []
+
+    def flush_images() -> None:
+        if not pending_images:
+            return
+        normalized_messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": _TOOL_IMAGE_NOTICE},
+                    *pending_images,
+                ],
+            }
+        )
+        pending_images.clear()
+
     for message in payload.get("messages", []):
-        if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+        if not isinstance(message, dict):
             continue
-        message["content"] = [_convert_standard_image_block(part) for part in message["content"]]
+        if isinstance(message.get("content"), list):
+            message["content"] = [_convert_standard_image_block(part) for part in message["content"]]
+        if message.get("role") == "tool":
+            pending_images.extend(_extract_tool_images(message))
+            normalized_messages.append(message)
+            continue
+
+        flush_images()
+        normalized_messages.append(message)
+
+    flush_images()
+    payload["messages"] = normalized_messages
 
 
 class ChatOpenAIReasoning(ChatOpenAI):
@@ -81,16 +147,10 @@ class ChatOpenAIReasoning(ChatOpenAI):
         if (choices := chunk.get("choices")) and generation_chunk:
             top = choices[0]
             if isinstance(generation_chunk.message, AIMessageChunk):
-                if (
-                    reasoning_content := top.get("delta", {}).get("reasoning_content")
-                ) is not None:
-                    generation_chunk.message.additional_kwargs["reasoning_content"] = (
-                        reasoning_content
-                    )
+                if (reasoning_content := top.get("delta", {}).get("reasoning_content")) is not None:
+                    generation_chunk.message.additional_kwargs["reasoning_content"] = reasoning_content
                 elif (reasoning := top.get("delta", {}).get("reasoning")) is not None:
-                    generation_chunk.message.additional_kwargs["reasoning_content"] = (
-                        reasoning
-                    )
+                    generation_chunk.message.additional_kwargs["reasoning_content"] = reasoning
 
         return generation_chunk
 

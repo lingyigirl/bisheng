@@ -1589,6 +1589,17 @@
     "monitorTransactionId": "トランザクション",
     "monitorKeywordPlaceholder": "トランザクション／トレースIDで検索",
     "monitorRefresh": "更新",
+    "monitorFeedback": "フィードバック絞り込み",
+    "monitorFeedbackEnum": {
+        "exclude_disliked": "低評価を除外",
+        "liked": "高評価のみ",
+        "all": "すべてのフィードバック"
+    },
+    "monitorExport": "ファインチューニングデータをエクスポート",
+    "monitorExporting": "エクスポート中...",
+    "monitorExportTitle": "エクスポートの確認",
+    "monitorExportConfirm": "現在の絞り込み条件で単一ターンの「質問-回答」をファインチューニング JSON としてエクスポートします。元の会話内容を含み、顧客の機密情報が含まれる可能性があるため、データセキュリティ規定に従って管理してください。",
+    "monitorExportConfirmOk": "エクスポート",
     "monitorDetail": "トランザクション詳細",
     "monitorRunInfo": "実行情報",
     "monitorNodeView": "ノード実行",

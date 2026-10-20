@@ -4,13 +4,25 @@ from datetime import datetime
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
-from bisheng.telemetry_search.domain.schemas.agent_transactions import AgentTransactionQuery
+from bisheng.telemetry_search.domain.schemas.agent_transactions import (
+    AgentTransactionExportQuery,
+    AgentTransactionQuery,
+)
+from bisheng.telemetry_search.domain.services import agent_transactions as service_module
 from bisheng.telemetry_search.domain.services.agent_transactions import (
     _build_list_query,
     _build_model_calls_query,
+    _map_export_trace,
     _map_transaction_hit,
     _merge_node_rows,
+    _passes_feedback,
+    _pick_qa,
+    _query_export_transactions,
+    build_finetune_samples,
+    extract_answer_text,
+    extract_question_text,
 )
 
 
@@ -37,7 +49,9 @@ def test_build_list_query_basics():
 
 
 def test_build_list_query_filters():
-    q = AgentTransactionQuery(status="failed", app_id="flow-1", app_type="workflow", keyword="流水", start_time=1000, end_time=2000)
+    q = AgentTransactionQuery(
+        status="failed", app_id="flow-1", app_type="workflow", keyword="流水", start_time=1000, end_time=2000
+    )
     body = _build_list_query(q, tenant_id=1)
     must = body["query"]["bool"]["must"]
     assert any(m.get("term") == {"application_process_status": "failed"} for m in must)
@@ -186,3 +200,197 @@ def test_build_model_calls_query():
     assert any(m.get("term") == {"event_type": "model_invoke"} for m in must)
     assert any(m.get("term") == {"trace_id": "chat-1_async_task_id"} for m in must)
     assert any("user_context.user_id" in m.get("terms", {}) for m in must)
+
+
+# ---------------------------------------------------------------------------
+# 6.3 fine-tuning export
+# ---------------------------------------------------------------------------
+
+
+def _msg(category, message, at, liked=0):
+    return {
+        "category": category,
+        "message": message,
+        "create_time": datetime.fromtimestamp(at),
+        "liked": liked,
+    }
+
+
+def _trace(chat_id="c1", start=1000, end=2000):
+    return {"trace_id": f"{chat_id}-{start}", "chat_id": chat_id, "start": start, "end": end}
+
+
+def test_export_query_schema_defaults_and_limit():
+    q = AgentTransactionExportQuery()
+    assert q.feedback == "exclude_disliked"
+    assert q.limit == 5000
+
+    with pytest.raises(ValidationError):
+        AgentTransactionExportQuery(limit=5001)
+    with pytest.raises(ValidationError):
+        AgentTransactionExportQuery(limit=0)
+    with pytest.raises(ValidationError):
+        AgentTransactionExportQuery(feedback="unknown")
+
+
+def test_map_export_trace_requires_chat_id():
+    hit = {
+        "_source": {
+            "trace_id": "t1",
+            "event_data": {
+                "application_process_chat_id": "c1",
+                "application_process_start_time": 1000,
+                "application_process_end_time": 2000,
+            },
+        }
+    }
+    assert _map_export_trace(hit) == {"trace_id": "t1", "chat_id": "c1", "start": 1000.0, "end": 2000.0}
+
+    hit["_source"]["event_data"].pop("application_process_chat_id")
+    assert _map_export_trace(hit) is None
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("你好", "你好"),
+        ('{"query": "你好", "files": []}', "你好"),
+        ('{"data": {"x": 1}, "input": "表单问题"}', "表单问题"),
+        ('{"data": {"x": 1}}', '{"data": {"x": 1}}'),
+        (None, ""),
+    ],
+)
+def test_extract_question_text(raw, expected):
+    assert extract_question_text(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("纯文本答案", "纯文本答案"),
+        ('{"content": "知识库答案"}', "知识库答案"),
+        ('{"msg": "智能体答案", "events": []}', "智能体答案"),
+        (
+            '{"msg": "", "events": [{"type": "thinking", "content": "略"}, {"type": "text", "content": "事件答案"}]}',
+            "事件答案",
+        ),
+        ('{"events": [{"type": "text", "content": "a"}, {"type": "text", "content": "b"}]}', "a\n\nb"),
+        ("", ""),
+    ],
+)
+def test_extract_answer_text(raw, expected):
+    assert extract_answer_text(raw) == expected
+
+
+def test_pick_qa_prefers_current_turn():
+    rows = [
+        _msg("question", "第一问", 500),
+        _msg("answer", "第一答", 600),
+        _msg("question", "第二问", 900),
+        _msg("answer", "第二答", 1500),
+    ]
+    question, answer = _pick_qa(rows, 1000, 2000)
+    assert question["message"] == "第二问"
+    assert answer["message"] == "第二答"
+
+
+def test_pick_qa_falls_back_to_question_before_end():
+    rows = [_msg("question", "只有一个问题", 950), _msg("answer", "答案", 1500)]
+    question, answer = _pick_qa(rows, 1500, 2000)
+    assert question["message"] == "只有一个问题"
+    assert answer["message"] == "答案"
+
+
+def test_pick_qa_ignores_next_turn():
+    rows = [
+        _msg("question", "本问", 1000),
+        _msg("answer", "下一轮答案", 2100),
+        _msg("question", "下一问", 2050),
+    ]
+    question, answer = _pick_qa(rows, 1000, 2000)
+    assert question["message"] == "本问"
+    # answer slack is 60s -> 2100 belongs to the next turn
+    assert answer is None
+
+
+def test_passes_feedback_modes():
+    assert _passes_feedback(0, "all")
+    assert _passes_feedback(2, "all")
+    assert not _passes_feedback(0, "liked")
+    assert _passes_feedback(1, "liked")
+    assert _passes_feedback(0, "exclude_disliked")
+    assert not _passes_feedback(2, "exclude_disliked")
+
+
+def test_build_finetune_samples_filters_and_dedups():
+    rows = {
+        "c1": [_msg("question", "问题一", 1000), _msg("answer", '{"msg": "答案一"}', 1500, liked=1)],
+        "c2": [_msg("question", "问题二", 1000), _msg("answer", "答案二", 1500, liked=2)],
+        "c3": [_msg("question", "问题三", 1000), _msg("answer", "答案三", 1500, liked=0)],
+    }
+    traces = [
+        _trace("c1"),
+        _trace("c2"),
+        _trace("c3"),
+        # same turn seen twice -> emitted once
+        _trace("c1"),
+    ]
+
+    samples = build_finetune_samples(traces, rows, "exclude_disliked")
+    assert samples == [
+        {"instruction": "问题一", "input": "", "output": "答案一"},
+        {"instruction": "问题三", "input": "", "output": "答案三"},
+    ]
+
+    liked_only = build_finetune_samples(traces, rows, "liked")
+    assert liked_only == [{"instruction": "问题一", "input": "", "output": "答案一"}]
+
+    all_modes = build_finetune_samples(traces, rows, "all")
+    assert [s["instruction"] for s in all_modes] == ["问题一", "问题二", "问题三"]
+
+
+def test_build_finetune_samples_skips_incomplete_turns():
+    rows = {"c1": [_msg("question", "只有问题", 1000)]}
+    assert build_finetune_samples([_trace("c1")], rows) == []
+
+
+class _FakeES:
+    def __init__(self, hits):
+        self._hits = hits
+
+    def search(self, index, body):
+        return {"hits": {"hits": self._hits}}
+
+
+def _export_hit(index):
+    return {
+        "_source": {
+            "trace_id": f"t{index}",
+            "event_data": {
+                "application_process_chat_id": f"c{index}",
+                "application_process_start_time": 1000,
+                "application_process_end_time": 2000,
+            },
+        }
+    }
+
+
+def test_export_query_rejects_over_limit(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_es_connection_sync",
+        lambda: _FakeES([_export_hit(i) for i in range(3)]),
+    )
+    query = AgentTransactionExportQuery(start_time=1000, end_time=2000, limit=2)
+    with pytest.raises(HTTPException):
+        _query_export_transactions(query, tenant_id=1)
+
+
+def test_export_query_allows_at_limit(monkeypatch):
+    monkeypatch.setattr(
+        service_module,
+        "get_es_connection_sync",
+        lambda: _FakeES([_export_hit(i) for i in range(2)]),
+    )
+    query = AgentTransactionExportQuery(start_time=1000, end_time=2000, limit=2)
+    assert len(_query_export_transactions(query, tenant_id=1)) == 2

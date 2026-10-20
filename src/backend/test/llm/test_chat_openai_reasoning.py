@@ -1,6 +1,6 @@
 import unittest
 
-from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
 
 from bisheng.core.ai.llm.chat_openai_compatible import ChatOpenAICompatible
 from bisheng.core.ai.llm.chat_openai_reasoning import ChatOpenAIReasoning
@@ -117,6 +117,74 @@ class TestChatOpenAIReasoning(unittest.TestCase):
         self.assertEqual(
             chunk.message.additional_kwargs.get("reasoning_content"),
             "fallback stream reasoning",
+        )
+
+    def test_tool_image_is_moved_to_following_user_message(self):
+        """OpenAI tool messages accept text parts only; images go in a user turn.
+
+        The assistant/tool pairing and ``tool_call_id`` must survive the move.
+        """
+        llm = ChatOpenAIReasoning(api_key="test", model="test-model")
+        message = ToolMessage(
+            content_blocks=[
+                {"type": "text", "text": "rendered chart"},
+                {"type": "image", "base64": "AAAB", "mime_type": "image/png"},
+            ],
+            name="read_file",
+            tool_call_id="call-1",
+            status="success",
+        )
+
+        payload = llm._get_request_payload([message])
+
+        self.assertEqual(payload["messages"][0]["role"], "tool")
+        self.assertEqual(payload["messages"][0]["tool_call_id"], "call-1")
+        self.assertEqual(
+            payload["messages"][0]["content"],
+            [{"type": "text", "text": "rendered chart"}],
+        )
+        image_message = payload["messages"][1]
+        self.assertEqual(image_message["role"], "user")
+        self.assertEqual(
+            image_message["content"][1],
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,AAAB"},
+            },
+        )
+
+    def test_parallel_tool_images_share_one_user_message(self):
+        llm = ChatOpenAIReasoning(api_key="test", model="test-model")
+        messages = [
+            ToolMessage(
+                content_blocks=[
+                    {"type": "image", "base64": "AAAB", "mime_type": "image/png"},
+                ],
+                name="read_file",
+                tool_call_id="call-1",
+                status="success",
+            ),
+            ToolMessage(
+                content_blocks=[
+                    {"type": "image", "base64": "BBBC", "mime_type": "image/jpeg"},
+                ],
+                name="read_file",
+                tool_call_id="call-2",
+                status="success",
+            ),
+        ]
+
+        payload = llm._get_request_payload(messages)
+
+        self.assertEqual(payload["messages"][0]["tool_call_id"], "call-1")
+        self.assertEqual(payload["messages"][1]["tool_call_id"], "call-2")
+        self.assertEqual(payload["messages"][2]["role"], "user")
+        self.assertEqual(
+            [block["image_url"]["url"] for block in payload["messages"][2]["content"] if block["type"] == "image_url"],
+            [
+                "data:image/png;base64,AAAB",
+                "data:image/jpeg;base64,BBBC",
+            ],
         )
 
 

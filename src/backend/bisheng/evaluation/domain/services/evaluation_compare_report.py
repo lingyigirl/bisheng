@@ -1,4 +1,4 @@
-"""F067: 评测可视化对比报告 — 数据组装（只读）。
+"""F090: 评测可视化对比报告 — 数据组装（只读）。
 
 本模块自建 report 所需的数据侧逻辑：读结果 CSV（**跳过末尾总行**）、结论引擎、
 对比对象条、幻觉率聚合、报告数据组装、两版导出。**不修改** F066 / F053 既有文件；
@@ -24,7 +24,7 @@ _NA = "N/A"
 _PERCENT_COLUMNS = ("recall", "precision", "F1")
 _PLAIN_NUMBER_COLUMNS = ("duration_ms", "input_token", "output_token", "first_token_ms")
 _TEXT_COLUMNS = ("question", "ground_truth", "answer", "exec_status")
-# F067: hallucination raw counts — present only once the eval chain writes them (T08).
+# F090: hallucination raw counts — present only once the eval chain writes them (T08).
 _HALLUCINATION_COLUMNS = ("statements_contradicted_num", "statements_num_answer")
 
 _NA_TOKENS = ("na", "n/a", "nan", "nan%", "none")
@@ -158,7 +158,7 @@ def compute_hallucination_rate(rows: list[dict[str, Any]]) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# F067: conclusion engine — priority chain + direction normalization + per-type
+# F090: conclusion engine — priority chain + direction normalization + per-type
 # tolerance (design 决策 4). Replaces F053's three-metric, same-direction chain.
 # ---------------------------------------------------------------------------
 
@@ -252,7 +252,7 @@ def decide_conclusion(
 
 
 # ---------------------------------------------------------------------------
-# F067: 对比对象条 — the two versions' LLM nodes (model + prompts) and which
+# F090: 对比对象条 — the two versions' LLM nodes (model + prompts) and which
 # changed (design 决策 9). Node diff is delegated to F051's pure
 # ``compare_flow_versions`` (reused, not modified).
 # ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ def build_object_bar(
 
 
 # ---------------------------------------------------------------------------
-# F067: 指标卡 — the six report metrics. ``higher_is_better`` drives the
+# F090: 指标卡 — the six report metrics. ``higher_is_better`` drives the
 # frontend's better/worse flip (spec AC-08); "达标" judgment belongs to 6.4 and
 # is deliberately absent (spec AC-06).
 # ---------------------------------------------------------------------------
@@ -883,7 +883,7 @@ def build_compare_report(group_id: str, user_id: int) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# F067: 两版对比导出（xlsx）— reuses F066's openpyxl sheet/cell approach and N/A
+# F090: 两版对比导出（xlsx）— reuses F066's openpyxl sheet/cell approach and N/A
 # convention; the two-version layout is this feature's own (design 决策 7). The
 # workbook is generated from the same report data as the page, so it is always
 # full (all six metrics per question) — never a function of a selected metric.
@@ -961,7 +961,7 @@ def build_export_xlsx(data: dict[str, Any]) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# F067 (2026-10-19): full report export (HTML / PDF). The user asked the exported
+# F090 (2026-10-19): full report export (HTML / PDF). The user asked the exported
 # file to be a forwardable report, not just the data workbook. HTML is
 # self-contained (inline CSS + SVG charts); PDF is rendered by the project's
 # existing Playwright/Chromium stack (same approach as conversation export).
@@ -1326,7 +1326,7 @@ def build_export_pdf(data: dict[str, Any]) -> bytes:
             finally:
                 browser.close()
     except Exception:
-        logger.exception("F067: PDF report rendering failed")
+        logger.exception("F090: PDF report rendering failed")
         raise
 
 

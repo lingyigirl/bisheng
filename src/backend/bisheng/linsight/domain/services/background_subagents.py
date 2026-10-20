@@ -46,6 +46,8 @@ from langgraph.types import Command
 from loguru import logger
 from pydantic import BaseModel, Field, create_model
 
+from bisheng.linsight.domain.services.resilience_middleware import is_degraded_result
+
 TASK_TOOL = "task"
 BACKGROUND_FLAG = "run_in_background"
 
@@ -210,9 +212,11 @@ class BackgroundSubagentMiddleware(AgentMiddleware):
             else:
                 result = task.result()
                 messages = (result.update or {}).get("messages", []) if isinstance(result, Command) else [result]
-                failed = any(isinstance(message, ToolMessage) and message.status == "error" for message in messages)
-                job.status = "failed" if failed else "completed"
                 job.result_text = _result_text(result)
+                failed = any(
+                    isinstance(message, ToolMessage) and message.status == "error" for message in messages
+                ) or is_degraded_result(job.result_text)
+                job.status = "failed" if failed else "completed"
                 if failed:
                     job.error = job.result_text
         if job.writer is not None:

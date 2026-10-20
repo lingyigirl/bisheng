@@ -20,7 +20,7 @@
 ## 2. 关键约束
 
 - 遵循 `docs/constitution.md` C1–C7。
-- **只读，无 DB 迁移**：**不新增表、不新增列、不改既有写入行为**（release-contract 表1 已登记 F067 为"非 Owner"）。报告数据在**生成时现算**，来源为既有 `evaluation` / `flow_version` / 结果 CSV。
+- **只读，无 DB 迁移**：**不新增表、不新增列、不改既有写入行为**（release-contract 表1 已登记 F090 为"非 Owner"）。报告数据在**生成时现算**，来源为既有 `evaluation` / `flow_version` / 结果 CSV。
 - **不改同事已推送的代码（硬约束）**：伟华 F066（`features/v2.8.0/066-*`，结果 CSV 新列 + xlsx 报告）**已写好并推送，只读复用其能力，绝不修改其文件**。老抽屉 `CompareSheet.tsx` 与其后端 `get_evaluation_compare` 亦**冻结不动**（其 v1/v2 错位 bug 不在本 feature 修，spec 明确排除）。
 - **复用边界（2026-10-16 定，勿过度纠偏）**：
   - **允许** —— 指标重合处**直接 import 复用其纯函数 / 纯逻辑**（`summarize_performance`、`collect_token_usage`、`_parse_percent`、`_align_questions`、`compare_flow_versions`、xlsx 生成函数）。
@@ -196,7 +196,7 @@
 | `metrics[]`（指标卡） | `{ key, label, v1, v2, delta, unit }` | 准确率/F1/召回/幻觉率/延迟/成本；**不判达标** | 指标卡 |
 | `per_question[]` | `{ question, failed?, fail_reason?, v1:{...}, v2:{...} }`，值含 **全 6 指标** | 逐题**全指标**（界面一次显一个，导出全给） | 逐题明细 / 导出 |
 | 结果 CSV 新列（F066） | `duration_ms / input_token / output_token / first_token_ms / exec_status` | **F066 已写**；缺失为 `N/A` | 延迟/成本/成功率/失败原因 |
-| 结果 CSV 新列（**F067**） | `statements_contradicted_num`（矛盾陈述数）/ `statements_num_answer`（本题总陈述数） | **本 feature 新增**（决策 10）；`unit_type=1` 文本型，不进既有聚合 | 幻觉率（报告 + 导出） |
+| 结果 CSV 新列（**F090**） | `statements_contradicted_num`（矛盾陈述数）/ `statements_num_answer`（本题总陈述数） | **本 feature 新增**（决策 10）；`unit_type=1` 文本型，不进既有聚合 | 幻觉率（报告 + 导出） |
 | 导出预签名链接 | `{ url, file_name }` | 复用 F066 的 MinIO `get_share_link_sync` | 报告页导出按钮 |
 
 > 内部结构（`node_changes` 原始 diff 等）不在此列，看代码即可。

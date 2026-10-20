@@ -1,4 +1,4 @@
-"""F067: report data endpoint — happy path + owner/tenant access errors
+"""F090: report data endpoint — happy path + owner/tenant access errors
 (404 not found / 400 agents mismatch)."""
 
 import pytest

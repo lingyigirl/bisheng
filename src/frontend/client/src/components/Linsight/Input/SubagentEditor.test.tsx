@@ -37,11 +37,49 @@ test('shows the authorized connector absent from daily chat config and preserves
     (getMemberToolCatalog as jest.Mock).mockResolvedValue([{ id: 17, name: 'Multiplier', is_preset: 0, children: [{ id: 39, name: 'multiply' }] }]);
     const onChange = editor();
     fireEvent.mouseDown(screen.getByRole('tab', { name: /harness.connectors/ }), { button: 0, ctrlKey: false });
+    expect(screen.queryByText('multiply')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /Multiplier/ }));
     const label = await screen.findByText('multiply');
     const checkbox = label.closest('label')?.querySelector('[role="checkbox"]');
     expect(checkbox).toHaveAttribute('data-state', 'checked');
     fireEvent.click(checkbox!);
     expect(onChange).toHaveBeenCalledWith({ ...member, connector_refs: [] });
+});
+
+test('groups connector actions and auto-expands groups for search matches', async () => {
+    (getMemberToolCatalog as jest.Mock).mockResolvedValue([
+        { id: 24, name: 'Enterprise finance', is_preset: 2, children: [{ id: 114, name: 'get_vcpe_invest' }, { id: 115, name: 'get_vcpe_exit' }] },
+        { id: 36, name: 'Weather', is_preset: 0, children: [{ id: 129, name: 'getCurrentWeather' }] },
+        { id: 1, name: 'Builtin', is_preset: 1, children: [{ id: 10, name: 'Calculator' }] },
+    ]);
+    editor();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /harness.connectors/ }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByRole('button', { name: /Enterprise finance/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Weather/ })).toBeInTheDocument();
+    expect(screen.queryByText('get_vcpe_invest')).not.toBeInTheDocument();
+    expect(screen.queryByText('Builtin')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'getCurrentWeather' } });
+    expect(screen.queryByRole('button', { name: /Enterprise finance/ })).not.toBeInTheDocument();
+    expect(await screen.findByText('getCurrentWeather')).toBeInTheDocument();
+});
+
+test('groups builtin tools by parent and keeps their actions collapsed by default', async () => {
+    (getMemberToolCatalog as jest.Mock).mockResolvedValue([
+        { id: 1, name: 'Arithmetic', is_preset: 1, children: [{ id: 10, name: 'Calculator' }, { id: 11, name: 'Converter' }] },
+        { id: 2, name: 'Multiplier', is_preset: 0, children: [{ id: 39, name: 'multiply' }] },
+    ]);
+    editor();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /harness.tools/ }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByRole('button', { name: /Arithmetic/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Calculator')).not.toBeInTheDocument();
+    expect(screen.queryByText('Multiplier')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Arithmetic/ }));
+    expect(screen.getByText('Calculator')).toBeInTheDocument();
+    expect(screen.getByText('Converter')).toBeInTheDocument();
 });
 
 test('keeps missing historical capabilities visible and read-only', async () => {

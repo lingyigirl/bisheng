@@ -1,4 +1,4 @@
-"""F067: 幻觉率 — content-level Σcontradicted ÷ Σtotal (NOT per-question mean),
+"""F090: 幻觉率 — content-level Σcontradicted ÷ Σtotal (NOT per-question mean),
 contradicted ⊆ FP without double-counting, N/A on a judge that predates the 4th
 bucket, and the 4th-bucket instruction folded into BOTH judge prompt paths."""
 

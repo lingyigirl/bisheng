@@ -1,4 +1,4 @@
-"""F067: 对比对象条 — the two versions' full model / prompt-node lists + which
+"""F090: 对比对象条 — the two versions' full model / prompt-node lists + which
 changed (换模型 / 换提示词 / both)."""
 
 from bisheng.evaluation.domain.services.evaluation_compare_report import build_object_bar

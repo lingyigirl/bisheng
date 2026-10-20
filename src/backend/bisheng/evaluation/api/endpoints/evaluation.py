@@ -124,7 +124,7 @@ def get_evaluation_compare(*, group_id: str, login_user: UserPayload = Depends(U
 
 @router.get("/compare/{group_id}/report")
 def get_evaluation_compare_report(*, group_id: str, login_user: UserPayload = Depends(UserPayload.get_login_user)):
-    """F067: 可视化对比报告数据（只读）。属主 + 租户校验在 service 内完成；
+    """F090: 可视化对比报告数据（只读）。属主 + 租户校验在 service 内完成；
     组不存在/非属主 → 404，两版非同一智能体 → 400。"""
     return resp_200(build_compare_report(group_id, login_user.user_id))
 
@@ -136,7 +136,7 @@ def export_evaluation_compare_report(
     format: str = Query(default="xlsx", description="Export format: xlsx | html | pdf"),
     login_user: UserPayload = Depends(UserPayload.get_login_user),
 ):
-    """F067: 生成两版对比报告（xlsx / 完整 HTML / PDF）并返回预签名下载链接。"""
+    """F090: 生成两版对比报告（xlsx / 完整 HTML / PDF）并返回预签名下载链接。"""
     if format not in EXPORT_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="unsupported export format")
     return resp_200(build_compare_export(group_id, login_user.user_id, format))

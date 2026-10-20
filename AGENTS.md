@@ -24,6 +24,12 @@
 
 Git 提交说明统一使用中文：标题和正文均用中文描述；可保留 `feat`、`fix`、`docs` 等类型前缀、作用域及必要技术名称。
 
+**本仓库 Git 工作约定（用户于 2026-10-20 确认，优先于下文 SDD 的分支创建与合并步骤）：**
+- 后续开发直接在 `feat/2.7.0/beijing-ns-llm-guardrail` 分支进行，不新建开发分支、不来回切换分支、不创建独立工作树。
+- 任务完成并通过必要检查后，可以在当前分支创建本地提交；每次推送远端前必须获得用户针对该次推送的明确允许，不得将此前授权视为后续推送的长期授权。获得允许后，仅推送到 `origin` 的同名分支。
+- 不创建 PR、不执行分支合并；SDD 的需求、设计确认与质量检查仍照常执行。
+- 如果远端更新导致推送被拒绝，先检查差异；不得擅自强推、覆盖他人提交或通过合并分支绕过本约定。
+
 Dev / test / build commands live in each sub-project's `AGENTS.md`: `src/backend/AGENTS.md` · `src/frontend/platform/AGENTS.md` · `src/frontend/client/AGENTS.md`.
 
 Middleware (MySQL / Redis / Milvus / ES / MinIO / OpenFGA): integration tests run in **CI**; per-developer middleware machines are pending.
