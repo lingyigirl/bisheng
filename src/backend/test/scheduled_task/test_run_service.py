@@ -278,6 +278,67 @@ async def test_dispatch_failure_is_finalized_as_failed(patched_db, lock, recheck
     assert row.last_duration_ms is not None, "AC-52：派发失败也有耗时（0ms 起）"
 
 
+async def test_dispatch_workflow_persists_version_identifier(patched_db, monkeypatch):
+    """AC-52：工作流派发时把当前 FlowVersion.id 落到 last_app_version_id。"""
+    from types import SimpleNamespace
+
+    import bisheng.database.models.flow_version as flow_version_module
+    import bisheng.worker.workflow.redis_callback as redis_callback_module
+    import bisheng.worker.workflow.tasks as workflow_tasks_module
+
+    task = await _task()
+    captured: dict = {}
+
+    class _FakeFlow:
+        data = {"nodes": [], "edges": []}
+
+    class _FakeCallback:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def set_workflow_data(self, data):
+            captured["data"] = data
+
+        def set_workflow_status(self, status):
+            captured["status"] = status
+
+    class _FakeWorker:
+        @staticmethod
+        def find_task_node_sync(trace_id):
+            return "workflow_celery"
+
+    class _FakeExecute:
+        @staticmethod
+        def apply_async(args, queue=None):
+            captured["dispatch"] = (args, queue)
+
+    async def _get_flow(flow_id):
+        return _FakeFlow()
+
+    async def _update(task_id, fields, *, tenant_id):
+        captured["fields"] = fields
+        return 1
+
+    monkeypatch.setattr(run_service.FlowDao, "aget_flow_by_id", staticmethod(_get_flow))
+    monkeypatch.setattr(
+        flow_version_module.FlowVersionDao,
+        "get_version_by_flow",
+        staticmethod(lambda flow_id: SimpleNamespace(id=123)),
+    )
+    monkeypatch.setattr(redis_callback_module, "RedisCallback", _FakeCallback)
+    monkeypatch.setattr(workflow_tasks_module, "workflow_stateful_worker", _FakeWorker())
+    monkeypatch.setattr(workflow_tasks_module, "execute_workflow", _FakeExecute())
+    monkeypatch.setattr(run_service.ScheduledTaskDao, "aupdate_fields", _update)
+
+    await run_service._dispatch_workflow(task, "trace-version")
+
+    assert captured["fields"] == {"last_app_version_id": "123"}
+    assert captured["dispatch"] == (
+        ["trace-version", str(task.app_id), "", task.run_identity_user_id],
+        "workflow_celery",
+    )
+
+
 async def test_plan_failure_writes_system_audit(patched_db, lock, recheck, captured_audits):
     task = await _task()
     recheck["outcome"] = RecheckOutcome(app_state=AppState.OK, identity_state=IdentityState.NO_USE_APP)

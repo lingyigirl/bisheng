@@ -238,7 +238,19 @@ async def test_audit_snapshots_cover_crud_and_hide_preset_values(patched_db, wir
     assert update_audit[2]["before"]["name"] == "nightly"
     assert update_audit[2]["after"]["name"] == "renamed"
     assert update_audit[2]["after"]["preset_keys"] == ["question"]
+    assert update_audit[2]["preset_values_changed"] is True
     assert secret not in str(update_audit[2]), "preset 值属于输入正文，不得进入审计"
+
+    # 只改 value（key 不变）：before/after 的 preset_keys 相同，flag 必须仍能标记变化。
+    await task_service.update_task(
+        _User(),
+        task.id,
+        ScheduledTaskUpdateReq(preset_inputs=[PresetInputItem(key="question", value="v2")]),
+    )
+    value_audit = next(a for a in reversed(wire["audits"]) if a[0] == "schedule.task.update")
+    assert value_audit[2]["preset_values_changed"] is True
+    assert value_audit[2]["before"]["preset_keys"] == value_audit[2]["after"]["preset_keys"] == ["question"]
+    assert "v2" not in str(value_audit[2])
 
     await task_service.set_enabled(_User(), task.id, enabled=False)
     disable_audit = next(a for a in wire["audits"] if a[0] == "schedule.task.disable")

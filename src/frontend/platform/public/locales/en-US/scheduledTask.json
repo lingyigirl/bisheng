@@ -42,7 +42,8 @@
     "finishedAt": "Result {{time}}",
     "duration": "Duration {{duration}}",
     "version": "Version {{version}}",
-    "viewMonitor": "Last run monitor"
+    "viewMonitor": "Last run monitor",
+    "planFailureHint": "This scheduled attempt failed before a run started"
   },
   "form": {
     "editTitle": "Edit scheduled task",
