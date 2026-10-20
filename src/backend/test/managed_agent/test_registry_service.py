@@ -186,6 +186,39 @@ async def test_delete_is_blocked_by_enabled_scheduled_tasks(patched_db, monkeypa
     assert await registry_service.ManagedAgentDao.aget(agent.id) is None
 
 
+async def test_create_attaches_tags(patched_db, monkeypatch):
+    attach = AsyncMock()
+    monkeypatch.setattr(registry_service.TagDao, "aupdate_resource_tags", attach)
+    await registry_service.create_agent(USER, _create_req(tags=[1, 2]))
+    attach.assert_awaited_once()
+    assert attach.call_args.args[0] == [1, 2]
+
+
+async def test_to_item_includes_tag_ids_and_names(patched_db):
+    agent = await registry_service.create_agent(USER, _create_req())
+    item = registry_service.to_item(agent, tag_ids=[10], tag_names=["banking"])
+    assert item["tags"] == [10]
+    assert item["tag_names"] == ["banking"]
+
+
+async def test_tag_meta_map_batches_ids_and_names(monkeypatch):
+    async def _links(resource_ids, resource_type):
+        assert resource_ids == ["1", "2"]
+        return {"1": [10, 11], "2": [11]}
+
+    async def _tags(tag_ids):
+        assert tag_ids == [10, 11]
+        return [SimpleNamespace(id=10, name="banking"), SimpleNamespace(id=11, name="retail")]
+
+    monkeypatch.setattr(registry_service.TagDao, "aget_resource_tag_ids_batch", _links)
+    monkeypatch.setattr(registry_service.TagDao, "aget_tags_by_ids", _tags)
+    assert await registry_service.tag_meta_map([1, 2]) == {
+        1: ([10, 11], ["banking", "retail"]),
+        2: ([11], ["retail"]),
+    }
+    assert await registry_service.tag_names_map([1, 2]) == {1: ["banking", "retail"], 2: ["retail"]}
+
+
 async def test_admin_list_returns_rows(patched_db):
     await registry_service.create_agent(USER, _create_req())
     rows, total = await registry_service.list_agents(USER)

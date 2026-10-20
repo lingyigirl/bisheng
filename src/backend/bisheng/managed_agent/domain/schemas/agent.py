@@ -73,6 +73,7 @@ class ManagedAgentItem(BaseModel):
     scenario_name: str | None = None
     industry_name: str | None = None
     tags: list[int] = Field(default_factory=list)
+    tag_names: list[str] = Field(default_factory=list)
     health_status: str
     health_method: str
     last_health_check_at: datetime | None = None

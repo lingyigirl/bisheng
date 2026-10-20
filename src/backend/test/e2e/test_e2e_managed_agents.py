@@ -16,6 +16,7 @@ import base64
 import json
 import os
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -53,13 +54,17 @@ def _bearer(token: str) -> dict:
 
 class _MockHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path != "/v1/chat/completions":
+        length = int(self.headers.get("content-length", 0))
+        self.rfile.read(length)
+        if self.path == "/v1/chat/completions":
+            payload = {"choices": [{"message": {"content": "pong"}}], "usage": {"total_tokens": 1}}
+        elif self.path == "/custom":
+            payload = {"output": "custom-pong"}
+        else:
             self.send_response(404)
             self.end_headers()
             return
-        length = int(self.headers.get("content-length", 0))
-        self.rfile.read(length)
-        body = json.dumps({"choices": [{"message": {"content": "pong"}}], "usage": {"total_tokens": 1}}).encode()
+        body = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
@@ -297,11 +302,16 @@ def test_custom_http_adapter(client, state):
     assert created.get("status_code") == 200, created
     agent_id = created["data"]["id"]
     try:
-        assert client.post(f"{API_BASE}/managed-agents/{agent_id}/publish", headers=headers).json()["status_code"] == 200
+        assert (
+            client.post(f"{API_BASE}/managed-agents/{agent_id}/publish", headers=headers).json()["status_code"] == 200
+        )
         grant = client.post(
             f"{API_BASE}/service-accounts/{state.account_id}/resource-grants:mutate",
             headers=headers,
-            json={"grants": [{"resource_type": "managed_agent", "resource_id": str(agent_id), "level": "editor"}], "revokes": []},
+            json={
+                "grants": [{"resource_type": "managed_agent", "resource_id": str(agent_id), "level": "editor"}],
+                "revokes": [],
+            },
         )
         assert grant.status_code == 200, grant.text
         invoked = client.post(

@@ -53,6 +53,11 @@ async def test_create_endpoint_delegates_and_masks(monkeypatch):
     monkeypatch.setattr(registry_service, "create_agent", _create)
     monkeypatch.setattr(agents.classification_service, "list_taxonomies", _taxonomies)
 
+    async def _no_tags(ids):
+        return {}
+
+    monkeypatch.setattr(agents, "_tag_meta_map", _no_tags)
+
     resp = await agents.create_agent(
         ManagedAgentCreateReq(
             name="crm",

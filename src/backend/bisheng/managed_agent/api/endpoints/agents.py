@@ -34,11 +34,25 @@ async def _taxonomy_names(user, request: Request) -> tuple[dict[str, str], dict[
     return scenarios, industries
 
 
-def _to_item(agent, scenarios: dict[str, str], industries: dict[str, str]) -> ManagedAgentItem:
+async def _tag_meta_map(agent_ids: list[int]) -> dict[int, tuple[list[int], list[str]]]:
+    return await registry_service.tag_meta_map(agent_ids)
+
+
+async def _to_item(
+    agent,
+    scenarios: dict[str, str],
+    industries: dict[str, str],
+    tag_meta: tuple[list[int], list[str]] | None = None,
+) -> ManagedAgentItem:
+    if tag_meta is None:
+        tag_meta = (await _tag_meta_map([agent.id])).get(agent.id, ([], []))
+    tag_ids, tag_names = tag_meta
     data = registry_service.to_item(
         agent,
         scenario_name=scenarios.get(agent.scenario_code or ""),
         industry_name=industries.get(agent.industry_code or ""),
+        tag_ids=tag_ids,
+        tag_names=tag_names,
     )
     return ManagedAgentItem(**data)
 
@@ -52,6 +66,7 @@ async def list_agents(
     status: str | None = Query(default=None),
     scenario_code: str | None = Query(default=None),
     industry_code: str | None = Query(default=None),
+    tag_id: int | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     user: UserPayload = Depends(UserPayload.get_login_user),
@@ -64,13 +79,16 @@ async def list_agents(
         status=status,
         scenario_code=scenario_code,
         industry_code=industry_code,
+        tag_id=tag_id,
         page=page,
         page_size=page_size,
     )
     scenarios, industries = await _taxonomy_names(user, request)
+    tag_meta = await _tag_meta_map([row.id for row in rows])
+    items = [await _to_item(row, scenarios, industries, tag_meta.get(row.id, ([], []))) for row in rows]
     return resp_200(
         PageData[ManagedAgentItem](
-            data=[_to_item(row, scenarios, industries) for row in rows],
+            data=items,
             total=total,
         )
     )
@@ -82,6 +100,7 @@ async def list_catalog(
     keyword: str | None = Query(default=None),
     scenario_code: str | None = Query(default=None),
     industry_code: str | None = Query(default=None),
+    tag_id: int | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     user: UserPayload = Depends(UserPayload.get_login_user),
@@ -91,13 +110,16 @@ async def list_catalog(
         keyword=keyword,
         scenario_code=scenario_code,
         industry_code=industry_code,
+        tag_id=tag_id,
         page=page,
         page_size=page_size,
     )
     scenarios, industries = await _taxonomy_names(user, request)
+    tag_meta = await _tag_meta_map([row.id for row in rows])
+    items = [await _to_item(row, scenarios, industries, tag_meta.get(row.id, ([], []))) for row in rows]
     return resp_200(
         PageData[ManagedAgentItem](
-            data=[_to_item(row, scenarios, industries) for row in rows],
+            data=items,
             total=total,
         )
     )
@@ -111,7 +133,7 @@ async def get_agent(
 ):
     agent = await registry_service.get_agent(user, agent_id)
     scenarios, industries = await _taxonomy_names(user, request)
-    return resp_200(_to_item(agent, scenarios, industries))
+    return resp_200(await _to_item(agent, scenarios, industries))
 
 
 @router.post("")
@@ -122,7 +144,7 @@ async def create_agent(
 ):
     agent = await registry_service.create_agent(user, req)
     scenarios, industries = await _taxonomy_names(user, request)
-    return resp_200(_to_item(agent, scenarios, industries))
+    return resp_200(await _to_item(agent, scenarios, industries))
 
 
 @router.put("/{agent_id}")
@@ -134,7 +156,7 @@ async def update_agent(
 ):
     agent = await registry_service.update_agent(user, agent_id, req)
     scenarios, industries = await _taxonomy_names(user, request)
-    return resp_200(_to_item(agent, scenarios, industries))
+    return resp_200(await _to_item(agent, scenarios, industries))
 
 
 @router.delete("/{agent_id}")
@@ -154,7 +176,7 @@ async def publish_agent(
 ):
     agent = await registry_service.transition(user, agent_id, "publish")
     scenarios, industries = await _taxonomy_names(user, request)
-    return resp_200(_to_item(agent, scenarios, industries))
+    return resp_200(await _to_item(agent, scenarios, industries))
 
 
 @router.post("/{agent_id}/offline")
@@ -165,7 +187,7 @@ async def offline_agent(
 ):
     agent = await registry_service.transition(user, agent_id, "offline")
     scenarios, industries = await _taxonomy_names(user, request)
-    return resp_200(_to_item(agent, scenarios, industries))
+    return resp_200(await _to_item(agent, scenarios, industries))
 
 
 @router.post("/{agent_id}/disable")
@@ -176,7 +198,7 @@ async def disable_agent(
 ):
     agent = await registry_service.transition(user, agent_id, "disable")
     scenarios, industries = await _taxonomy_names(user, request)
-    return resp_200(_to_item(agent, scenarios, industries))
+    return resp_200(await _to_item(agent, scenarios, industries))
 
 
 @router.post("/{agent_id}/health-check")
@@ -191,7 +213,7 @@ async def health_check(
 
     agent = await health_service.run_health_check(user, agent_id)
     scenarios, industries = await _taxonomy_names(user, request)
-    return resp_200(_to_item(agent, scenarios, industries))
+    return resp_200(await _to_item(agent, scenarios, industries))
 
 
 @router.get("/{agent_id}/stats")

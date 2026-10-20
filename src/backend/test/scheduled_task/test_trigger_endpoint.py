@@ -208,7 +208,7 @@ async def test_replay_guard_rejects_missing_stale_and_reused(wire):
 
 
 async def test_rate_limit_guard(wire):
-    wire["redis"].incr_result = 11  # 默认上限 10 次/分钟
+    wire["redis"].incr_result = run_service._conf().event_rate_limit_per_minute + 1
     with pytest.raises(ScheduledTaskTriggerRateLimitedError):
         await endpoint.trigger_scheduled_task(endpoint.TriggerRequest(task_id=1), await _request({"task_id": 1}, _ts()))
 
