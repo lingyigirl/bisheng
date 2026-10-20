@@ -13,8 +13,10 @@ import {
 } from "@/controllers/API/managedAgent"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
 import type { ManagedAgent } from "@/types/api/managedAgent"
-import { useEffect, useState } from "react"
+import { useContext, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { Navigate } from "react-router-dom"
+import { locationContext } from "@/contexts/locationContext"
 import { ManagedAgentSchedulePanel } from "@/components/bs-comp/apiComponent/scheduledTask/ManagedAgentSchedulePanel"
 import { AgentFormDialog } from "./AgentFormDialog"
 import { TaxonomyDialog } from "./TaxonomyDialog"
@@ -36,6 +38,7 @@ function healthVariant(status: ManagedAgent["health_status"]): "success" | "erro
 
 export default function ManagedAgentsPage() {
     const { t } = useTranslation("managedAgent")
+    const { appConfig } = useContext(locationContext)
     const [rows, setRows] = useState<ManagedAgent[]>([])
     const [total, setTotal] = useState(0)
     const [page, setPage] = useState(1)
@@ -96,6 +99,12 @@ export default function ManagedAgentsPage() {
     }
 
     const pageCount = Math.max(Math.ceil(total / PAGE_SIZE), 1)
+
+    // The deployment switch is the only gate for a direct URL; the menu/tab is
+    // hidden separately in HeaderMenu.
+    if (!appConfig.managedAgentEnabled) {
+        return <Navigate to="/build/apps" replace />
+    }
 
     return (
         <div className="h-full overflow-y-auto p-6">

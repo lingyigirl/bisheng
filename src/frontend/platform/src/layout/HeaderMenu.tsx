@@ -1,5 +1,6 @@
 // @ts-strict-ignore
 import { TabIcon } from "@/components/bs-icons";
+import { locationContext } from "@/contexts/locationContext";
 import { userContext } from "@/contexts/userContext";
 import { canManageWorkbenchConfig } from "@/pages/ModelPage/manage/permissions";
 import { useContext, useMemo } from "react";
@@ -11,6 +12,7 @@ export default function HeaderMenu({ }) {
     const location = useLocation();
 
     const { user } = useContext(userContext);
+    const { appConfig } = useContext(locationContext);
     // 系统管理员(超管、组超管)
     const isAdmin = useMemo(() => {
         return user.role === 'admin'
@@ -41,7 +43,7 @@ export default function HeaderMenu({ }) {
                     <span className="text-sm font-bold text-muted-foreground group-hover:text-primary dark:group-hover:text-[#fff]">{t('build.tools')}</span>
                 </NavLink>
             </div>}
-            {canOpenBuild && <div className="px-4">
+            {canOpenBuild && appConfig.managedAgentEnabled && <div className="px-4">
                 <NavLink to={'build/managed-agents'} className="group flex gap-2 items-center px-8 py-2 rounded-md navlink">
                     <TabIcon className="text-muted-foreground group-hover:text-primary dark:group-hover:text-[#fff]"></TabIcon>
                     <span className="text-sm font-bold text-muted-foreground group-hover:text-primary dark:group-hover:text-[#fff]">{t('build.managedAgents')}</span>

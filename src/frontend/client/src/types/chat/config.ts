@@ -512,6 +512,8 @@ export type BsConfig = {
   homeMenuDisplayName?: string;
   appCenterMenuDisplayName?: string;
   enable_etl4lm: boolean;
+  /** F078: deployment switch for the third-party managed-agent catalog. */
+  managed_agent_enabled?: boolean;
   sidebarIcon: {
     enabled: boolean;
     image: string;
