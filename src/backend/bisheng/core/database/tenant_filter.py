@@ -135,6 +135,13 @@ _TENANT_AWARE_MODEL_MODULES = (
     # router import edge moves. Missing here means rows land in the ROOT tenant
     # and one tenant's tasks would be visible to another (spec AC-53).
     "bisheng.scheduled_task.domain.models.scheduled_task",
+    # F078: managed-agent registry, taxonomy and invocation traces. Same
+    # reasoning as F076/F077 above — the discovery snapshot runs once. Missing
+    # here means rows land in the ROOT tenant and one tenant's agents/traces
+    # would be visible to another (spec AC-60 / INV-26).
+    "bisheng.managed_agent.domain.models.managed_agent",
+    "bisheng.managed_agent.domain.models.taxonomy",
+    "bisheng.managed_agent.domain.models.run",
 )
 
 

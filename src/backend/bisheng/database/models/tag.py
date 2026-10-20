@@ -1,22 +1,21 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List, Dict
 
 from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint
-from sqlmodel import Field, select, delete, and_, func, text, col
+from sqlmodel import Field, and_, col, delete, func, select, text
 
 from bisheng.common.models.base import SQLModelSerializable
-from bisheng.core.database import get_sync_db_session, get_async_db_session
-from bisheng.database.models.group_resource import ResourceTypeEnum
-
-
+from bisheng.core.database import get_async_db_session, get_sync_db_session
 from bisheng.core.database.dialect_helpers import UPDATE_TIME_SERVER_DEFAULT
+from bisheng.database.models.group_resource import ResourceTypeEnum
 
 
 class TagBusinessTypeEnum(str, Enum):
     KNOWLEDGE_SPACE = "knowledge_space"
     APPLICATION = "application"
     KNOWLEDGE = "knowledge"
+    # F078: tags attached to managed-agent registry rows.
+    MANAGED_AGENT = "managed_agent"
 
 
 class TagBase(SQLModelSerializable):
@@ -24,26 +23,26 @@ class TagBase(SQLModelSerializable):
     Tag Form
     """
 
-    name: Optional[str] = Field(default=None, index=True, description="Label Name")
+    name: str | None = Field(default=None, index=True, description="Label Name")
     business_type: str = Field(default=TagBusinessTypeEnum.APPLICATION, description="Business Type")
-    business_id: Optional[str] = Field(default=None, sa_column=Column(String(36)), description="Business ID")
+    business_id: str | None = Field(default=None, sa_column=Column(String(36)), description="Business ID")
     user_id: int = Field(default=0, description="Create UserID")
-    tenant_id: Optional[int] = Field(
+    tenant_id: int | None = Field(
         default=None,
         sa_column=Column(Integer, nullable=False, server_default=text("1"), index=True, comment="Tenant ID"),
     )
-    create_time: Optional[datetime] = Field(
+    create_time: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime, nullable=False, index=True, server_default=text("CURRENT_TIMESTAMP")),
         description="Creation Time",
     )
-    update_time: Optional[datetime] = Field(
+    update_time: datetime | None = Field(
         default=None, sa_column=Column(DateTime, nullable=False, server_default=UPDATE_TIME_SERVER_DEFAULT)
     )
 
 
 class Tag(TagBase, table=True):
-    id: Optional[int] = Field(default=None, index=True, primary_key=True, description="Tag UniqueID")
+    id: int | None = Field(default=None, index=True, primary_key=True, description="Tag UniqueID")
 
 
 class TagLinkBase(SQLModelSerializable):
@@ -55,30 +54,30 @@ class TagLinkBase(SQLModelSerializable):
     resource_id: str = Field(description="Resource UniqueID")
     resource_type: int = Field(description="Resource Type")  # Usegroup_resource.ResourceTypeEnumEnumeration
     user_id: int = Field(default=0, description="Create UserID")
-    tenant_id: Optional[int] = Field(
+    tenant_id: int | None = Field(
         default=None,
         sa_column=Column(Integer, nullable=False, server_default=text("1"), index=True, comment="Tenant ID"),
     )
-    create_time: Optional[datetime] = Field(
+    create_time: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime, nullable=False, index=True, server_default=text("CURRENT_TIMESTAMP")),
         description="Creation Time",
     )
-    update_time: Optional[datetime] = Field(
+    update_time: datetime | None = Field(
         default=None, sa_column=Column(DateTime, nullable=False, server_default=UPDATE_TIME_SERVER_DEFAULT)
     )
 
 
 class TagLink(TagLinkBase, table=True):
     __table_args__ = (UniqueConstraint("resource_id", "resource_type", "tag_id", name="resource_tag_uniq"),)
-    id: Optional[int] = Field(default=None, index=True, primary_key=True, description="Tag Association UniqueID")
+    id: int | None = Field(default=None, index=True, primary_key=True, description="Tag Association UniqueID")
 
 
 class TagDao(Tag):
     @classmethod
     def search_tags(
         cls, keyword: str = None, page: int = 0, limit: int = 0, *, business_type: TagBusinessTypeEnum, business_id: str
-    ) -> List[Tag]:
+    ) -> list[Tag]:
         """Get all tags by default Paginable"""
         statement = select(Tag)
         if keyword:
@@ -119,7 +118,7 @@ class TagDao(Tag):
             return data
 
     @classmethod
-    async def get_tag(cls, tag_id: int) -> Optional[Tag]:
+    async def get_tag(cls, tag_id: int) -> Tag | None:
         """Find a tag by id asynchronously."""
         statement = select(Tag).where(Tag.id == tag_id)
         async with get_async_db_session() as session:
@@ -211,14 +210,14 @@ class TagDao(Tag):
             return session.exec(statement).first()
 
     @classmethod
-    def get_tags_by_ids(cls, tag_ids: List[int]) -> List[Tag]:
+    def get_tags_by_ids(cls, tag_ids: list[int]) -> list[Tag]:
         """by TagIDFind Tags"""
         with get_sync_db_session() as session:
             statement = select(Tag).where(Tag.id.in_(tag_ids))
             return session.exec(statement).all()
 
     @classmethod
-    async def aget_tags_by_ids(cls, tag_ids: List[int]) -> List[Tag]:
+    async def aget_tags_by_ids(cls, tag_ids: list[int]) -> list[Tag]:
         """Find tags by ids asynchronously."""
         if not tag_ids:
             return []
@@ -230,7 +229,7 @@ class TagDao(Tag):
     @classmethod
     async def get_tags_by_business(
         cls, business_type: TagBusinessTypeEnum, business_id: str, name: str = None
-    ) -> List[Tag]:
+    ) -> list[Tag]:
         statement = select(Tag).where(Tag.business_type == business_type, Tag.business_id == business_id)
         if name:
             statement = statement.where(Tag.name == name)
@@ -247,7 +246,7 @@ class TagDao(Tag):
         *,
         business_type: TagBusinessTypeEnum,
         business_id: str,
-    ) -> List[Tag]:
+    ) -> list[Tag]:
         """Search tags by business scope asynchronously."""
         statement = select(Tag).where(
             Tag.business_type == business_type,
@@ -285,7 +284,7 @@ class TagDao(Tag):
     @classmethod
     def get_tags_by_resource(
         cls, resource_type: ResourceTypeEnum | None, resource_ids: list[str]
-    ) -> Dict[str, List[Tag]]:
+    ) -> dict[str, list[Tag]]:
         """Query all tags under resources"""
         if resource_type is None:
             statement = select(Tag.id, Tag.name, TagLink.resource_id).join(
@@ -311,8 +310,8 @@ class TagDao(Tag):
 
     @classmethod
     def get_tags_by_resource_batch(
-        cls, resource_type: List[ResourceTypeEnum], resource_ids: list[str]
-    ) -> Dict[str, List[Tag]]:
+        cls, resource_type: list[ResourceTypeEnum], resource_ids: list[str]
+    ) -> dict[str, list[Tag]]:
         """Query all tags under resources"""
         with get_sync_db_session() as session:
             statement = select(Tag.id, Tag.name, TagLink.resource_id).join(
@@ -332,7 +331,7 @@ class TagDao(Tag):
             return ret
 
     @classmethod
-    def get_resources_by_tags(cls, tag_ids: List[int], resource_type: ResourceTypeEnum) -> List[TagLink]:
+    def get_resources_by_tags(cls, tag_ids: list[int], resource_type: ResourceTypeEnum) -> list[TagLink]:
         """Query all resources under tags"""
 
         statement = select(TagLink).where(TagLink.tag_id.in_(tag_ids), TagLink.resource_type == resource_type.value)
@@ -340,7 +339,7 @@ class TagDao(Tag):
             return session.exec(statement).all()
 
     @classmethod
-    async def aget_resources_by_tags(cls, tag_ids: List[int], resource_type: ResourceTypeEnum) -> List[TagLink]:
+    async def aget_resources_by_tags(cls, tag_ids: list[int], resource_type: ResourceTypeEnum) -> list[TagLink]:
         """Query all resources under tags"""
         statement = select(TagLink).where(TagLink.tag_id.in_(tag_ids), TagLink.resource_type == resource_type.value)
         async with get_async_db_session() as session:
@@ -348,8 +347,8 @@ class TagDao(Tag):
 
     @classmethod
     async def aget_resource_tag_ids_batch(
-        cls, resource_ids: List[str], resource_type: ResourceTypeEnum
-    ) -> Dict[str, List[int]]:
+        cls, resource_ids: list[str], resource_type: ResourceTypeEnum
+    ) -> dict[str, list[int]]:
         """Query tag ids grouped by resource id asynchronously."""
         if not resource_ids:
             return {}
@@ -361,13 +360,13 @@ class TagDao(Tag):
         async with get_async_db_session() as session:
             rows = (await session.exec(statement)).all()
 
-        result: Dict[str, List[int]] = {}
+        result: dict[str, list[int]] = {}
         for resource_id, tag_id in rows:
             result.setdefault(resource_id, []).append(tag_id)
         return result
 
     @classmethod
-    def get_resources_by_tags_batch(cls, tag_ids: List[int], resource_type: List[ResourceTypeEnum]) -> List[TagLink]:
+    def get_resources_by_tags_batch(cls, tag_ids: list[int], resource_type: list[ResourceTypeEnum]) -> list[TagLink]:
         """Query all resources under tags"""
 
         statement = select(TagLink).where(
@@ -415,7 +414,7 @@ class TagDao(Tag):
 
     @classmethod
     async def aupdate_resource_tags(
-        cls, tag_ids: List[int], resource_id: str, resource_type: ResourceTypeEnum, user_id: int
+        cls, tag_ids: list[int], resource_id: str, resource_type: ResourceTypeEnum, user_id: int
     ) -> bool:
         """Update tag association data"""
         async with get_async_db_session() as session:
@@ -435,7 +434,7 @@ class TagDao(Tag):
 
     @classmethod
     async def add_tags(
-        cls, tag_ids: List[int], resource_id: str, resource_type: ResourceTypeEnum, user_id: int
+        cls, tag_ids: list[int], resource_id: str, resource_type: ResourceTypeEnum, user_id: int
     ) -> bool:
         """Add tag association data"""
         exists_statement = select(TagLink).where(

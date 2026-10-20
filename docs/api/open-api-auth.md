@@ -17,7 +17,7 @@ POST   /api/v1/service-accounts/{id}/keys           签发密钥(明文仅本响
 PATCH  /api/v1/service-accounts/{id}/keys/{key_id}  改名称/权限位/有效期(立即生效)
 POST   /api/v1/service-accounts/{id}/keys/{key_id}/revoke   单把吊销
 POST   /api/v1/service-accounts/{id}/keys/revoke-all        全量吊销(轮换收尾)
-GET    /api/v1/open-api/scopes                      可签发权限位目录(9 项)
+GET    /api/v1/open-api/scopes                      可签发权限位目录(10 项)
 ```
 
 - **密钥格式**：`bs-sak-` + 43 字符随机串，共 50 字符。
@@ -55,6 +55,7 @@ Authorization: Bearer bs-sak-<43 字符>
 | `knowledge:write` | 知识库与文件的增删改、问答与元数据写入 |
 | `delegate` | 预留位：本期可签发但**不产生任何生效行为** |
 | `schedule:trigger` | 定时任务的事件触发端点（`POST /api/v2/schedule/trigger`） |
+| `managed_agent:invoke` | 纳管智能体调用端点（`POST /api/v2/managed-agent/invoke`） |
 
 - 目录端点 `GET /api/v1/open-api/scopes` 返回可签发清单（`code`/`group`/`endpoint_count`），以它为准。
 - **隐含规则**：授予 `knowledge:write` 即同时具备 `knowledge:read`。

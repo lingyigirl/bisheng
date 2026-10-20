@@ -1218,7 +1218,8 @@
     "unsavedChangesLeave": "未保存の変更があります。本当に離れますか？",
     "leaveAndSave": "保存して離れる",
     "leaveWithoutSave": "保存せずに終了",
-    "selectModel": "モデルを選択してください"
+    "selectModel": "モデルを選択してください",
+    "managedAgents": "管理対象エージェント"
   },
   "bench": {
     "daily": "日常",
@@ -1365,7 +1366,8 @@
       "llm": "モデル管理",
       "approval": "承認管理",
       "docExtract": "文書抽出",
-      "schedule": "定期タスク"
+      "schedule": "定期タスク",
+      "managedAgent": "管理対象エージェント"
     },
     "eventTypeEnum": {
       "createChat": "新規チャット作成",
@@ -1449,7 +1451,13 @@
       "scheduleTaskEnable": "定期タスクの有効化",
       "scheduleTaskDisable": "定期タスクの無効化",
       "scheduleTaskDelete": "定期タスクの削除",
-      "scheduleTaskRunNow": "定期タスクの即時実行"
+      "scheduleTaskRunNow": "定期タスクの即時実行",
+      "managedAgentCreate": "管理対象エージェントの作成",
+      "managedAgentUpdate": "管理対象エージェントの更新",
+      "managedAgentDelete": "管理対象エージェントの削除",
+      "managedAgentEnable": "管理対象エージェントの有効化",
+      "managedAgentDisable": "管理対象エージェントの無効化",
+      "managedAgentHealthCheck": "ヘルスチェック"
     },
     "objectTypeEnum": {
       "none": "なし",

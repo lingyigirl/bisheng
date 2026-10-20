@@ -34,8 +34,13 @@ export interface OpenApiScope {
     endpoint_count: number
 }
 
-/** Resource kinds the console may delegate; the backend whitelist is the same four. */
-export type ResourceGrantType = "knowledge_library" | "knowledge_space" | "assistant" | "workflow"
+/** Resource kinds the console may delegate; mirrors backend GRANTABLE_RESOURCE_TYPES. */
+export type ResourceGrantType =
+    | "knowledge_library"
+    | "knowledge_space"
+    | "assistant"
+    | "workflow"
+    | "managed_agent"
 
 export type ResourceGrantLevel = "viewer" | "editor" | "manager"
 

@@ -232,6 +232,16 @@ _UI_VISIBLE_V2_ACTIONS: tuple[str, ...] = (
     "schedule.task.disable",
     "schedule.task.delete",
     "schedule.task.run_now",
+    # F078: managed-agent lifecycle. Same reasoning as F077 -- editing an agent
+    # changes its endpoint/credential/classification for every later call, so
+    # "who changed it" must be reviewable. `managed_agent.invoke` stays
+    # DB-only (forensics, like open_api.call/schedule.run).
+    "managed_agent.create",
+    "managed_agent.update",
+    "managed_agent.delete",
+    "managed_agent.enable",
+    "managed_agent.disable",
+    "managed_agent.health_check",
 )
 
 # Synthetic system_id namespace → action prefix. The frontend `getModulesApi`
@@ -246,6 +256,7 @@ _V2_NAMESPACE_TO_ACTION_PREFIX: dict[str, str] = {
     # management actions and the `schedule.run` forensics row. The module
     # filter maps the synthetic module value 'schedule' to this prefix.
     "schedule": "schedule.",
+    "managed_agent": "managed_agent.",
 }
 
 

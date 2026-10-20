@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 
 from loguru import logger
 
+from bisheng.common.errcode.scheduled_task import ScheduledTaskConfigInvalidError
 from bisheng.common.services.config_service import settings
 from bisheng.core.cache.redis_manager import get_redis_client
 from bisheng.core.context.tenant import (
@@ -32,6 +33,7 @@ from bisheng.core.context.tenant import (
 )
 from bisheng.database.models.audit_log import AuditLog, AuditLogDao
 from bisheng.database.models.flow import FlowDao, FlowType
+from bisheng.managed_agent.domain.constants import MANAGED_AGENT_APP_TYPE
 from bisheng.scheduled_task.domain.constants import ScheduledTaskAuditAction
 from bisheng.scheduled_task.domain.models.dao import ScheduledTaskDao
 from bisheng.scheduled_task.domain.models.scheduled_task import (
@@ -253,7 +255,7 @@ async def _process_task(
         # 前加载的内存对象。
         task = await ScheduledTaskDao.aget(task.id) or task
         try:
-            await dispatch(task, trace_id=token)
+            await _call_dispatch(dispatch, task, token, task.schedule_type)
         except Exception:
             logger.exception("scheduled_task: dispatch failed for task {}", task.id)
             stats.dispatch_errors += 1
@@ -449,40 +451,81 @@ class _LightTask:
 # ── 派发 ─────────────────────────────────────────────────────────────
 
 
-async def _dispatch(task: ScheduledTask, *, trace_id: str) -> None:
-    """按应用类型派发一轮（工作流走 RedisCallback + execute_workflow；助手走自有运行器）。"""
+async def _call_dispatch(dispatch, task: ScheduledTask, token: str, trigger_kind: str) -> None:
+    """Pass trigger_kind only to the real dispatcher; test stubs keep their old signature."""
+    if dispatch is _dispatch:
+        await dispatch(task, trace_id=token, trigger_kind=trigger_kind)
+    else:
+        await dispatch(task, trace_id=token)
+
+
+async def _dispatch(task: ScheduledTask, *, trace_id: str, trigger_kind: str = "scheduled") -> None:
+    """Explicit app-type dispatch; unknown types fail closed.
+
+    F078: ``app_type=100`` stores the registry id in ``app_id``. A native
+    workflow projection delegates to the existing workflow chain with the
+    **native** flow id; everything else goes to the managed-agent runner.
+    """
     if task.app_type == FlowType.WORKFLOW.value:
         await _dispatch_workflow(task, trace_id)
         return
-    from bisheng.worker.scheduled_task.assistant_runner import execute_assistant_run
+    if task.app_type == FlowType.ASSISTANT.value:
+        from bisheng.worker.scheduled_task.assistant_runner import execute_assistant_run
 
-    execute_assistant_run.apply_async(args=[task.id, trace_id], queue="celery")
+        execute_assistant_run.apply_async(args=[task.id, trace_id], queue="celery")
+        return
+    if task.app_type == MANAGED_AGENT_APP_TYPE:
+        await _dispatch_managed_agent(task, trace_id, trigger_kind)
+        return
+    raise ScheduledTaskConfigInvalidError(msg=f"unsupported app_type: {task.app_type}")
 
 
-async def _dispatch_workflow(task: ScheduledTask, trace_id: str) -> None:
-    """F054 序列：预写 data → WAITING → 派到绑定节点（**显式 queue**）。"""
+async def _dispatch_managed_agent(task: ScheduledTask, trace_id: str, trigger_kind: str) -> None:
+    from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+
+    agent = await ManagedAgentDao.aget(int(task.app_id))
+    if agent is None:
+        raise RuntimeError(f"managed agent {task.app_id} disappeared before dispatch")
+    if agent.source_kind == "native":
+        if agent.native_app_type == FlowType.WORKFLOW.value:
+            await _dispatch_workflow(task, trace_id, flow_id=str(agent.native_app_id))
+            return
+        # Native assistant projection: the managed runner resolves the native id
+        # and calls AssistantAgent; it self-finalizes like assistant_runner.
+    from bisheng.worker.scheduled_task.managed_agent_runner import execute_managed_agent_run
+
+    execute_managed_agent_run.apply_async(args=[task.id, trace_id, trigger_kind], queue="celery")
+
+
+async def _dispatch_workflow(task: ScheduledTask, trace_id: str, *, flow_id: str | None = None) -> None:
+    """F054 序列：预写 data → WAITING → 派到绑定节点（**显式 queue**）。
+
+    ``flow_id`` is the native workflow id; for a managed-agent projection it
+    differs from ``task.app_id`` (which is the registry row id).
+    """
     from bisheng.database.models.flow_version import FlowVersionDao
     from bisheng.worker.workflow.redis_callback import RedisCallback
     from bisheng.worker.workflow.tasks import execute_workflow, workflow_stateful_worker
     from bisheng.workflow.common.workflow import WorkflowStatus
 
-    flow = await FlowDao.aget_flow_by_id(str(task.app_id))
+    flow_id = flow_id or str(task.app_id)
+    flow = await FlowDao.aget_flow_by_id(flow_id)
     if flow is None:
-        raise RuntimeError(f"flow {task.app_id} disappeared before dispatch")
+        raise RuntimeError(f"flow {flow_id} disappeared before dispatch")
 
-    callback = RedisCallback(trace_id, str(task.app_id), "", task.run_identity_user_id, tenant_id=task.tenant_id)
+    callback = RedisCallback(trace_id, flow_id, "", task.run_identity_user_id, tenant_id=task.tenant_id)
     callback.set_workflow_data(copy.deepcopy(flow.data))
     callback.set_workflow_status(WorkflowStatus.WAITING.value)
 
     # 版本标识：ONLINE 下禁切版本/改数据，故当前版本即本次运行所用版本（AC-52）。
-    version = FlowVersionDao.get_version_by_flow(str(task.app_id))
+    version = FlowVersionDao.get_version_by_flow(flow_id)
     if version is not None:
         await ScheduledTaskDao.aupdate_fields(
             task.id, {"last_app_version_id": str(version.id)}, tenant_id=task.tenant_id
         )
 
     worker_node = workflow_stateful_worker.find_task_node_sync(trace_id)
-    execute_workflow.apply_async([trace_id, str(task.app_id), "", task.run_identity_user_id], queue=worker_node)
+    execute_workflow.apply_async([trace_id, flow_id, "", task.run_identity_user_id], queue=worker_node)
 
 
 # ── 运行监督（并入 tick 的无状态过，design 决策 6） ────────────────────
@@ -502,11 +545,24 @@ async def observe_runs(now: datetime | None = None, *, read_state=None, notify=N
 
     observed = 0
     for task in tasks:
-        if task.app_type != FlowType.WORKFLOW.value or not task.last_trace_id:
+        if not task.last_trace_id:
             continue
+        # Set the tenant before resolving a managed-agent row: ManagedAgentDao.aget
+        # is strict-tenant, and the loop starts from a cross-tenant snapshot.
         previous_tenant = get_current_tenant_id()
         set_current_tenant_id(task.tenant_id)
         try:
+            flow_id: str | None = None
+            if task.app_type == MANAGED_AGENT_APP_TYPE:
+                from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+
+                agent = await ManagedAgentDao.aget(int(task.app_id))
+                if agent is None or agent.native_app_type != FlowType.WORKFLOW.value:
+                    # External / native-assistant managed runs self-report.
+                    continue
+                flow_id = str(agent.native_app_id)
+            elif task.app_type != FlowType.WORKFLOW.value:
+                continue
             state = await read_state(task.last_trace_id)
             if not state:
                 continue
@@ -526,7 +582,10 @@ async def observe_runs(now: datetime | None = None, *, read_state=None, notify=N
                     count_failure=True,
                 )
             elif status == "INPUT":
-                await _handle_input(task, notify)
+                if flow_id:
+                    await _handle_input(task, notify, flow_id=flow_id)
+                else:
+                    await _handle_input(task, notify)
             else:
                 continue
             observed += 1
@@ -548,14 +607,18 @@ async def _read_workflow_state(trace_id: str) -> dict | None:
         return None
 
 
-async def _handle_input(task: ScheduledTask, notify) -> None:
+async def _handle_input(task: ScheduledTask, notify, *, flow_id: str | None = None) -> None:
     """INPUT 暂停态：有预设输入则按 F054 协议自动提交；否则置 needs_input 并通知一次。"""
     from bisheng.worker.workflow.redis_callback import RedisCallback
     from bisheng.worker.workflow.tasks import continue_workflow, workflow_stateful_worker
     from bisheng.workflow.common.workflow import WorkflowStatus
 
     callback = RedisCallback(
-        task.last_trace_id, str(task.app_id), "", task.run_identity_user_id, tenant_id=task.tenant_id
+        task.last_trace_id,
+        flow_id or str(task.app_id),
+        "",
+        task.run_identity_user_id,
+        tenant_id=task.tenant_id,
     )
     # 事件列表是 Redis list（`lpop` 消费）：暂停中的运行没有别的消费者，这里读空它
     # 是安全的；`Category == 'input'` 即 INPUT 节点事件（WorkflowEventType.UserInput）。
@@ -597,7 +660,8 @@ async def _handle_input(task: ScheduledTask, notify) -> None:
     callback.set_workflow_status(WorkflowStatus.INPUT_OVER.value)
     worker_node = workflow_stateful_worker.find_task_node_sync(task.last_trace_id)
     continue_workflow.apply_async(
-        [task.last_trace_id, str(task.app_id), "", task.run_identity_user_id], queue=worker_node
+        [task.last_trace_id, flow_id or str(task.app_id), "", task.run_identity_user_id],
+        queue=worker_node,
     )
     logger.info("schedule.run.input_submitted task={} trace={}", task.id, task.last_trace_id)
 
@@ -977,7 +1041,7 @@ async def run_now(
     # _finalize 必须基于本次运行的新值。
     task = await ScheduledTaskDao.aget(task.id) or task
     try:
-        await dispatch(task, trace_id=token)
+        await _call_dispatch(dispatch, task, token, trigger_kind.value)
     except Exception:
         # broker/Redis 派发失败：释放租约并留痕，避免白占 run_timeout_seconds。
         # 人工/事件触发不计连续失败、不发首败通知，也不消耗一次性任务的唯一机会（AC-17）。

@@ -27,6 +27,8 @@ import { FavoritesSection } from './components/plaza/FavoritesSection'
 import { PlazaFilters, type PlazaFilterState } from './components/plaza/PlazaFilters'
 import { PreviewDrawer, type PlazaApp } from './components/plaza/PreviewDrawer'
 import { RecentSection } from './components/plaza/RecentSection'
+import { ManagedAgentTab } from './components/ManagedAgentTab'
+import { Tabs, TabsList, TabsTrigger } from '~/components/ui/Tabs'
 
 const appFlowOriginKey = (flowId: string) => `app-flow-origin:${flowId}`;
 const appLastOriginKey = 'app-last-origin';
@@ -62,6 +64,9 @@ export default function ExplorePlaza() {
     // --- filter state -------------------------------------------------------
     const [searchQuery, setSearchQuery] = useState("")
     const [filters, setFilters] = useState<PlazaFilterState>({ flowType: null, tagIds: [], sortBy: "recent" })
+    // F078: the native plaza and the managed-agent catalog share the page shell
+    // but keep separate query stacks (the managed catalog has its own API).
+    const [tab, setTab] = useState<'native' | 'managed'>('native')
     const isDefaultView = !searchQuery && filters.flowType === null && filters.tagIds.length === 0
 
     const applyFilterPatch = useCallback((patch: Partial<PlazaFilterState>) => {
@@ -260,6 +265,21 @@ export default function ExplorePlaza() {
                 </div>
             </div>
 
+            <div className="z-10 flex w-full max-w-[1000px] shrink-0 justify-center px-5 pt-3">
+                <Tabs value={tab} onValueChange={(v) => setTab(v as 'native' | 'managed')}>
+                    <TabsList>
+                        <TabsTrigger value="native">{localize('com_managed_agents_tab_native')}</TabsTrigger>
+                        <TabsTrigger value="managed">{localize('com_managed_agents_tab_managed')}</TabsTrigger>
+                    </TabsList>
+                </Tabs>
+            </div>
+
+            {tab === 'managed' ? (
+                <main className="flex min-h-0 w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto scrollbar-os">
+                    <ManagedAgentTab />
+                </main>
+            ) : (
+            <>
             {/* Search + filters */}
             <div className="z-10 w-full max-w-[1000px] shrink-0 px-5 py-4">
                 <div className="mb-3">
@@ -331,6 +351,8 @@ export default function ExplorePlaza() {
                     </div>
                 </div>
             </main>
+            </>
+            )}
 
             {/* Preview drawer */}
             <PreviewDrawer

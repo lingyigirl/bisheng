@@ -2235,5 +2235,20 @@
   "com_linsight_error_desc_recovery_blocked": "The previous tool outcome is uncertain, or required execution state cannot be restored.",
   "com_linsight_error_hint_recovery_blocked": "Review the details and verify external results before starting a new task.",
   "com_notifications_action_scheduled_task_failed": "Scheduled task failed",
-  "com_notifications_action_scheduled_task_needs_input": "Scheduled task is waiting for input"
+  "com_notifications_action_scheduled_task_needs_input": "Scheduled task is waiting for input",
+  "com_managed_agents_tab_native": "App plaza",
+  "com_managed_agents_tab_managed": "Third-party agents",
+  "com_managed_agents_search": "Search agents",
+  "com_managed_agents_scenario": "Scenario",
+  "com_managed_agents_all_scenarios": "All scenarios",
+  "com_managed_agents_industry": "Industry",
+  "com_managed_agents_all_industries": "All industries",
+  "com_managed_agents_empty": "No third-party agents are online yet",
+  "com_managed_agents_source": "Source",
+  "com_managed_agents_protocol": "Protocol",
+  "com_managed_agents_health": "Health",
+  "com_managed_agents_preview_only": "Preview only. Contact an administrator for invocation access.",
+  "com_managed_agents_source_native": "Platform",
+  "com_managed_agents_source_low_code": "Low-code",
+  "com_managed_agents_source_high_code": "High-code"
 }

@@ -1,7 +1,8 @@
 """Unit tests for OpenFGA authorization model DSL (F013 T02).
 
 Verifies:
-- model version tracks the DSL (v2.0.4 includes tenant-local Skill registration)
+- model version tracks the DSL (v2.0.2 user_group admin/member, v2.0.3 F061
+  db_datasource, v2.0.4 managed_agent + tenant-local Skill, v2.0.5 combined)
 - tenant type carries shared_to relation; no parent relation
 - Shareable resources get shared_with; tenant-local Skills deliberately do not
 - viewer's directly_related_user_types stays at bounded canonical sources (no #-nesting,
@@ -32,10 +33,12 @@ def types_by_name() -> dict:
 def test_model_version_matches_the_shipped_dsl():
     """MODEL_VERSION must change when the static OpenFGA DSL changes.
 
-    Bumped to v2.0.4 for Skill owner registration. Operators must publish the
-    new model and restart processes; the version is its deployment marker.
+    Bumped to v2.0.5 when the managed_agent (F078) and tenant-local Skill
+    resource types were combined into one DSL. Existing stores need an explicit
+    migration script publication and process restart; the version is the
+    deployment marker, not a live-reload switch.
     """
-    assert MODEL_VERSION == "v2.0.4"
+    assert MODEL_VERSION == "v2.0.5"
 
 
 def test_get_authorization_model_returns_deep_copy():
@@ -100,6 +103,7 @@ def test_tenant_admin_does_not_inherit(types_by_name):
         "llm_server",
         "llm_model",
         "db_datasource",
+        "managed_agent",
     ],
 )
 def test_resource_has_shared_with_relation(types_by_name, resource_type):
@@ -125,6 +129,7 @@ def test_resource_has_shared_with_relation(types_by_name, resource_type):
         "llm_server",
         "llm_model",
         "db_datasource",
+        "managed_agent",
     ],
 )
 def test_resource_viewer_chains_shared_with_member(types_by_name, resource_type):
@@ -154,6 +159,7 @@ def test_resource_viewer_chains_shared_with_member(types_by_name, resource_type)
         "llm_server",
         "llm_model",
         "db_datasource",
+        "managed_agent",
     ],
 )
 def test_resource_viewer_drut_uses_only_valid_relations(types_by_name, resource_type):
@@ -183,6 +189,7 @@ def test_resource_viewer_drut_uses_only_valid_relations(types_by_name, resource_
         "llm_server",
         "llm_model",
         "db_datasource",
+        "managed_agent",
     ],
 )
 def test_resource_manager_excludes_tenant(types_by_name, resource_type):
@@ -209,6 +216,7 @@ def test_resource_manager_excludes_tenant(types_by_name, resource_type):
         "llm_server",
         "llm_model",
         "db_datasource",
+        "managed_agent",
     ],
 )
 def test_resource_editor_excludes_tenant(types_by_name, resource_type):
@@ -279,9 +287,9 @@ def test_llm_model_has_full_pyramid(types_by_name):
 # ── Type count ───────────────────────────────────────────────────
 
 
-def test_total_type_count_is_18():
-    """Five identity types and thirteen resource types, including tenant-local Skills."""
-    assert len(AUTHORIZATION_MODEL["type_definitions"]) == 18
+def test_total_type_count_is_19():
+    """Five identity types and fourteen resource types (incl. managed_agent + tenant-local Skill)."""
+    assert len(AUTHORIZATION_MODEL["type_definitions"]) == 19
 
 
 def test_skill_owner_and_tenant_local_permissions(types_by_name):

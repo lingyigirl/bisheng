@@ -18,6 +18,7 @@ from loguru import logger
 
 from bisheng.common.errcode.scheduled_task import ScheduledTaskAppNotSchedulableError
 from bisheng.database.models.flow import FlowDao, FlowType
+from bisheng.managed_agent.domain.constants import MANAGED_AGENT_APP_TYPE
 
 #: 输入节点的 `tab` 取值；`dialog_input` 是对话式输入（无文件项定义）。
 _FORM_TAB = "form_input"
@@ -62,6 +63,23 @@ def describe_unschedulable(data: dict) -> str:
 
 async def assert_app_schedulable(app_id: str, app_type: int) -> None:
     """工作流：按 `flow.data` 校验；助手：恒通过（无输入节点概念）。"""
+    if app_type == MANAGED_AGENT_APP_TYPE:
+        from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
+        from bisheng.managed_agent.domain.services.agent_card import parse_agent_card
+
+        agent = await ManagedAgentDao.aget(int(app_id))
+        if agent is None:
+            return
+        if agent.source_kind == "native":
+            # Reuse the native shape check (workflow) or pass (assistant).
+            if agent.native_app_type == FlowType.WORKFLOW.value:
+                await assert_app_schedulable(str(agent.native_app_id), FlowType.WORKFLOW.value)
+            return
+        card = parse_agent_card(agent.agent_card)
+        if any(item.file for item in card.inputs):
+            raise ScheduledTaskAppNotSchedulableError(exception="file input is not supported on schedules")
+        return
+
     if app_type != FlowType.WORKFLOW.value:
         return
     flow = await FlowDao.aget_flow_by_id(str(app_id))

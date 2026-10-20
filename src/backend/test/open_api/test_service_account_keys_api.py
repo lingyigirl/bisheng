@@ -201,9 +201,10 @@ async def test_scopes_catalog_lists_all_issuable(patched_db):
         "knowledge:read",
         "knowledge:write",
         "schedule:trigger",
+        "managed_agent:invoke",
         "delegate",
     }
-    assert catalog.data["total"] == 9
+    assert catalog.data["total"] == 10
 
 
 def test_every_key_endpoint_declares_admin_dependency():

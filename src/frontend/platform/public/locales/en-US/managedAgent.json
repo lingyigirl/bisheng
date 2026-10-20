@@ -1,0 +1,100 @@
+{
+  "title": "Managed agents",
+  "subtitle": "Register platform and third-party agents with one access, scheduling and classification plane",
+  "create": "Register agent",
+  "taxonomyButton": "Taxonomy",
+  "searchPlaceholder": "Search name",
+  "refresh": "Refresh",
+  "noData": "No managed agents",
+  "deleteTitle": "Delete managed agent",
+  "deleteDesc": "Delete \"{{name}}\"? Invocation traces are retained, but the agent can no longer be called.",
+  "pagination": "Page {{page}} / {{total}}",
+  "source": {
+    "all": "All sources",
+    "native": "Platform",
+    "low_code": "Low-code",
+    "high_code": "High-code"
+  },
+  "status": {
+    "all": "All statuses",
+    "draft": "Draft",
+    "online": "Online",
+    "offline": "Offline",
+    "disabled": "Disabled"
+  },
+  "health": {
+    "unknown": "Unknown",
+    "healthy": "Healthy",
+    "unhealthy": "Unhealthy"
+  },
+  "columns": {
+    "name": "Name",
+    "source": "Source / protocol",
+    "status": "Status",
+    "health": "Health",
+    "classification": "Scenario / industry",
+    "lastCall": "Last call",
+    "actions": "Actions"
+  },
+  "actions": {
+    "publish": "Publish",
+    "offline": "Take offline",
+    "disable": "Disable",
+    "healthCheck": "Health check",
+    "edit": "Edit",
+    "delete": "Delete"
+  },
+  "form": {
+    "editTitle": "Edit managed agent",
+    "createTitle": "Register managed agent",
+    "name": "Name",
+    "description": "Description",
+    "sourceKind": "Source",
+    "protocol": "Protocol",
+    "nativeAppId": "Platform app ID",
+    "nativeAppType": "App type",
+    "assistant": "Assistant",
+    "workflow": "Workflow",
+    "endpoint": "Endpoint",
+    "modelName": "Model name",
+    "version": "Version",
+    "scenario": "Scenario",
+    "industry": "Industry",
+    "healthMethod": "Health method",
+    "testInvoke": "Test invoke",
+    "healthUrl": "Health URL",
+    "credentialType": "Auth type",
+    "credentialSecret": "Secret",
+    "secretUnchanged": "Leave blank to keep",
+    "credentialHeaders": "Fixed headers (JSON)",
+    "agentCard": "Agent Card (JSON)",
+    "cancel": "Cancel",
+    "save": "Save",
+    "none": "Not set"
+  },
+  "taxonomy": {
+    "title": "Scenario / industry taxonomy",
+    "kind": "Kind",
+    "scenario": "Scenario",
+    "industry": "Industry",
+    "code": "Code",
+    "nameZh": "Chinese name",
+    "nameEn": "English name",
+    "nameJa": "Japanese name",
+    "add": "Add",
+    "disabled": "Disabled",
+    "deleteTitle": "Delete taxonomy item",
+    "deleteDesc": "Delete \"{{name}}\"? It is refused while agents reference it."
+  },
+  "schedule": {
+    "title": "Scheduled tasks"
+  },
+  "common": {
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "close": "Close",
+    "prev": "Previous",
+    "next": "Next"
+  }
+}

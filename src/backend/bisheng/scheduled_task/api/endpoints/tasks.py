@@ -126,7 +126,13 @@ async def nl_draft(
     与创建同样要求目标应用的 `edit_app`（草稿会把用户引向一次创建）。
     """
     await task_service.assert_can_manage(user, req.app_type, req.app_id)
-    draft = await nl_draft_service.draft_from_text(tenant_id=user.tenant_id, user_id=user.user_id, text=req.text)
+    draft = await nl_draft_service.draft_from_text(
+        tenant_id=user.tenant_id,
+        user_id=user.user_id,
+        text=req.text,
+        app_id=req.app_id,
+        app_type=req.app_type,
+    )
     return resp_200(NlDraftResp(**draft))
 
 

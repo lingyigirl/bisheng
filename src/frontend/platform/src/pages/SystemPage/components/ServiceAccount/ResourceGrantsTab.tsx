@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { message } from "@/components/bs-ui/toast/use-toast"
 import { getAppsApi } from "@/controllers/API/flow"
 import { readFileLibDatabase } from "@/controllers/API/index"
+import { listManagedAgentsApi } from "@/controllers/API/managedAgent"
 import { listResourceGrantsApi, mutateResourceGrantsApi } from "@/controllers/API/serviceAccount"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
 import {
@@ -24,7 +25,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 /** Backend registry order (resource_grant_service.GRANTABLE_RESOURCE_TYPES). */
-const RESOURCE_TYPES: ResourceGrantType[] = ["knowledge_library", "knowledge_space", "assistant", "workflow"]
+const RESOURCE_TYPES: ResourceGrantType[] = [
+    "knowledge_library",
+    "knowledge_space",
+    "assistant",
+    "workflow",
+    "managed_agent",
+]
 const GRANT_LEVELS: ResourceGrantLevel[] = ["viewer", "editor", "manager"]
 
 interface PickerItem {
@@ -61,6 +68,13 @@ const RESOURCE_LOADERS: Record<ResourceGrantType, (keyword: string, pageSize: nu
     // Spaces live in the same table (type=3).
     knowledge_space: async (keyword, pageSize) =>
         (await readFileLibDatabase({ name: keyword, type: 3, pageSize })).data.map((one) => ({
+            id: String(one.id),
+            name: one.name,
+        })),
+    // F078: only agents visible to the caller are offered; the backend re-checks
+    // the grant with PermissionService (11808/11820 on failure).
+    managed_agent: async (keyword, pageSize) =>
+        (await listManagedAgentsApi({ keyword, page_size: pageSize })).data.map((one) => ({
             id: String(one.id),
             name: one.name,
         })),

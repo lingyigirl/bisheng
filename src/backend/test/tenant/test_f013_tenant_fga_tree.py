@@ -33,7 +33,6 @@ from bisheng.core.openfga.authorization_model import (
 from bisheng.permission.domain.services.permission_service import PermissionService
 from bisheng.permission.domain.services.tenant_admin_service import TenantAdminService
 
-
 # ── Helpers ──────────────────────────────────────────────────────
 
 
@@ -48,34 +47,34 @@ def _make_login_user(*, user_id=100, is_admin=False, visible=None, has_admin=Fal
 
 def _patch_resource_tenant(value):
     return patch.object(
-        PermissionService, '_resolve_resource_tenant',
+        PermissionService,
+        "_resolve_resource_tenant",
         AsyncMock(return_value=value),
     )
 
 
 def _patch_tenant_dao(parent_tenant_id):
     fake_tenant = SimpleNamespace(id=99, parent_tenant_id=parent_tenant_id)
-    return patch('bisheng.database.models.tenant.TenantDao.aget_by_id',
-                 AsyncMock(return_value=fake_tenant))
+    return patch("bisheng.database.models.tenant.TenantDao.aget_by_id", AsyncMock(return_value=fake_tenant))
 
 
 # ── AC-01: DSL v2 structure ──────────────────────────────────────
 
 
 def test_ac_01_dsl_v2_structure():
-    """Authorization model carries v2.0.2 + 16 types + tenant.shared_to + shared_with."""
-    assert MODEL_VERSION == 'v2.0.2'
-    assert len(AUTHORIZATION_MODEL['type_definitions']) == 16
+    """Authorization model carries v2.0.4 + 18 types + tenant.shared_to + shared_with."""
+    assert MODEL_VERSION == "v2.0.4"
+    assert len(AUTHORIZATION_MODEL["type_definitions"]) == 18
 
-    types_by_name = {t['type']: t for t in AUTHORIZATION_MODEL['type_definitions']}
-    assert 'shared_to' in types_by_name['tenant']['relations']
-    assert 'parent' not in types_by_name['tenant']['relations']
+    types_by_name = {t["type"]: t for t in AUTHORIZATION_MODEL["type_definitions"]}
+    assert "shared_to" in types_by_name["tenant"]["relations"]
+    assert "parent" not in types_by_name["tenant"]["relations"]
     # Each resource carries shared_with: [tenant] — replaces the
     # tenant#shared_to#member userset OpenFGA rejected (2026-04-19 redesign).
-    assert 'shared_with' in types_by_name['workflow']['relations']
-    assert 'shared_with' in types_by_name['llm_server']['relations']
-    assert 'llm_server' in types_by_name
-    assert 'llm_model' in types_by_name
+    assert "shared_with" in types_by_name["workflow"]["relations"]
+    assert "shared_with" in types_by_name["llm_server"]["relations"]
+    assert "llm_server" in types_by_name
+    assert "llm_model" in types_by_name
 
 
 # ── AC-02: super admin short-circuits ────────────────────────────
@@ -87,8 +86,11 @@ async def test_ac_02_super_admin_short_circuits():
     user = _make_login_user(is_admin=True, visible=[5, 1])
     with _patch_resource_tenant(99):  # would normally reject visibility
         result = await PermissionService.check(
-            user_id=100, relation='viewer', object_type='workflow',
-            object_id='abc', login_user=user,
+            user_id=100,
+            relation="viewer",
+            object_type="workflow",
+            object_id="abc",
+            login_user=user,
         )
     assert result is True
 
@@ -102,12 +104,17 @@ async def test_ac_03_child_admin_accesses_own_child():
     user = _make_login_user(visible=[5, 1], has_admin=True)
     fake_fga = MagicMock()
     fake_fga.check = AsyncMock(return_value=False)  # FGA would refuse
-    with _patch_resource_tenant(5), \
-            _patch_tenant_dao(parent_tenant_id=1), \
-            patch.object(PermissionService, '_get_fga', return_value=fake_fga):
+    with (
+        _patch_resource_tenant(5),
+        _patch_tenant_dao(parent_tenant_id=1),
+        patch.object(PermissionService, "_get_fga", return_value=fake_fga),
+    ):
         result = await PermissionService.check(
-            user_id=100, relation='editor', object_type='workflow',
-            object_id='abc', login_user=user,
+            user_id=100,
+            relation="editor",
+            object_type="workflow",
+            object_id="abc",
+            login_user=user,
         )
     assert result is True
     fake_fga.check.assert_not_awaited()  # L4 short-circuit before FGA
@@ -117,11 +124,13 @@ async def test_ac_03_child_admin_accesses_own_child():
 async def test_ac_04_child_admin_denied_cross_child():
     """Child Admin on tenant:5 cannot reach workflow with tenant_id=7 (visible=[5,1])."""
     user = _make_login_user(visible=[5, 1], has_admin=True)
-    with _patch_resource_tenant(7), \
-            patch.object(PermissionService, '_is_shared_to', AsyncMock(return_value=False)):
+    with _patch_resource_tenant(7), patch.object(PermissionService, "_is_shared_to", AsyncMock(return_value=False)):
         result = await PermissionService.check(
-            user_id=100, relation='viewer', object_type='workflow',
-            object_id='abc', login_user=user,
+            user_id=100,
+            relation="viewer",
+            object_type="workflow",
+            object_id="abc",
+            login_user=user,
         )
     assert result is False
 
@@ -133,13 +142,13 @@ async def test_ac_04_child_admin_denied_cross_child():
 async def test_ac_05_normal_user_no_tenant_admin():
     """Normal user (visible=[1] only) gets has_tenant_admin(5) → False."""
     from bisheng.common.dependencies.user_deps import UserPayload
-    with patch('bisheng.user.domain.services.auth.UserRoleDao') as urd:
+
+    with patch("bisheng.user.domain.services.auth.UserRoleDao") as urd:
         urd.get_user_roles.return_value = []
-        user = UserPayload(user_id=200, user_name='normal', user_role=[], tenant_id=1)
+        user = UserPayload(user_id=200, user_name="normal", user_role=[], tenant_id=1)
     fake_fga = MagicMock()
     fake_fga.check = AsyncMock(return_value=False)
-    with patch('bisheng.core.openfga.manager.aget_fga_client',
-               AsyncMock(return_value=fake_fga)):
+    with patch("bisheng.core.openfga.manager.aget_fga_client", AsyncMock(return_value=fake_fga)):
         result = await user.has_tenant_admin(5)
     assert result is False
 
@@ -148,10 +157,11 @@ async def test_ac_05_normal_user_no_tenant_admin():
 async def test_ac_06_root_tenant_no_admin_tuple():
     """Root tenant short-circuits has_tenant_admin to False without calling FGA."""
     from bisheng.common.dependencies.user_deps import UserPayload
-    with patch('bisheng.user.domain.services.auth.UserRoleDao') as urd:
+
+    with patch("bisheng.user.domain.services.auth.UserRoleDao") as urd:
         urd.get_user_roles.return_value = []
-        user = UserPayload(user_id=300, user_name='superx', user_role=[], tenant_id=1)
-    with patch('bisheng.core.openfga.manager.aget_fga_client') as get_fga:
+        user = UserPayload(user_id=300, user_name="superx", user_role=[], tenant_id=1)
+    with patch("bisheng.core.openfga.manager.aget_fga_client") as get_fga:
         result = await user.has_tenant_admin(1)
     assert result is False
     get_fga.assert_not_called()
@@ -166,15 +176,19 @@ async def test_ac_07_shared_resource_reachable():
     user = _make_login_user(visible=[5, 1])
     fake_fga = MagicMock()
     fake_fga.check = AsyncMock(return_value=True)  # FGA grants viewer via shared_to chain
-    with _patch_resource_tenant(10), \
-            patch.object(PermissionService, '_is_shared_to', AsyncMock(return_value=True)), \
-            _patch_tenant_dao(parent_tenant_id=1), \
-            patch.object(PermissionService, '_get_fga', return_value=fake_fga), \
-            patch.object(PermissionService, '_get_resource_creator',
-                         AsyncMock(return_value=None)):
+    with (
+        _patch_resource_tenant(10),
+        patch.object(PermissionService, "_is_shared_to", AsyncMock(return_value=True)),
+        _patch_tenant_dao(parent_tenant_id=1),
+        patch.object(PermissionService, "_get_fga", return_value=fake_fga),
+        patch.object(PermissionService, "_get_resource_creator", AsyncMock(return_value=None)),
+    ):
         result = await PermissionService.check(
-            user_id=100, relation='viewer', object_type='workflow',
-            object_id='shared-ks', login_user=user,
+            user_id=100,
+            relation="viewer",
+            object_type="workflow",
+            object_id="shared-ks",
+            login_user=user,
         )
     assert result is True
 
@@ -185,13 +199,17 @@ async def test_ac_08_root_non_shared_in_list_visible():
     user = _make_login_user(visible=[5, 1])
     fake_fga = MagicMock()
     fake_fga.check = AsyncMock(return_value=True)  # owner / explicit grant
-    with _patch_resource_tenant(1), \
-            patch.object(PermissionService, '_get_fga', return_value=fake_fga), \
-            patch.object(PermissionService, '_get_resource_creator',
-                         AsyncMock(return_value=None)):
+    with (
+        _patch_resource_tenant(1),
+        patch.object(PermissionService, "_get_fga", return_value=fake_fga),
+        patch.object(PermissionService, "_get_resource_creator", AsyncMock(return_value=None)),
+    ):
         result = await PermissionService.check(
-            user_id=100, relation='viewer', object_type='workflow',
-            object_id='owned', login_user=user,
+            user_id=100,
+            relation="viewer",
+            object_type="workflow",
+            object_id="owned",
+            login_user=user,
         )
     assert result is True
     user.has_tenant_admin.assert_not_awaited()  # L4 skipped (Root)
@@ -207,18 +225,19 @@ async def test_ac_11_grant_writes_only_child_admin():
     fake_fga = MagicMock()
     fake_fga.write_tuples = AsyncMock()
 
-    with patch('bisheng.permission.domain.services.tenant_admin_service.TenantDao') as dao, \
-         patch('bisheng.permission.domain.services.tenant_admin_service.aget_fga_client',
-               AsyncMock(return_value=fake_fga)):
+    with (
+        patch("bisheng.permission.domain.services.tenant_admin_service.TenantDao") as dao,
+        patch("bisheng.core.openfga.manager.aget_fga_client", AsyncMock(return_value=fake_fga)),
+    ):
         dao.aget_by_id = AsyncMock(return_value=fake_tenant)
         await TenantAdminService.grant_tenant_admin(tenant_id=5, user_id=10)
 
     fake_fga.write_tuples.assert_awaited_once()
-    writes = fake_fga.write_tuples.call_args.kwargs['writes']
-    assert writes == [{'user': 'user:10', 'relation': 'admin', 'object': 'tenant:5'}]
+    writes = fake_fga.write_tuples.call_args.kwargs["writes"]
+    assert writes == [{"user": "user:10", "relation": "admin", "object": "tenant:5"}]
     # Crucially: no second write to tenant:1 (Root)
     only_tuple = writes[0]
-    assert only_tuple['object'] != 'tenant:1'
+    assert only_tuple["object"] != "tenant:1"
 
 
 # ── AC-12: members do not get default resource access ────────────
@@ -231,15 +250,21 @@ def test_ac_12_member_not_in_resource_manager_or_editor():
     do NOT get implicit can_read/can_edit/can_manage on resources just by
     belonging to the same tenant.
     """
-    types_by_name = {t['type']: t for t in AUTHORIZATION_MODEL['type_definitions']}
-    for resource_type in ['workflow', 'assistant', 'knowledge_space',
-                          'channel', 'tool', 'dashboard',
-                          'llm_server', 'llm_model']:
-        for relation in ['manager', 'editor', 'viewer']:
-            user_types = types_by_name[resource_type]['metadata']['relations'][relation][
-                'directly_related_user_types']
-            assert {'type': 'tenant', 'relation': 'member'} not in user_types, (
-                f'{resource_type}.{relation} unexpectedly contains tenant#member'
+    types_by_name = {t["type"]: t for t in AUTHORIZATION_MODEL["type_definitions"]}
+    for resource_type in [
+        "workflow",
+        "assistant",
+        "knowledge_space",
+        "channel",
+        "tool",
+        "dashboard",
+        "llm_server",
+        "llm_model",
+    ]:
+        for relation in ["manager", "editor", "viewer"]:
+            user_types = types_by_name[resource_type]["metadata"]["relations"][relation]["directly_related_user_types"]
+            assert {"type": "tenant", "relation": "member"} not in user_types, (
+                f"{resource_type}.{relation} unexpectedly contains tenant#member"
             )
 
 
@@ -249,8 +274,10 @@ def test_ac_12_member_not_in_resource_manager_or_editor():
 @pytest.mark.asyncio
 async def test_ac_13_direct_root_admin_grant_rejected():
     """Calling grant_tenant_admin(1, x) raises 19204; FGA never invoked."""
-    with patch('bisheng.permission.domain.services.tenant_admin_service.TenantDao') as dao, \
-         patch('bisheng.permission.domain.services.tenant_admin_service.aget_fga_client') as get_fga:
+    with (
+        patch("bisheng.permission.domain.services.tenant_admin_service.TenantDao") as dao,
+        patch("bisheng.core.openfga.manager.aget_fga_client") as get_fga,
+    ):
         with pytest.raises(RootTenantAdminNotAllowedError):
             await TenantAdminService.grant_tenant_admin(tenant_id=1, user_id=10)
         dao.aget_by_id.assert_not_called()

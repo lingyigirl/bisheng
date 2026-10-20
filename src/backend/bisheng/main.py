@@ -9,6 +9,7 @@ from loguru import logger
 
 from bisheng.api.router import router, router_rpc
 from bisheng.common.errcode import BaseErrorCode
+from bisheng.common.errcode.managed_agent import ManagedAgentErrorBase
 from bisheng.common.errcode.open_api import OpenApiErrorBase, OpenApiNotFoundError
 from bisheng.common.errcode.scheduled_task import ScheduledTaskErrorBase
 from bisheng.common.exceptions.auth import AuthJWTException
@@ -92,11 +93,28 @@ async def handle_scheduled_task_error(req: Request, exc: "ScheduledTaskErrorBase
     return JSONResponse(content=payload.model_dump())
 
 
+async def handle_managed_agent_error(req: Request, exc: "ManagedAgentErrorBase") -> JSONResponse:
+    """F078:纳管智能体错误**分面**返回(与 F077 同口径)。
+
+    - 密钥鉴权的 ``/api/v2`` 调用 → 真 HTTP 状态(400/403/404/409/429/502);
+    - ``/api/v1`` 管理面 → 保持平台既有信封(HTTP 200 + 业务码)。
+    不访问 ``req.method``(WS scope 下没有该属性)。
+    """
+    payload = exc.return_resp_instance()
+    headers = None
+    if exc.HttpStatus == 429:
+        headers = {"Retry-After": str(exc.kwargs.get("retry_after", 60))}
+    if req.scope.get("open_api_call"):
+        return JSONResponse(status_code=exc.HttpStatus, content=payload.model_dump(), headers=headers)
+    return JSONResponse(content=payload.model_dump(), headers=headers)
+
+
 _EXCEPTION_HANDLERS = {
     HTTPException: handle_http_exception,
     RequestValidationError: handle_request_validation_error,
     OpenApiErrorBase: handle_open_api_error,
     ScheduledTaskErrorBase: handle_scheduled_task_error,
+    ManagedAgentErrorBase: handle_managed_agent_error,
     BaseErrorCode: handle_http_exception,
     Exception: handle_http_exception,
 }

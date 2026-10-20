@@ -479,5 +479,19 @@
   "11913": "Run identity lacks read access to bound knowledge; grant it first",
   "11914": "This app cannot be scheduled (multiple human-input nodes or file inputs)",
   "11915": "The generated schedule draft is invalid; adjust your description and retry",
-  "11916": "Trigger payload contains fields that are not allowed (only task_id and inputs)"
+  "11916": "Trigger payload contains fields that are not allowed (only task_id and inputs)",
+  "12101": "Managed agent not found or not accessible",
+  "12102": "Invalid managed agent configuration",
+  "12103": "Managed agent name or endpoint already exists",
+  "12104": "Unsupported managed agent source or protocol",
+  "12105": "Managed agent is not online",
+  "12106": "Managed agent upstream call failed or timed out",
+  "12107": "Managed agent credential is missing or invalid",
+  "12108": "Managed agent health check failed",
+  "12109": "Invalid or disabled scenario/industry code",
+  "12110": "Managed agent is still referenced by enabled scheduled tasks",
+  "12111": "Managed agent outbound address rejected by security policy",
+  "12112": "Managed agent invocation rate limit exceeded",
+  "12113": "Managed agent upstream response invalid or too large",
+  "12114": "Managed agent invoke payload contains disallowed fields"
 }
