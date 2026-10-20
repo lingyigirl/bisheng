@@ -42,7 +42,8 @@
     "finishedAt": "結果 {{time}}",
     "duration": "所要時間 {{duration}}",
     "version": "バージョン {{version}}",
-    "viewMonitor": "前回実行の監視"
+    "viewMonitor": "前回実行の監視",
+    "planFailureHint": "この計画実行は失敗し、実際の実行は行われていません"
   },
   "form": {
     "editTitle": "定期タスクの編集",

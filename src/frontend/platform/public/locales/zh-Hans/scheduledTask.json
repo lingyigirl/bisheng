@@ -42,7 +42,8 @@
     "finishedAt": "结果 {{time}}",
     "duration": "耗时 {{duration}}",
     "version": "版本 {{version}}",
-    "viewMonitor": "上次运行监控"
+    "viewMonitor": "上次运行监控",
+    "planFailureHint": "本轮为计划轮次失败，未实际运行"
   },
   "form": {
     "editTitle": "编辑定时任务",
