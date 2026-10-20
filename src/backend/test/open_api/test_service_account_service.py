@@ -96,6 +96,13 @@ def fake_redis(monkeypatch):
     monkeypatch.setattr(cred_service, "_get_redis", _get)
     # 11806 tenant-status check also consults Redis; share the fake.
     monkeypatch.setattr(deps, "_get_redis", _get)
+    # Cache miss triggers a tenant-row check; keep unit tests off the real DB.
+    from types import SimpleNamespace
+
+    async def _tenant_active(tenant_id: int):
+        return SimpleNamespace(status="active")
+
+    monkeypatch.setattr("bisheng.database.models.tenant.TenantDao.aget_by_id", _tenant_active)
     monkeypatch.setattr(cred_service, "_credential_cache_ttl", lambda: 3)
     return fake
 

@@ -107,11 +107,18 @@ async def _assert_tenant_active(tenant_id: int | None) -> None:
     The global HTTP middleware checks the *JWT* tenant (ROOT for key-based
     requests, see design §5 pitfall 1), so the open-API dependency must check
     the credential's own tenant. Redis blacklist is the fast path written by
-    ``TenantService.aupdate_tenant_status``; on Redis failure fall back to the
-    authoritative tenant row (fail-closed).
+    ``TenantService.aupdate_tenant_status``; **on a cache miss or Redis failure**
+    we confirm against the authoritative tenant row (fail-closed) so a flushed
+    blacklist cannot silently re-enable a disabled tenant. The root tenant is
+    system-protected (cannot be disabled) and is skipped.
     """
     if not tenant_id:
         raise OpenApiTenantDisabledError()
+    if tenant_id == DEFAULT_TENANT_ID:
+        # Root tenant: `TenantService._guard_default_tenant` forbids disabling
+        # it, and the middleware already checks the root tenant for key-based
+        # requests. Avoid an extra DB round-trip on the default-tenant path.
+        return
 
     from bisheng.tenant.domain.services.tenant_service import DISABLED_TENANT_KEY
 
@@ -119,7 +126,6 @@ async def _assert_tenant_active(tenant_id: int | None) -> None:
         redis = await _get_redis()
         if await redis.aget(DISABLED_TENANT_KEY.format(tenant_id)):
             raise OpenApiTenantDisabledError()
-        return
     except OpenApiTenantDisabledError:
         raise
     except Exception:
