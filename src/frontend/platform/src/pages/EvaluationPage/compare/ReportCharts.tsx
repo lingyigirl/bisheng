@@ -32,7 +32,7 @@ function value(side: CompareReportQuestion["v1"], key: string): number | null {
 }
 
 /**
- * F067 图表：分组柱状（准确率/F1/召回，同为 % 共用一根轴）+ 逐题折线（横轴题号，
+ * F090 图表：分组柱状（准确率/F1/召回，同为 % 共用一根轴）+ 逐题折线（横轴题号，
  * 两版两条线）。逐题图始终只画**一个**指标 → 独立纵轴；延迟/Token 不会被塞进
  * 百分比轴（design 坑 1）。
  */

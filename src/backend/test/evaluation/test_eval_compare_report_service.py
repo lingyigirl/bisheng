@@ -1,4 +1,4 @@
-"""F067: report assembly service — version ordering, the 6-metric cards (no
+"""F090: report assembly service — version ordering, the 6-metric cards (no
 pass/fail judgment), per-question all-6-metrics, title stats/failure reasons,
 and owner/tenant access errors."""
 

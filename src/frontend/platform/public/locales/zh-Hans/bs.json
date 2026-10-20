@@ -1589,6 +1589,17 @@
     "monitorTransactionId": "交易标识",
     "monitorKeywordPlaceholder": "搜索交易标识/流水号",
     "monitorRefresh": "刷新",
+    "monitorFeedback": "反馈筛选",
+    "monitorFeedbackEnum": {
+        "exclude_disliked": "排除差评",
+        "liked": "仅点赞",
+        "all": "全部反馈"
+    },
+    "monitorExport": "导出微调数据",
+    "monitorExporting": "导出中...",
+    "monitorExportTitle": "导出确认",
+    "monitorExportConfirm": "将按当前筛选条件导出单轮「问题-答案」为微调 JSON。文件包含原始对话内容，可能含客户敏感信息，请妥善保管并按行内数据安全要求使用。",
+    "monitorExportConfirmOk": "确认导出",
     "monitorDetail": "交易详情",
     "monitorRunInfo": "运行信息",
     "monitorNodeView": "节点执行",

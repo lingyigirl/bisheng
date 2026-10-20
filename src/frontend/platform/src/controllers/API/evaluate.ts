@@ -116,7 +116,7 @@ export const getEvaluationCompareApi = async (groupId: string): Promise<Evaluati
     return await axios.get(`/api/v1/evaluation/compare/${groupId}`);
 };
 
-// ============ F067 可视化对比报告 ============
+// ============ F090 可视化对比报告 ============
 
 /** one report metric card: direction + both versions' aggregate value */
 export type CompareReportMetric = {

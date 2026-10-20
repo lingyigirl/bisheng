@@ -1,4 +1,4 @@
-"""F067: conclusion engine — priority chain 准确率→幻觉率→成本→延迟 with
+"""F090: conclusion engine — priority chain 准确率→幻觉率→成本→延迟 with
 direction normalization (lower-is-better reversed) and per-type tolerance."""
 
 import pytest

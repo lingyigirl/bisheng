@@ -273,6 +273,10 @@ export function PreviewBody({ file, versionId, fileList, onArtifactPreview }: Pr
         // toolbar (back / download / fullscreen / close) provides the chrome.
         return (
             <FilePreview
+                // Viewer internals (PDF documents, parsed DOCX HTML, format-specific
+                // errors) belong to one file only. Remount on every source change so
+                // switching PDF → DOCX → PDF cannot reuse stale viewer state.
+                key={`${file.file_id || file.file_url}::${resolvedUrl}`}
                 fileName={file.file_name}
                 fileType={getFileExtension(file.file_name)}
                 fileUrl={resolvedUrl}

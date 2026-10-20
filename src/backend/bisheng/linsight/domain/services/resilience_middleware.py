@@ -38,23 +38,45 @@ from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, Mod
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from loguru import logger
 
-from bisheng.common.services.llm_error_classifier import Behavior, classify_behavior
-
-# Synthetic reply substituted for a degraded subagent step. Read by the PARENT
-# planner as a control note ("this leg failed — continue with what you have"),
-# NOT as a valid finding. Kept bilingual + instruction-flavored so it works
-# regardless of the task language: the model is told to note the gap in the
-# USER's language and not echo this notice verbatim, so an English deliverable
-# never leaks an untranslated Chinese banner.
-_DEGRADE_MESSAGE = (
-    "⚠️ 本步因触发模型服务商安全策略或多次调用失败已被跳过，结果不完整。"
-    "请基于其他已获得的信息继续完成任务，并在最终交付物中用用户的语言简要说明此处缺失，"
-    "不要原样输出本提示。\n"
-    "[System note] This step was skipped due to a provider safety block or repeated "
-    "call failures; its result is incomplete. Continue with the information already "
-    "gathered, briefly acknowledge the gap in the final deliverable using the user's "
-    "language, and do not echo this notice verbatim."
+from bisheng.common.services.llm_error_classifier import (
+    Behavior,
+    ErrorType,
+    classify_behavior,
+    label_error,
 )
+
+# Stable result prefix for a degraded subagent leg. The parent planner treats
+# it as an unavailable partial result; the task/background projection uses the
+# same prefix to render the member as failed instead of a green completion.
+DEGRADED_RESULT_PREFIX = "【未完成】"
+
+# Short, display-safe child results. The parent model can carry on with the
+# remaining evidence without a second hidden "system note" leaking into member
+# output or the final deliverable.
+_DEGRADE_MESSAGE = f"{DEGRADED_RESULT_PREFIX}本步骤模型调用失败, 未取得该部分结果."
+_DEGRADE_MESSAGES: dict[ErrorType, str] = {
+    ErrorType.CONTENT_FILTER: f"{DEGRADED_RESULT_PREFIX}本步骤被模型服务商的内容安全策略拦截, 未取得该部分结果.",
+    ErrorType.MODEL_REQUEST_INVALID: f"{DEGRADED_RESULT_PREFIX}当前模型不支持本步骤的请求格式, 未取得该部分结果.",
+    ErrorType.QUOTA_EXHAUSTED: f"{DEGRADED_RESULT_PREFIX}模型服务额度不足, 未取得该部分结果.",
+    ErrorType.AUTH_ERROR: f"{DEGRADED_RESULT_PREFIX}模型访问权限不足, 未取得该部分结果.",
+    ErrorType.RATE_LIMIT: f"{DEGRADED_RESULT_PREFIX}模型服务持续限流, 重试后仍未取得该部分结果.",
+    ErrorType.SERVICE_UNAVAILABLE: f"{DEGRADED_RESULT_PREFIX}模型服务暂时不可用, 重试后仍未取得该部分结果.",
+    ErrorType.NETWORK_TIMEOUT: f"{DEGRADED_RESULT_PREFIX}模型调用超时或连接失败, 未取得该部分结果.",
+}
+
+
+def is_degraded_result(text: str | None) -> bool:
+    """Whether a subagent result was produced by the resilience fallback."""
+    return bool(text) and text.lstrip().startswith(DEGRADED_RESULT_PREFIX)
+
+
+def _degrade_text(exc: Exception) -> str:
+    reason = label_error(exc)
+    if reason is ErrorType.MODEL_REQUEST_INVALID:
+        detail = f"{getattr(exc, 'message', '')} {getattr(exc, 'code', '')} {getattr(exc, 'body', '')}".lower()
+        if "image input" in detail:
+            return f"{DEGRADED_RESULT_PREFIX}当前模型不支持图片输入, 未取得该部分结果."
+    return _DEGRADE_MESSAGES.get(reason, _DEGRADE_MESSAGE)
 
 
 # Layer 2 (截断即时检测): a corrective nudge injected when a model call is cut off
@@ -600,7 +622,14 @@ class LinsightModelResilienceMiddleware(AgentMiddleware):
             "[linsight-resilience] subagent model call degraded "
             f"({self._degrade_count}/{self.max_degrade}): {type(exc).__name__}: {exc}"
         )
-        return AIMessage(content=_DEGRADE_MESSAGE)
+        reason = label_error(exc)
+        return AIMessage(
+            content=_degrade_text(exc),
+            additional_kwargs={
+                "linsight_degraded": True,
+                "degradation_reason": reason.value,
+            },
+        )
 
     async def awrap_model_call(
         self,
