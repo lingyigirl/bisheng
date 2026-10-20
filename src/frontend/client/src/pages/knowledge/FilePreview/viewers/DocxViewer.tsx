@@ -16,22 +16,29 @@ export function DocxViewer({ fileUrl, zoomLevel }: DocxViewerProps) {
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
+        let cancelled = false;
         const fetchAndConvert = async () => {
             try {
+                setError(null);
                 setLoading(true);
                 const response = await fetch(fileUrl);
                 if (!response.ok) throw new Error(localize("com_knowledge.failure_status", { 0: response.status }));
                 const arrayBuffer = await response.arrayBuffer();
                 const result = await mammoth.convertToHtml({ arrayBuffer });
+                if (cancelled) return;
                 setHtmlContent(result.value);
                 setError(null);
             } catch (err: any) {
+                if (cancelled) return;
                 setError(err.message || localize("com_knowledge.load_doc_failed"));
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         };
         fetchAndConvert();
+        return () => {
+            cancelled = true;
+        };
     }, [fileUrl]);
 
     if (loading) {

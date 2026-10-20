@@ -34,6 +34,7 @@ from loguru import logger
 
 from bisheng.common.utils.think_tags import strip_reasoning_tags
 from bisheng.linsight.domain.services.assistant_text_mapper import AssistantTextMapper
+from bisheng.linsight.domain.services.resilience_middleware import is_degraded_result
 from bisheng_langchain.linsight.event import (
     BaseEvent,
     ExecStep,
@@ -711,7 +712,10 @@ class StreamEventMapper:
             # This is a launch acknowledgement, not the child's completion.
             return []
         output = self._message_text(message)
-        payload = {"output": output, "outcome": getattr(message, "status", "success")}
+        outcome = getattr(message, "status", "success")
+        if is_degraded_result(output):
+            outcome = "error"
+        payload = {"output": output, "outcome": outcome}
 
         open_call = self.ctx.open_calls.pop(call_id, None)
         if open_call is None:
@@ -728,7 +732,11 @@ class StreamEventMapper:
 
     def _handle_background_end(self, chunk: dict[str, Any]) -> list[BaseEvent]:
         call_id = chunk["call_id"]
-        payload = {"output": chunk["output"], "outcome": "success" if chunk["status"] == "completed" else "error"}
+        degraded = is_degraded_result(chunk["output"])
+        payload = {
+            "output": chunk["output"],
+            "outcome": "error" if degraded or chunk["status"] != "completed" else "success",
+        }
         open_call = self.ctx.open_calls.pop(call_id, None)
         if open_call is None:
             self.ctx.orphan_ends[call_id] = payload

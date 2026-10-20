@@ -27,6 +27,7 @@ from bisheng.common.errcode.open_api import (
     OpenApiKeyRevokedError,
     OpenApiOwnerPrivilegedError,
     OpenApiScopeMissingError,
+    OpenApiTenantDisabledError,
 )
 from bisheng.core.config.open_api import OpenApiConf
 from bisheng.core.context.tenant import DEFAULT_TENANT_ID, get_current_tenant_id, get_visible_tenant_ids
@@ -103,6 +104,16 @@ def fake_redis(monkeypatch):
         return fake
 
     monkeypatch.setattr(cred_service, "_get_redis", _get)
+    # The auth dependency checks the credential tenant's disabled-tenant key;
+    # share the same fake so unit tests never touch real Redis/DB.
+    monkeypatch.setattr(deps, "_get_redis", _get)
+    # On a cache miss the dependency re-checks the tenant row; default to active.
+    from types import SimpleNamespace
+
+    async def _tenant_active(tenant_id: int):
+        return SimpleNamespace(status="active")
+
+    monkeypatch.setattr("bisheng.database.models.tenant.TenantDao.aget_by_id", _tenant_active)
     monkeypatch.setattr(cred_service, "_credential_cache_ttl", lambda: 3)
     return fake
 
@@ -298,6 +309,57 @@ async def test_disabled_account(patched_db, fake_redis, monkeypatch):
         await _enter(_http(f"Bearer {plaintext}"))
 
 
+async def test_disabled_tenant_rejected(patched_db, fake_redis, monkeypatch):
+    """11806：密钥所属租户停用时，鉴权依赖必须自查（中间件看的是 ROOT 租户）。"""
+    _enable_deployment(monkeypatch, True)
+    _stub_owner(monkeypatch, _StubPayload())
+    _, plaintext = await _seed_account_and_key()
+    fake_redis.store[f"disabled_tenant:{TENANT_ID}"] = "1"
+
+    with pytest.raises(OpenApiTenantDisabledError):
+        await _enter(_http(f"Bearer {plaintext}"))
+
+
+async def test_disabled_tenant_cache_miss_falls_back_to_db(patched_db, fake_redis, monkeypatch):
+    """Redis 正常但黑名单键缺失（重启/清空）时，仍要回查租户行。"""
+    _enable_deployment(monkeypatch, True)
+    _stub_owner(monkeypatch, _StubPayload())
+    _, plaintext = await _seed_account_and_key()
+
+    class _DisabledTenant:
+        status = "disabled"
+
+    async def _get_tenant(tenant_id: int):
+        return _DisabledTenant()
+
+    monkeypatch.setattr("bisheng.database.models.tenant.TenantDao.aget_by_id", _get_tenant)
+
+    with pytest.raises(OpenApiTenantDisabledError):
+        await _enter(_http(f"Bearer {plaintext}"))
+
+
+async def test_disabled_tenant_redis_failure_falls_back_to_db(patched_db, fake_redis, monkeypatch):
+    """Redis 不可用时不得 fail-open：回查租户行，停用仍拒绝 11806。"""
+    _enable_deployment(monkeypatch, True)
+    _stub_owner(monkeypatch, _StubPayload())
+    _, plaintext = await _seed_account_and_key()
+
+    async def _redis_down():
+        raise RuntimeError("redis down")
+
+    class _DisabledTenant:
+        status = "disabled"
+
+    async def _get_tenant(tenant_id: int):
+        return _DisabledTenant()
+
+    monkeypatch.setattr(deps, "_get_redis", _redis_down)
+    monkeypatch.setattr("bisheng.database.models.tenant.TenantDao.aget_by_id", _get_tenant)
+
+    with pytest.raises(OpenApiTenantDisabledError):
+        await _enter(_http(f"Bearer {plaintext}"))
+
+
 async def test_missing_marker_fails_closed(patched_db, fake_redis, monkeypatch):
     _enable_deployment(monkeypatch, True)
     _stub_owner(monkeypatch, _StubPayload())
@@ -384,6 +446,7 @@ async def test_expired_key_rejected(patched_db, fake_redis, monkeypatch):
 # ---------------------------------------------------------------------------
 # ②a 平台免登录面(T-14,discovery 决策 D5)
 # ---------------------------------------------------------------------------
+
 
 @open_api_scope("assistant:read", guest=True)
 def _guest_endpoint():

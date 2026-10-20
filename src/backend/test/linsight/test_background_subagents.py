@@ -19,6 +19,7 @@ from bisheng.linsight.domain.services.background_subagents import (
     BackgroundSubagentMiddleware,
     bind_run_owner,
 )
+from bisheng.linsight.domain.services.resilience_middleware import DEGRADED_RESULT_PREFIX
 
 
 class _TaskSchema(BaseModel):
@@ -99,6 +100,22 @@ async def test_background_start_returns_job_id_and_output_collects_result():
     assert "产物: scratch/a.xlsx" in out
     listing = await _call_tool(mw, "job_list", {})
     assert "job_1" in listing and "completed" in listing
+
+
+async def test_degraded_background_result_is_failed_but_keeps_partial_text():
+    mw = BackgroundSubagentMiddleware()
+    partial = f"{DEGRADED_RESULT_PREFIX}当前模型不支持本步骤的请求格式, 未取得该部分结果."
+
+    async def handler(_request):
+        return ToolMessage(content=partial, name="task", tool_call_id="tc1")
+
+    await mw.awrap_tool_call(_bg_call(), handler)
+    await asyncio.sleep(0.02)
+
+    listing = await _call_tool(mw, "job_list", {})
+    output = await _call_tool(mw, "job_output", {"job_id": "job_1"})
+    assert "failed" in listing
+    assert partial in output
 
 
 @pytest.mark.parametrize("background", [True, False])

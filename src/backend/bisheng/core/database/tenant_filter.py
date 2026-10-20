@@ -132,6 +132,19 @@ _TENANT_AWARE_MODEL_MODULES = (
     "bisheng.open_api.domain.models.service_account",
     "bisheng.open_api.domain.models.api_credential",
     "bisheng.open_api.domain.models.open_api_tenant_setting",
+    # F077: scheduled tasks (one row per task, carrying its own runtime state).
+    # Same reasoning as F059/F058/F061/F076 above — the discovery snapshot runs
+    # once, so listing it explicitly is what keeps the table filtered if the
+    # router import edge moves. Missing here means rows land in the ROOT tenant
+    # and one tenant's tasks would be visible to another (spec AC-53).
+    "bisheng.scheduled_task.domain.models.scheduled_task",
+    # F078: managed-agent registry, taxonomy and invocation traces. Same
+    # reasoning as F076/F077 above — the discovery snapshot runs once. Missing
+    # here means rows land in the ROOT tenant and one tenant's agents/traces
+    # would be visible to another (spec AC-60 / INV-26).
+    "bisheng.managed_agent.domain.models.managed_agent",
+    "bisheng.managed_agent.domain.models.taxonomy",
+    "bisheng.managed_agent.domain.models.run",
 )
 
 

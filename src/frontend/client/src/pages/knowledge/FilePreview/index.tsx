@@ -90,11 +90,17 @@ export default function FilePreview({
 
     // Load PDF
     useEffect(() => {
-        if (viewerType !== "pdf" || !fileUrl) return;
+        setError(null);
+        setPdfDoc(null);
+        setCurrentPage(1);
+        setTotalPages(0);
+        setTargetPage(null);
+        if (viewerType !== "pdf" || !fileUrl) return undefined;
 
         pdfjsLib.GlobalWorkerOptions.workerSrc =
             __APP_ENV__.BASE_URL + "/pdf.worker.min.js";
 
+        let cancelled = false;
         pdfjsLib
             .getDocument({
                 url: fileUrl,
@@ -105,13 +111,21 @@ export default function FilePreview({
                 cMapPacked: true,
             })
             .promise.then((doc) => {
+                if (cancelled) {
+                    void doc.destroy();
+                    return;
+                }
                 setPdfDoc(doc);
                 setTotalPages(doc.numPages);
             })
             .catch((e) => {
+                if (cancelled) return;
                 console.error("Failed to load PDF:", e);
                 setError(localize("com_knowledge.load_pdf_failed"));
             });
+        return () => {
+            cancelled = true;
+        };
     }, [fileUrl, viewerType]);
 
     // Update document title

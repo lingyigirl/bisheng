@@ -19,7 +19,7 @@ export function SubagentEditor({ member, options, disabled, onChange }: Subagent
     const patch = (value: Partial<SubagentConfig>) => onChange({ ...member, ...value });
     const resourceCount = member.skill_names.length + member.tool_refs.length + member.connector_refs.length;
     return (
-        <Tabs defaultValue="basics" className="text-body-sm text-text-1">
+        <Tabs defaultValue="basics" className="flex h-full min-h-0 flex-col text-body-sm text-text-1">
             <TabsList className="mb-4 grid w-full grid-cols-2 gap-1 bg-fill-2 p-1" aria-label={t('harness.memberSettings')}>
                 <TabsTrigger value="basics" className="min-w-0 text-body-sm text-text-2 data-[state=active]:text-text-1">{t('harness.basicSettings')}</TabsTrigger>
                 <TabsTrigger value="resources" className="min-w-0 gap-2 text-body-sm text-text-2 data-[state=active]:text-text-1">
@@ -53,7 +53,7 @@ export function SubagentEditor({ member, options, disabled, onChange }: Subagent
                     <Textarea disabled={disabled} className="mt-3 min-h-32" aria-label={t('harness.prompt')} value={member.system_prompt} maxLength={12000} onChange={(e) => patch({ system_prompt: e.target.value })} />
                 </details>
             </TabsContent>
-            <TabsContent value="resources" className="m-0 p-0">
+            <TabsContent value="resources" className="m-0 min-h-0 flex-1 p-0">
                 <SubagentResources member={member} options={options} disabled={disabled} onChange={onChange} />
             </TabsContent>
         </Tabs>

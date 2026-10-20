@@ -31,6 +31,7 @@ from bisheng.common.errcode.open_api import (
     OpenApiKeyMissingError,
     OpenApiOwnerPrivilegedError,
     OpenApiScopeMissingError,
+    OpenApiTenantDisabledError,
 )
 from bisheng.common.services.config_service import settings
 from bisheng.core.context.tenant import (
@@ -93,6 +94,55 @@ async def _assert_no_identity_input(conn: HTTPConnection) -> None:
                 raise OpenApiIdentityInputRejectedError()
 
 
+async def _get_redis():
+    """Indirection for tests; production always uses the shared Redis client."""
+    from bisheng.core.cache.redis_manager import get_redis_client
+
+    return await get_redis_client()
+
+
+async def _assert_tenant_active(tenant_id: int | None) -> None:
+    """11806: reject credentials whose tenant is disabled/archived.
+
+    The global HTTP middleware checks the *JWT* tenant (ROOT for key-based
+    requests, see design §5 pitfall 1), so the open-API dependency must check
+    the credential's own tenant. Redis blacklist is the fast path written by
+    ``TenantService.aupdate_tenant_status``; **on a cache miss or Redis failure**
+    we confirm against the authoritative tenant row (fail-closed) so a flushed
+    blacklist cannot silently re-enable a disabled tenant. The root tenant is
+    system-protected (cannot be disabled) and is skipped.
+    """
+    if not tenant_id:
+        raise OpenApiTenantDisabledError()
+
+    from bisheng.tenant.domain.services.tenant_service import DISABLED_TENANT_KEY
+
+    try:
+        redis = await _get_redis()
+        if await redis.aget(DISABLED_TENANT_KEY.format(tenant_id)):
+            raise OpenApiTenantDisabledError()
+    except OpenApiTenantDisabledError:
+        raise
+    except Exception:
+        # Redis unavailable: fall through to the DB below. This is a security
+        # check, so an infrastructure error must not turn into an allow.
+        logger.warning("open_api: tenant status Redis check failed for tenant {}; falling back to DB", tenant_id)
+
+    if tenant_id == DEFAULT_TENANT_ID:
+        # Root tenant: `TenantService._guard_default_tenant` forbids disabling
+        # it, and the middleware already checks the root blacklist. We still
+        # honored the blacklist above; skip only the extra DB round-trip.
+        return
+
+    from bisheng.core.context.tenant import bypass_tenant_filter
+    from bisheng.database.models.tenant import TenantDao
+
+    with bypass_tenant_filter():
+        tenant = await TenantDao.aget_by_id(tenant_id)
+    if tenant is None or tenant.status != "active":
+        raise OpenApiTenantDisabledError()
+
+
 async def _guest_access_enabled() -> bool:
     """平台免登录总开关(DB 配置 `default_operator.enable_guest_access`)。
 
@@ -144,6 +194,9 @@ async def _resolve_principal(
         raise OpenApiAccountDisabledError()
     if audit_ctx is not None:
         audit_ctx["account"] = account
+
+    # ④b 租户活性(11806)：中间件对带密钥请求看的是 ROOT 租户，必须由这里自查。
+    await _assert_tenant_active(credential.tenant_id)
 
     # ⑤ 端点标记与权限位(11811 漏标 / 11807 缺位)
     if marker is None:

@@ -36,6 +36,7 @@ interface ChatErrorCardProps {
 const KNOWN_TYPES = new Set([
     'recovery_blocked',
     'content_filter',
+    'model_request_invalid',
     'quota_exhausted',
     'rate_limit',
     'service_unavailable',

@@ -1224,7 +1224,8 @@
     "unsavedChangesLeave": "您有未保存的更改,确定要离开吗?",
     "leaveAndSave": "离开并保存",
     "leaveWithoutSave": "不保存,直接退出",
-    "selectModel": "选择一个模型"
+    "selectModel": "选择一个模型",
+    "managedAgents": "智能体纳管"
   },
   "bench": {
     "daily": "日常",
@@ -1364,7 +1365,9 @@
       "tenant": "租户管理",
       "llm": "模型管理",
       "approval": "审批管理",
-      "docExtract": "文档抽取"
+      "docExtract": "文档抽取",
+      "schedule": "定时任务",
+      "managedAgent": "智能体纳管"
     },
     "eventTypeEnum": {
       "createChat": "新建会话",
@@ -1442,7 +1445,19 @@
       "docExtractTemplateUpdate": "修改文档抽取模板",
       "docExtractTemplateDelete": "删除文档抽取模板",
       "docExtractTemplateEnable": "启用文档抽取模板",
-      "docExtractTemplateDisable": "停用文档抽取模板"
+      "docExtractTemplateDisable": "停用文档抽取模板",
+      "scheduleTaskCreate": "新建定时任务",
+      "scheduleTaskUpdate": "编辑定时任务",
+      "scheduleTaskEnable": "启用定时任务",
+      "scheduleTaskDisable": "停用定时任务",
+      "scheduleTaskDelete": "删除定时任务",
+      "scheduleTaskRunNow": "立即运行定时任务",
+      "managedAgentCreate": "新建纳管智能体",
+      "managedAgentUpdate": "编辑纳管智能体",
+      "managedAgentDelete": "删除纳管智能体",
+      "managedAgentEnable": "启用纳管智能体",
+      "managedAgentDisable": "停用纳管智能体",
+      "managedAgentHealthCheck": "健康检查"
     },
     "objectTypeEnum": {
       "none": "无",
@@ -1608,7 +1623,10 @@
       "success": "成功",
       "failed": "失败"
     },
-    "monitorTraceId": "调用流水号"
+    "monitorTraceId": "调用流水号",
+    "monitorTracePending": "该运行尚未写入监控，请稍后刷新",
+    "auditBefore": "操作前",
+    "auditAfter": "操作后"
   },
   "tag": {
     "labelMaxLength": "标签名不能超过10个字符",
@@ -1674,7 +1692,8 @@
     "embedIntoWebsite": "嵌入到网站中",
     "styleOne": "样式一",
     "styleTwo": "样式二",
-    "embedCodeDescription": "将以下代码嵌入到网站中"
+    "embedCodeDescription": "将以下代码嵌入到网站中",
+    "scheduledTasks": "定时任务"
   },
   "dataset": {
     "confirmDelete": "确认删除数据集！",

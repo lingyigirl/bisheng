@@ -1235,7 +1235,8 @@
     "unsavedChangesLeave": "You have unsaved changes, are you sure you want to leave?",
     "leaveAndSave": "Leave and save",
     "leaveWithoutSave": "Leave without saving",
-    "selectModel": "Select a model"
+    "selectModel": "Select a model",
+    "managedAgents": "Managed agents"
   },
   "bench": {
     "daily": "Daily",
@@ -1381,7 +1382,9 @@
       "tenant": "Tenant Management",
       "llm": "Model Management",
       "approval": "Approval Management",
-      "docExtract": "Document Extraction"
+      "docExtract": "Document Extraction",
+      "schedule": "Scheduled Tasks",
+      "managedAgent": "Managed agents"
     },
     "eventTypeEnum": {
       "createChat": "Create Session",
@@ -1459,7 +1462,19 @@
       "docExtractTemplateUpdate": "Update Document Extraction Template",
       "docExtractTemplateDelete": "Delete Document Extraction Template",
       "docExtractTemplateEnable": "Enable Document Extraction Template",
-      "docExtractTemplateDisable": "Disable Document Extraction Template"
+      "docExtractTemplateDisable": "Disable Document Extraction Template",
+      "scheduleTaskCreate": "Create Scheduled Task",
+      "scheduleTaskUpdate": "Update Scheduled Task",
+      "scheduleTaskEnable": "Enable Scheduled Task",
+      "scheduleTaskDisable": "Disable Scheduled Task",
+      "scheduleTaskDelete": "Delete Scheduled Task",
+      "scheduleTaskRunNow": "Run Scheduled Task Now",
+      "managedAgentCreate": "Create managed agent",
+      "managedAgentUpdate": "Update managed agent",
+      "managedAgentDelete": "Delete managed agent",
+      "managedAgentEnable": "Enable managed agent",
+      "managedAgentDisable": "Disable managed agent",
+      "managedAgentHealthCheck": "Health check"
     },
     "objectTypeEnum": {
       "none": "None",
@@ -1663,7 +1678,10 @@
       "success": "Success",
       "failed": "Failed"
     },
-    "monitorTraceId": "Trace ID"
+    "monitorTraceId": "Trace ID",
+    "monitorTracePending": "This run has not been indexed in monitoring yet. Please refresh later.",
+    "auditBefore": "Before",
+    "auditAfter": "After"
   },
   "tag": {
     "labelMaxLength": "Label name cannot exceed 10 characters",
@@ -1729,7 +1747,8 @@
     "embedIntoWebsite": "Embed into a website",
     "styleOne": "Style One",
     "styleTwo": "Style Two",
-    "embedCodeDescription": "Embed the following code into your website"
+    "embedCodeDescription": "Embed the following code into your website",
+    "scheduledTasks": "Scheduled Tasks"
   },
   "dataset": {
     "confirmDelete": "Confirm delete dataset!",

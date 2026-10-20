@@ -75,7 +75,7 @@ def test_model_version_changed_with_the_model():
     """A model change that leaves MODEL_VERSION alone never reaches running
     deployments: they key their reload decision on this string."""
     assert MODEL_VERSION != "v2.0.2"
-    assert len(AUTHORIZATION_MODEL["type_definitions"]) == 17
+    assert len(AUTHORIZATION_MODEL["type_definitions"]) == 18
 
 
 # ── T-08: resource type + permission points ──────────────────────

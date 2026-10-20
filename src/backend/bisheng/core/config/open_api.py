@@ -29,6 +29,14 @@ class OpenApiConf(BaseModel):
             "TTL may never exceed that."
         ),
     )
+    default_tenant_enforce_keys: bool = Field(
+        default=False,
+        description=(
+            "部署便利（F077）：启动时若【默认租户】尚无策略行，按此值播种一行。"
+            "已有行**不覆盖**——DB 是策略的唯一事实源，运维手动关掉不会因重启被改回来；"
+            "缺行且为 false 时保持\"缺行=未启用\"的 fail-closed 语义。"
+        ),
+    )
     service_account_idle_days: int = Field(
         default=90,
         description="Days without use after which the management list flags an account as idle.",

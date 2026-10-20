@@ -171,6 +171,13 @@ _MANAGE_PERMISSION_BY_RESOURCE_TIER = {
         "manager": "manage_datasource_manager",
         "usage": "manage_datasource_viewer",
     },
+    # F078: managed agents reuse the application management tiers.
+    # Mirrors resource_authorization_service._MANAGE_PERMISSION_BY_RESOURCE_TIER.
+    "managed_agent": {
+        "owner": "manage_app_owner",
+        "manager": "manage_app_manager",
+        "usage": "manage_app_viewer",
+    },
 }
 _MANAGE_PERMISSION_BY_RESOURCE = {
     "knowledge_space": "manage_space_relation",
@@ -672,9 +679,7 @@ async def _grant_departments_search(
     )
 
 
-async def _grant_departments_path_tree(
-    *, tenant_id: int, dept_id: int, restrict_root_path: str | None = None
-) -> dict:
+async def _grant_departments_path_tree(*, tenant_id: int, dept_id: int, restrict_root_path: str | None = None) -> dict:
     return await GrantSubjectQueryService().get_departments_path_tree(
         tenant_id=tenant_id, dept_id=dept_id, restrict_root_path=restrict_root_path
     )
@@ -686,6 +691,7 @@ async def _list_knowledge_space_grant_user_groups(
     return await GrantSubjectQueryService().list_user_groups(
         tenant_id=tenant_id, keyword=keyword, login_user=login_user
     )
+
 
 async def _resolve_grant_subject_tenant_id(
     *,
@@ -905,6 +911,7 @@ async def authorize_resource(
     except BaseErrorCode as error:
         return error.__class__.return_resp(msg=error.message)
     return resp_200(None)
+
 
 @router.get("/creation-grant-subjects")
 async def get_creation_grant_subjects(

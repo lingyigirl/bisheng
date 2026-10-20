@@ -57,7 +57,7 @@ class FineGrainedPermissionService:
 
     @staticmethod
     def default_permission_ids_for_relation(object_type: str, relation: str) -> set[str]:
-        if object_type in {"workflow", "assistant"}:
+        if object_type in {"workflow", "assistant", "managed_agent"}:
             return default_application_permissions(relation)
         if object_type == "tool":
             return default_tool_permissions(relation)
@@ -583,8 +583,7 @@ class FineGrainedPermissionService:
         bindings = [
             binding
             for binding in await _get_bindings()
-            if binding.get("resource_type") == object_type
-            and str(binding.get("resource_id")) == str(object_id)
+            if binding.get("resource_type") == object_type and str(binding.get("resource_id")) == str(object_id)
         ]
         user_subject_strings = await cls.get_current_user_subject_strings(login_user)
         binding_department_paths = await cls.get_binding_department_paths(bindings)

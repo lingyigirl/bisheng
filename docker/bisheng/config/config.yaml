@@ -157,3 +157,66 @@ logger_conf:
       rotation: "00:00"
       retention: "3 Days"
       enqueue: ture
+
+# ============================================================================
+# F076 开放 API 鉴权（生产）
+# - enforce_keys 是部署级总闸：false = 完全旧行为（连无效密钥也不校验），生产必须 true
+# - 强制生效 = enforce_keys(true) AND 默认租户策略行(true)
+# - 配置无热加载，改动后必须重启后端 API 进程
+# ============================================================================
+open_api:
+  enforce_keys: true
+  # 凭据正缓存 TTL：限制吊销/编辑的最迟生效上界，模型限制 0~5。
+  # 不要写 0：Redis aset 在 expiration=0 时会写成永久键，见 redis_conn.py:72-79。
+  credential_cache_ttl_seconds: 3
+  # 启动播种：仅在默认租户【尚无】策略行时写入 true；已有行永不覆盖。
+  # 前提：匿名调用 /api/v2 的对接方已完成服务账号密钥改造。
+  # 存量环境若已有策略行，本值无效，需 PUT /api/v1/open-api/settings {"enforce_keys": true}
+  default_tenant_enforce_keys: true
+  # service_account_idle_days: 90   # 当前代码无消费方，写不写无效果
+
+# ============================================================================
+# F077 定时/事件触发（生产）
+# - 全部键都有代码默认值；下面按生产起点显式固化，避免升级默认值漂移
+# - API / worker / beat 启动时读取，改后需重启对应进程
+# ============================================================================
+scheduled_task:
+  # 平台级同时运行上限；按 workflow worker 总并发与单任务资源实测调整，
+  # 不要超过实际可用线程数。每个运行会占住线程直到结束。
+  global_max_running: 10
+  # 每应用启用中任务上限；调低不会停用已有任务，只影响新建。
+  max_tasks_per_app: 20
+  # 运行租约（秒），是唯一的运行超时 watchdog；按 P99 时长 × 1.5~2 设定，
+  # 过长会卡死任务占并发，过短会误回收。修改只影响新租约。
+  run_timeout_seconds: 3600
+  # 连续失败自动停用阈值；外部依赖抖动多时可放宽到 10。
+  consecutive_failure_threshold: 5
+  # 事件触发防重放窗口（秒），要求调用方与服务器 NTP 同步；安全要求高可收紧到 120。
+  replay_window_seconds: 300
+  # 单任务每分钟触发上限（放大量护栏，不是平台 API 限流）。
+  # 默认 10 只适合低频；按对接方峰值设定，中等集成建议 30~60。
+  event_rate_limit_per_minute: 60
+  # 预设输入/NL 描述限制，保持默认即可。
+  preset_input_max_items: 20
+  preset_input_max_chars: 2000
+  nl_max_chars: 2000
+  # 预览未来执行次数（纯展示）。
+  preview_count: 5
+  # 平台级 Redis 派发锁 TTL，必须【略小于】beat tick。
+  # tick=20s -> 15；tick=30s -> 22~24；tick=60s -> 45~48。绝不能 >= tick。
+  dispatch_lock_ttl_seconds: 15
+
+# F078: 智能体纳管总开关（默认 false = 路由 404、菜单/页签隐藏，既有部署零影响）
+# managed_agent:
+#   enabled: false
+#   connect_timeout_seconds: 10
+#   read_timeout_seconds: 60
+#   invoke_overall_timeout_seconds: 120
+#   max_response_bytes: 1000000
+#   rate_limit_per_minute: 60
+#   health_interval_seconds: 300
+#   health_failure_threshold: 3
+#   auto_offline_on_health_failure: false
+#   max_agents_per_tenant: 100
+#   egress_allowlist: []          # 必须显式列 host 或 host:port；空 = 全部拒绝
+#   proxy: null                   # 企业代理；trust_env 始终 false

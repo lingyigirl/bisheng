@@ -1,0 +1,100 @@
+{
+  "title": "智能体纳管",
+  "subtitle": "统一登记本平台与第三方智能体，配置接入、调度与分类",
+  "create": "纳管智能体",
+  "taxonomyButton": "分类管理",
+  "searchPlaceholder": "搜索名称",
+  "refresh": "刷新",
+  "noData": "暂无纳管智能体",
+  "deleteTitle": "删除纳管智能体",
+  "deleteDesc": "确认删除「{{name}}」？调用留痕会保留，但该智能体将不可再调用。",
+  "pagination": "第 {{page}} / {{total}} 页",
+  "source": {
+    "all": "全部来源",
+    "native": "本平台",
+    "low_code": "低代码",
+    "high_code": "高代码"
+  },
+  "status": {
+    "all": "全部状态",
+    "draft": "草稿",
+    "online": "已上线",
+    "offline": "已下线",
+    "disabled": "已停用"
+  },
+  "health": {
+    "unknown": "未知",
+    "healthy": "健康",
+    "unhealthy": "异常"
+  },
+  "columns": {
+    "name": "名称",
+    "source": "来源/协议",
+    "status": "状态",
+    "health": "健康",
+    "classification": "场景/行业",
+    "lastCall": "最近调用",
+    "actions": "操作"
+  },
+  "actions": {
+    "publish": "上线",
+    "offline": "下线",
+    "disable": "停用",
+    "healthCheck": "健康检查",
+    "edit": "编辑",
+    "delete": "删除"
+  },
+  "form": {
+    "editTitle": "编辑纳管智能体",
+    "createTitle": "纳管智能体",
+    "name": "名称",
+    "description": "描述",
+    "sourceKind": "来源",
+    "protocol": "协议",
+    "nativeAppId": "本平台应用 ID",
+    "nativeAppType": "应用类型",
+    "assistant": "助手",
+    "workflow": "工作流",
+    "endpoint": "接入地址",
+    "modelName": "模型名",
+    "version": "版本",
+    "scenario": "场景",
+    "industry": "行业",
+    "healthMethod": "健康检查方式",
+    "testInvoke": "试调用",
+    "healthUrl": "健康检查 URL",
+    "credentialType": "鉴权方式",
+    "credentialSecret": "密钥",
+    "secretUnchanged": "留空表示不修改",
+    "credentialHeaders": "固定请求头（JSON）",
+    "agentCard": "Agent Card（JSON）",
+    "cancel": "取消",
+    "save": "保存",
+    "none": "不设置"
+  },
+  "taxonomy": {
+    "title": "场景/行业分类",
+    "kind": "维度",
+    "scenario": "场景",
+    "industry": "行业",
+    "code": "分类标识",
+    "nameZh": "中文名",
+    "nameEn": "英文名",
+    "nameJa": "日文名",
+    "add": "新增分类",
+    "disabled": "已停用",
+    "deleteTitle": "删除分类",
+    "deleteDesc": "确认删除「{{name}}」？被智能体引用时会被拒绝。"
+  },
+  "schedule": {
+    "title": "定时任务"
+  },
+  "common": {
+    "confirm": "确认",
+    "cancel": "取消",
+    "delete": "删除",
+    "close": "关闭",
+    "prev": "上一页",
+    "next": "下一页"
+  }
+}

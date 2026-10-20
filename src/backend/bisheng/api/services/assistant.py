@@ -498,6 +498,11 @@ class AssistantService(BaseService, AssistantUtils):
         ):
             raise UnAuthorizedError()
 
+        # F077 AC-30: 有启用中的定时任务时拒绝删除（与工作流删除同口径）。
+        from bisheng.scheduled_task.domain.services.task_service import assert_app_deletable
+
+        assert_app_deletable(str(assistant.id), FlowType.ASSISTANT.value)
+
         AssistantDao.delete_assistant(assistant)
         telemetry_service.log_event_sync(
             user_id=login_user.user_id, event_type=BaseTelemetryTypeEnum.DELETE_APPLICATION, trace_id=trace_id_var.get()
