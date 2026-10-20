@@ -92,22 +92,28 @@
 | T-27 | **门禁收口与真库演练**<br>**文件**：CI/本地门禁；预发或本机 MySQL；DM8 清单<br>**逻辑**：`arch-guard` / 平台 `pnpm lint` + `typecheck` / `check-i18n` / `pytest test/scheduled_task/`；MySQL 上建表 + 全流程 + **回滚 SQL 演练**（T-03）；DM8 按 C2 清单预检（`RETURNING` 禁用、JSON 列 CLOB 行为、`update_time` 触发器）<br>**依赖**：T-24, T-25 | —（质量门） | ☑ 2026-10-19：arch-guard 全改动文件 exit 0；`pytest test/scheduled_task` **209/209**、`test/open_api` 134/134；平台 `pnpm typecheck`（421 strict）全过、`check-i18n` OK；**真库（MySQL 172.19.70.107）**：`SHOW CREATE TABLE scheduled_task` 与 design §4.2 **逐列/逐索引一致**（29 列、4 索引、utf8mb4）；**回滚 SQL 影子彩排通过**（`CREATE TABLE … LIKE` → 插入 → `DROP` → 校验已清理，真表未动）。**DM8 未在本机演练**（无实例）：按 C2 清单预检留待现场（`RETURNING` 已禁用、JSON 列用 JsonType、`update_time` 依赖启动期触发器） | ☑ |
 | T-28 | **现场切换与验收（用户执行）**<br>**文件**：交付文档；现场配置<br>**逻辑**：按 design §7 手工验证 8 步逐条过；打开 `open_api.enforce_keys`（事件触发前置）；按（五）1 验收表逐项打勾；观察首批运行的 `last_status` 与站内信<br>**依赖**：T-26, T-27 | AC-10, AC-16, AC-33, AC-55, AC-57 | 验收表全绿；无回滚需求（本特性无总闸，回退 = 停 beat 条目） | ☐ |
 
+> **2026-10-19/20 手工验证结果**：按 design §7 的 8 步执行，完整报告与证据见 [`docs/v2.7.0-manual-2026-10-19/report.md`](../../../docs/v2.7.0-manual-2026-10-19/report.md)。8 步均有执行记录（步骤 3 的 NL 草稿因环境未配 `SCHEDULED_TASK_LLM` 返回 11915，改用手动创建路径）；#9/#10/#12/#13 为环境/覆盖限制。T-28 的**现场切换与验收表打勾**仍需用户执行，故保持 ☐。
+
 ---
 
 ## 手工验收修复（2026-10-20）
 
-> 依据 `docs/report.md` 的 F076/F077 手工验收结论；设计说明见 design.md §7.1。
+> 依据 [`docs/v2.7.0-manual-2026-10-19/report.md`](../../../docs/v2.7.0-manual-2026-10-19/report.md) 的 F076/F077 手工验收与复核跟进结论；设计说明见 design.md §7.1。
 
 | 项 | 文件 | 验证 |
 |---|---|---|
-| AC-52 `last_run_at`/耗时/版本/监控一跳/停用态展示 | `dao.py`、`run_service.py`、`scheduledTask/index.tsx`、`LogPage/index.tsx`、`agentMonitor/index.tsx` | claim 写 `last_run_at`；终态/回收写耗时；列表显示起始时间+耗时+版本；`?tab=monitor&trace_id=` 直达并自动打开详情 |
+| AC-52 `last_run_at`/耗时/版本/监控一跳/停用态展示 | `dao.py`、`run_service.py`、`scheduledTask/index.tsx`、`LogPage/index.tsx`、`agentMonitor/index.tsx` | claim 写 `last_run_at`；终态/回收写耗时；列表显示结果时间+耗时+版本（Tooltip 补开始时间）；`?tab=monitor&trace_id=` 直达并自动打开详情 |
 | AC-50 系统处置留痕 | `run_service.py`、`constants.py` | 计划失败/超时回收/阈值停用/一次性终态以 `operator_id=0` 写 `schedule.run`；锁外批量 |
 | AC-49 管理审计前后取值 | `task_service.py`、`systemLog/index.tsx`、`bs.json` | create/update/enable/disable/delete 带 before/after；preset 只存 key；审计页备注列渲染 metadata |
 | AC-59 触发计划三语 | `cron_schedule.py`、`schemas/task.py`、`tasks.py`、`nl_draft_service.py`、`scheduledTask.json` ×3 | `schedule_display` 结构化描述；列表/预览/草稿按当前语言渲染；`pnpm check-i18n` OK |
 | AC-52 监控归因 | `assistant_runner.py` | `app_name=assistant.name`、`trace_id` 显式透传 |
-| F076 11806 | `open_api/api/dependencies.py` | 停用租户密钥 → 11806；Redis 故障回查 DB fail-closed |
+| F076 11806 | `open_api/api/dependencies.py` | 停用租户密钥 → 11806；Redis 故障/缓存 miss 回查 DB fail-closed；root 仅跳过 DB |
+| 复核 #11 计划失败展示 | `scheduledTask/index.tsx` | 计划失败隐藏「开始」/监控链接 + 「未实际运行」提示；needs_input 放行 |
+| 复核 #14 预设值变化 | `task_service.py` | 审计顶层 `preset_values_changed` 布尔标记，仍只存 key |
+| 复核 #15 11806 缓存 miss | `open_api/api/dependencies.py` | Redis miss 回查租户行；新增 cache-miss 契约测试 |
+| 工作流版本标识 | `test/scheduled_task/test_run_service.py` | 新增 `FlowVersion.id → last_app_version_id` 落库单测 |
 
-**门禁**：`pytest test/scheduled_task test/open_api` **394 passed**；`pnpm --filter bisheng typecheck` 423 strict 全过；`pnpm check-i18n` OK；改动文件 eslint 0 error；新增前端 `scheduleDisplay.test.ts` 6 条、审计筛选既有用例 3 条通过。`pnpm lint` 全量仍有**既有** suppression 计数漂移（`controllers/API/{workflow,dashboard,finetune}.ts`，非本轮文件），`lint:prune` 已移除本轮修复的 `LogPage/index.tsx` 旧抑制；全量 Vitest 另有 7 个**既有**失败文件（approval / permissionGrant / systemPage 等，均不涉及本轮改动）。
+**门禁**：077/076 相关 `pytest test/scheduled_task test/open_api` **396 passed**；F078 集成 guardrail 后相关套件 **608 passed**；`pnpm --filter bisheng typecheck` 全过；`pnpm check-i18n` OK；改动文件 eslint 0 error；新增前端 `scheduleDisplay.test.ts` 6 条、审计筛选既有用例 3 条通过。`pnpm lint` 全量仍有**既有** suppression 计数漂移（`controllers/API/{workflow,dashboard,finetune}.ts`，非本轮文件），`lint:prune` 已移除本轮修复的 `LogPage/index.tsx` 旧抑制；全量 Vitest 另有 7 个**既有**失败文件（approval / permissionGrant / systemPage 等，均不涉及本轮改动）。
 
 ---
 
