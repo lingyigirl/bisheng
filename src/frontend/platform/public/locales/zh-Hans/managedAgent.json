@@ -34,7 +34,8 @@
     "health": "健康",
     "classification": "场景/行业",
     "lastCall": "最近调用",
-    "actions": "操作"
+    "actions": "操作",
+    "tags": "标签"
   },
   "actions": {
     "publish": "上线",
@@ -70,7 +71,9 @@
     "agentCard": "Agent Card（JSON）",
     "cancel": "取消",
     "save": "保存",
-    "none": "不设置"
+    "none": "不设置",
+    "tags": "标签",
+    "noTags": "暂无标签，请先在标签管理中创建"
   },
   "taxonomy": {
     "title": "场景/行业分类",
@@ -96,5 +99,18 @@
     "close": "关闭",
     "prev": "上一页",
     "next": "下一页"
+  },
+  "protocol": {
+    "native": "本平台原生",
+    "openai_compatible": "OpenAI 兼容",
+    "custom_http": "自定义 HTTP"
+  },
+  "tags": {
+    "all": "全部标签"
+  },
+  "stats": {
+    "calls": "调用次数",
+    "successRate": "成功率",
+    "avgLatency": "平均耗时"
   }
 }

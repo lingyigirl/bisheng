@@ -34,7 +34,8 @@
     "health": "Health",
     "classification": "Scenario / industry",
     "lastCall": "Last call",
-    "actions": "Actions"
+    "actions": "Actions",
+    "tags": "Tags"
   },
   "actions": {
     "publish": "Publish",
@@ -70,7 +71,9 @@
     "agentCard": "Agent Card (JSON)",
     "cancel": "Cancel",
     "save": "Save",
-    "none": "Not set"
+    "none": "Not set",
+    "tags": "Tags",
+    "noTags": "No tags yet. Create one in tag management first."
   },
   "taxonomy": {
     "title": "Scenario / industry taxonomy",
@@ -96,5 +99,18 @@
     "close": "Close",
     "prev": "Previous",
     "next": "Next"
+  },
+  "protocol": {
+    "native": "Native",
+    "openai_compatible": "OpenAI-compatible",
+    "custom_http": "Custom HTTP"
+  },
+  "tags": {
+    "all": "All tags"
+  },
+  "stats": {
+    "calls": "Calls",
+    "successRate": "Success rate",
+    "avgLatency": "Avg latency"
   }
 }

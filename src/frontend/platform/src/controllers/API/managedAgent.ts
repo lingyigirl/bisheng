@@ -24,6 +24,7 @@ export async function listManagedAgentsApi(params: {
     status?: string
     scenario_code?: string
     industry_code?: string
+    tag_id?: number
     page?: number
     page_size?: number
 } = {}): Promise<ManagedAgentPage> {

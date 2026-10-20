@@ -4,6 +4,7 @@ import { Input, Textarea } from "@/components/bs-ui/input"
 import { Label } from "@/components/bs-ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/bs-ui/select"
 import { createManagedAgentApi, listTaxonomiesApi, updateManagedAgentApi } from "@/controllers/API/managedAgent"
+import { getAllLabelsApi } from "@/controllers/API/label"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
 import type {
     ManagedAgent,
@@ -38,6 +39,7 @@ type FormState = {
     credential_type: "none" | "bearer" | "api_key"
     credential_secret: string
     credential_headers: string
+    tags: number[]
 }
 
 const EMPTY: FormState = {
@@ -58,6 +60,7 @@ const EMPTY: FormState = {
     credential_type: "none",
     credential_secret: "",
     credential_headers: "",
+    tags: [],
 }
 
 function fromAgent(agent: ManagedAgent): FormState {
@@ -79,6 +82,7 @@ function fromAgent(agent: ManagedAgent): FormState {
         credential_type: agent.credential_type,
         // Secret is never returned; blank means "unchanged" on edit.
         credential_secret: "",
+        tags: agent.tags || [],
     }
 }
 
@@ -95,6 +99,7 @@ export function AgentFormDialog({ open, onClose, agent, onSaved }: Props) {
     const { t } = useTranslation("managedAgent")
     const [form, setForm] = useState<FormState>(EMPTY)
     const [taxonomies, setTaxonomies] = useState<ManagedAgentTaxonomy[]>([])
+    const [tags, setTags] = useState<{ id: number; name: string }[]>([])
     const [saving, setSaving] = useState(false)
     const isEdit = Boolean(agent)
 
@@ -102,6 +107,9 @@ export function AgentFormDialog({ open, onClose, agent, onSaved }: Props) {
         if (!open) return
         setForm(agent ? fromAgent(agent) : EMPTY)
         captureAndAlertRequestErrorHoc(listTaxonomiesApi({ enabled_only: true })).then((res) => setTaxonomies(res || []))
+        captureAndAlertRequestErrorHoc(getAllLabelsApi()).then((res: { data?: { id: number; name: string }[] }) =>
+            setTags(res?.data || []),
+        )
     }, [open, agent])
 
     const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
@@ -128,6 +136,7 @@ export function AgentFormDialog({ open, onClose, agent, onSaved }: Props) {
                 health_url: form.health_url.trim() || undefined,
                 scenario_code: form.scenario_code || undefined,
                 industry_code: form.industry_code || undefined,
+                tags: form.tags,
                 agent_card: card,
                 credential:
                     form.credential_type === "none"
@@ -301,6 +310,25 @@ export function AgentFormDialog({ open, onClose, agent, onSaved }: Props) {
                     <div className="col-span-2">
                         <Label>{t("form.credentialHeaders")}</Label>
                         <Textarea value={form.credential_headers} onChange={(e) => set("credential_headers", e.target.value)} />
+                    </div>
+                    <div className="col-span-2">
+                        <Label>{t("form.tags")}</Label>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                            {tags.map((tag) => {
+                                const active = form.tags.includes(tag.id)
+                                return (
+                                    <button
+                                        key={tag.id}
+                                        type="button"
+                                        className={`rounded-full border px-3 py-1 text-xs ${active ? "border-blue-500 bg-blue-500/[0.07] text-blue-500" : "border-border-base text-text-3"}`}
+                                        onClick={() => set("tags", active ? form.tags.filter((id) => id !== tag.id) : [...form.tags, tag.id])}
+                                    >
+                                        {tag.name}
+                                    </button>
+                                )
+                            })}
+                            {!tags.length && <span className="text-xs text-text-3">{t("form.noTags")}</span>}
+                        </div>
                     </div>
                     <div className="col-span-2">
                         <Label>{t("form.agentCard")}</Label>

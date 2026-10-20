@@ -28,6 +28,7 @@ export interface ManagedAgent {
     scenario_name: string | null
     industry_name: string | null
     tags: number[]
+    tag_names: string[]
     health_status: ManagedAgentHealthStatus
     health_method: "health_url" | "test_invoke"
     last_health_check_at: string | null

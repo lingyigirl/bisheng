@@ -2185,5 +2185,13 @@
   "com_managed_agents_preview_only": "预览模式：如需调用请联系管理员配置权限。",
   "com_managed_agents_source_native": "本平台",
   "com_managed_agents_source_low_code": "低代码",
-  "com_managed_agents_source_high_code": "高代码"
+  "com_managed_agents_source_high_code": "高代码",
+  "com_managed_agents_protocol_native": "本平台原生",
+  "com_managed_agents_protocol_openai_compatible": "OpenAI 兼容",
+  "com_managed_agents_protocol_custom_http": "自定义 HTTP",
+  "com_managed_agents_health_unknown": "未知",
+  "com_managed_agents_health_healthy": "健康",
+  "com_managed_agents_health_unhealthy": "异常",
+  "com_managed_agents_tags": "标签",
+  "com_managed_agents_all_tags": "全部标签"
 }

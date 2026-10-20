@@ -2179,5 +2179,13 @@
   "com_managed_agents_preview_only": "プレビューのみ。呼び出し権限は管理者にご連絡ください。",
   "com_managed_agents_source_native": "本プラットフォーム",
   "com_managed_agents_source_low_code": "ローコード",
-  "com_managed_agents_source_high_code": "ハイコード"
+  "com_managed_agents_source_high_code": "ハイコード",
+  "com_managed_agents_protocol_native": "ネイティブ",
+  "com_managed_agents_protocol_openai_compatible": "OpenAI 互換",
+  "com_managed_agents_protocol_custom_http": "カスタム HTTP",
+  "com_managed_agents_health_unknown": "不明",
+  "com_managed_agents_health_healthy": "正常",
+  "com_managed_agents_health_unhealthy": "異常",
+  "com_managed_agents_tags": "タグ",
+  "com_managed_agents_all_tags": "すべてのタグ"
 }
