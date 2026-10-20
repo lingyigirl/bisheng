@@ -41,7 +41,7 @@
 | `api/router.py` | 挂载 v1/v2 路由 |
 | `core/database/tenant_filter.py` | 三个模型登记租户过滤 |
 | `common/errcode/managed_agent.py` + `main.py` | 12101–12114；v2 真状态、v1 200 信封；429 `Retry-After` |
-| `core/openfga/authorization_model.py` | `managed_agent` 类型；`MODEL_VERSION=v2.0.4`（18 类型） |
+| `core/openfga/authorization_model.py` | `managed_agent` 类型；合并后 `MODEL_VERSION=v2.0.5`（19 类型；`linsight_skill` 随 llm-guardrail 合并带入） |
 | `scripts/migrate_fga_add_managed_agent_type.py/.sh` | 按 store 写一次新模型（dry-run 默认） |
 | `permission/domain/services/permission_service.py` | creator/tenant/list 分支 + `_TENANT_GATED_RESOURCE_TYPES` |
 | `permission/.../fine_grained_permission_service.py`、`resource_authorization_service.py`、`permission_schema.py` | 权限 ID 映射/白名单 |
@@ -78,13 +78,16 @@
 ### 4.1 部署顺序
 
 1. 部署代码（`managed_agent.enabled` 默认 false，既有行为不变）。
-2. 执行 FGA 升级脚本（每 store 一次）：
+2. 执行 FGA 升级脚本（每 store 一次，**两个都跑**）：
    ```bash
    cd src/backend
    bash scripts/migrate_fga_add_managed_agent_type.sh --dry-run
    bash scripts/migrate_fga_add_managed_agent_type.sh --apply
+   # skill 脚本默认只读；写入用 --apply，报告路径按环境替换
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py --report /tmp/fga-skill-dry-run.json
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py --apply --report /tmp/fga-skill-apply.json
    ```
-   按输出 pin `openfga.model_id` 或重启让 manager 取最新模型。
+   合并后的模型是 `v2.0.5` / 19 类型（`managed_agent` + `linsight_skill`）。只跑 managed_agent 脚本时，若 store 已有 `managed_agent` 但缺 `linsight_skill`，脚本会判定“已存在”而 no-op；两个脚本任一顺序都能收敛到完整模型。按输出 pin `openfga.model_id` 或重启让 manager 取最新模型。
 3. 在目标环境 `config.yaml` 开启：
    ```yaml
    managed_agent:
@@ -117,9 +120,9 @@
 
 ## 5. 验证记录
 
-- 后端回归 **635 passed**（`test/managed_agent` + `test/open_api` + `test/scheduled_task` + FGA/F013）。
-- 平台 `pnpm typecheck` **429 strict 全过**；接入指南测试 17/17；`check-i18n` OK。
-- 客户端目标文件 eslint 0；typecheck 仅剩 6 条既有 Linsight 错误（与本特性无关）。
+- 后端回归 **641 passed**（`test/managed_agent` + `test/open_api` + `test/scheduled_task` + FGA/F013；含 flag/FGA 对齐用例）。
+- 平台 `pnpm typecheck` **434 strict 全过**；客户端 `pnpm typecheck` **1304 strict 全过**；接入指南测试 17/17；`check-i18n` OK。
+- 客户端目标文件 eslint 0；无新增 typecheck 错误。
 - MySQL DDL 离线编译：31/11/20 列；DM8 无本机实例，按清单留现场。
 - e2e 套件 `test/e2e/test_e2e_managed_agents.py` 已落地，实跑需目标环境开启 `allow_private_networks`（仅测试）并配置 allowlist。
 

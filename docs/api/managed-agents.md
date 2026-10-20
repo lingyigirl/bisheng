@@ -6,10 +6,12 @@
 ## 1. 前置条件
 
 1. 部署配置 `managed_agent.enabled: true`（默认 false；关闭时所有纳管路由 404、菜单/页签隐藏）。
-2. 部署后执行一次 FGA 升级脚本，把 `managed_agent` 资源类型写入 OpenFGA store：
+2. 部署后执行 FGA 升级脚本，把 `managed_agent` 与 `linsight_skill` 写入 OpenFGA store（合并后的模型为 v2.0.5 / 19 类型；两个脚本都要跑，任一顺序都能收敛）：
    ```bash
    bash scripts/migrate_fga_add_managed_agent_type.sh --dry-run
    bash scripts/migrate_fga_add_managed_agent_type.sh --apply
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py --report /tmp/fga-skill-dry-run.json
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py --apply --report /tmp/fga-skill-apply.json
    ```
    写入后按部署惯例 pin `openfga.model_id` 或重启让 manager 取最新模型（见脚本输出）。
 3. 外部调用需要 F076 的服务账号密钥，且密钥带 `managed_agent:invoke` 权限位；服务账号的专用身份还需在「系统 → 服务账号 → 授权」里被授予目标智能体的 `editor`（运行）档。

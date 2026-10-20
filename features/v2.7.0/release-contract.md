@@ -74,7 +74,7 @@
 | 纳管分类法（`managed_agent_taxonomy`） | F078-managed-agents | 新增独立表（租户 / kind（scenario / industry）/ code / 三语名称 / 排序 / 启用位）；仅本 Feature 写入；场景/行业按 code 过滤，名称按三语展示 |
 | 纳管智能体调用留痕（`managed_agent_run`） | F078-managed-agents | 新增独立表（租户 / agent / 调用方类型与标识 / 服务账号 / 状态 / 耗时 / 错误码 / trace / 时间）；仅本 Feature 写入；**只存标识与结果摘要，不存输入正文与凭据**（沿用 INV-11 边界）；用于运营统计与排障，不进入对话历史 |
 | AuthorizationModel 中**新增的纳管智能体资源类型定义**（OpenFGA type definition） | F078-managed-agents | 在 F004 的授权模型中新增一类受控资源 `managed_agent`（与 workflow / assistant 同构的 owner/manager/editor/viewer）；仅本 Feature 写入该类定义；**不拥有** AuthorizationModel 本身（F004 归属），**不修改**任何既有资源类型与元组；须按 v2.5.0 INV-15 完成权限接入（创建时 `authorize()`、变更前 `check()`），并 bump `MODEL_VERSION` |
-| `audit_log` 的**纳管智能体动作扩展** | F078-managed-agents | 扩展既有审计表：新增 `managed_agent.register / update / delete / enable / disable / health` 管理动作与 `managed_agent.invoke` 调用留痕的写入行为；**不拥有** `audit_log` 本身（沿用既有归属与 DAO）；管理动作进审计页白名单，调用留痕只落库取证；审计不含凭据明文与输入正文（沿用 INV-11） |
+| `audit_log` 的**纳管智能体动作扩展** | F078-managed-agents | 扩展既有审计表：新增 `managed_agent.create / update / delete / enable / disable / health_check` 管理动作与 `managed_agent.invoke` 调用留痕的写入行为；**不拥有** `audit_log` 本身（沿用既有归属与 DAO）；管理动作进审计页白名单，调用留痕只落库取证；审计不含凭据明文与输入正文（沿用 INV-11） |
 | `Tag` / `TagLink` 的**纳管智能体业务类型扩展** | F078-managed-agents | 在既有标签体系上新增 `managed_agent` 业务类型与资源类型枚举值，复用既有标签创建/关联/筛选链路；**不拥有** `Tag` / `TagLink` 对象本身（沿用既有归属），不新增表 |
 
 **规则**：

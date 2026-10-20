@@ -180,7 +180,7 @@
 ### 决策 15：FGA 模型、权限接入与 store 升级
 
 - **备选**：
-  - A. `_standard_resource_type('managed_agent')`；`MODEL_VERSION=v2.0.4`；一次性脚本 `scripts/migrate_fga_add_managed_agent_type.py`（dry-run/apply，打印新旧 model_id）；补齐 `PermissionService` 的 creator/tenant/list 分支；`VALID_RESOURCE_TYPES`、`FineGrainedPermissionService.default_permission_ids_for_relation`、`resource_authorization_service._default_permission_ids`、`GRANTABLE_RESOURCE_TYPES` 加 `managed_agent`；owner tuple 写入 `enforce_fga_success=True`。
+  - A. `_standard_resource_type('managed_agent')`；合并后的 `MODEL_VERSION=v2.0.5`（19 类型：本特性新增 `managed_agent`，`linsight_skill` 随 llm-guardrail 合并带入）；一次性脚本 `scripts/migrate_fga_add_managed_agent_type.py`（dry-run/apply，打印新旧 model_id）；补齐 `PermissionService` 的 creator/tenant/list 分支；`VALID_RESOURCE_TYPES`、`FineGrainedPermissionService.default_permission_ids_for_relation`、`resource_authorization_service._default_permission_ids`、`GRANTABLE_RESOURCE_TYPES` 加 `managed_agent`；owner tuple 写入 `enforce_fga_success=True`。
   - B. 只 bump `MODEL_VERSION`；C. 只加类型，不加 PermissionService 分支；D. 只加 `_TENANT_GATED_RESOURCE_TYPES` 不加 list 分支。
 - **选定**：A。
 - **原因**：验证结论——`MODEL_VERSION` 无运行期消费者；`FGAManager` 在 `model_id` 未 pin 时采用 store 里最新模型，pin 了就用 pin 的旧模型；必须一次性写入新模型。`PermissionService` 的 `_get_resource_creator`、`_resolve_resource_tenant`、`_resource_ids_by_creator_user_ids`、`_resource_ids_in_tenants`、`_resource_tenant_map` 都按字面 object_type 分派，未知类型返回 None/[]/{}；只加 frozenset 会导致“列表可见但 check 拒绝”或租户过滤失效。`FineGrainedPermissionService` 不给 `managed_agent` 映射时，权限 ID 解析为空，连 owner/admin 都会被拒。
@@ -286,7 +286,7 @@ F077 beat 扫描 → 复检（`trigger_guard` 解析 100 → 注册表/native �
 
 ### 4.6 FGA/权限接入清单
 
-- `authorization_model.py`：`_standard_resource_type('managed_agent')`；`MODEL_VERSION='v2.0.4'`；类型数 17→18。
+- `authorization_model.py`：`_standard_resource_type('managed_agent')`；合并后 `MODEL_VERSION='v2.0.5'`；类型数 18→19（本特性新增 `managed_agent`，`linsight_skill` 随 llm-guardrail 合并带入）。
 - `permission_service.py`：
   - `_get_resource_creator` 加 managed_agent（bypass 读 `user_id`）；
   - `_resolve_resource_tenant` 加 managed_agent（bypass 读 `tenant_id`）；
@@ -419,7 +419,7 @@ F077 beat 扫描 → 复检（`trigger_guard` 解析 100 → 注册表/native �
 
 **单元/契约**
 - `test/managed_agent/`：模型租户登记、CRUD 校验、Agent Card、分类法、适配器（httpx mock）、SSRF、凭据掩码、频控、invoke 错误映射、健康扫描、调度集成。
-- FGA：`test_openfga_authorization_model.py`（v2.0.4/18 类型）、`test_datasource_permission.py`、`test_f013_tenant_fga_tree.py`（修复既有红）、`test_scope_i18n_lockstep.py`。
+- FGA：`test_openfga_authorization_model.py`（v2.0.5/19 类型）、`test_datasource_permission.py`、`test_f013_tenant_fga_tree.py`（修复既有红）、`test_scope_i18n_lockstep.py`。
 - F077 回归：`test_trigger_guard.py`（99→DELETED、100 分支）、`test_run_service.py`、`test_task_service.py`、`test_trigger_endpoint.py`。
 - 前端：平台表单/筛选组件测试；`pnpm lint/typecheck/check-i18n`；客户端目录类型。
 
