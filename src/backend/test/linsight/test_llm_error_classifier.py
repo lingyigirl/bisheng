@@ -97,8 +97,23 @@ def test_auth_and_permission_are_fail_fast():
 def test_unknown_400_is_degradable_by_default():
     exc = make_exc(openai.BadRequestError, message="malformed request", status_code=400)
     assert classify_behavior(exc) is Behavior.DEGRADABLE
+    assert label_error(exc) is ErrorType.MODEL_REQUEST_INVALID
     # a non-API error also falls into the default skippable bucket
     assert classify_behavior(ValueError("boom")) is Behavior.DEGRADABLE
+
+
+def test_image_role_error_is_a_request_format_failure_not_safety_filter():
+    exc = make_exc(
+        openai.BadRequestError,
+        message="Value error, Image inputs are only supported in user messages",
+        code="invalid_request_error",
+        status_code=400,
+    )
+    assert classify_behavior(exc) is Behavior.DEGRADABLE
+    assert label_error(exc) is ErrorType.MODEL_REQUEST_INVALID
+    assert (
+        label_text("Value error, Image inputs are only supported in user messages") is ErrorType.MODEL_REQUEST_INVALID
+    )
 
 
 # --------------------------------------------------------------------------- #

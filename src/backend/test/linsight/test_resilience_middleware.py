@@ -9,9 +9,11 @@ import openai
 import pytest
 from langchain_core.messages import AIMessage
 
+from bisheng.common.services.llm_error_classifier import ErrorType
 from bisheng.linsight.domain.services.resilience_middleware import (
-    _DEGRADE_MESSAGE,
+    _DEGRADE_MESSAGES,
     LinsightModelResilienceMiddleware,
+    is_degraded_result,
 )
 
 
@@ -86,7 +88,8 @@ async def test_retry_exhausted_subagent_degrades():
     handler = handler_factory([timeout_exc(), timeout_exc(), timeout_exc()])  # always fails
     result = await mw.awrap_model_call(None, handler)
     assert isinstance(result, AIMessage)
-    assert result.content == _DEGRADE_MESSAGE
+    assert result.content == _DEGRADE_MESSAGES[ErrorType.NETWORK_TIMEOUT]
+    assert result.additional_kwargs["degradation_reason"] == "network_timeout"
     assert handler.state["calls"] == 2  # initial + 1 retry, then degrade
 
 
@@ -103,8 +106,28 @@ async def test_content_filter_subagent_degrades_without_retry():
     handler = handler_factory([content_filter_exc()])
     result = await mw.awrap_model_call(None, handler)
     assert isinstance(result, AIMessage)
-    assert result.content == _DEGRADE_MESSAGE
+    assert result.content == _DEGRADE_MESSAGES[ErrorType.CONTENT_FILTER]
+    assert result.additional_kwargs["degradation_reason"] == "content_filter"
     assert handler.state["calls"] == 1  # DEGRADABLE is not retried
+
+
+async def test_invalid_request_subagent_degrades_without_claiming_safety_filter():
+    mw = make_mw(is_subagent=True, max_retries=3)
+    exc = make_exc(
+        openai.BadRequestError,
+        message="Value error, Image inputs are only supported in user messages",
+        code="invalid_request_error",
+        status_code=400,
+    )
+    handler = handler_factory([exc])
+
+    result = await mw.awrap_model_call(None, handler)
+
+    assert isinstance(result, AIMessage)
+    assert result.content == "【未完成】当前模型不支持图片输入, 未取得该部分结果."
+    assert "安全策略" not in result.content
+    assert "System note" not in result.content
+    assert result.additional_kwargs["degradation_reason"] == "model_request_invalid"
 
 
 async def test_content_filter_main_raises_without_retry():
@@ -129,8 +152,8 @@ async def test_degrade_budget_exhaustion_raises():
     # Each call is a separate model step that hits the content filter.
     r1 = await mw.awrap_model_call(None, handler_factory([content_filter_exc()]))
     r2 = await mw.awrap_model_call(None, handler_factory([content_filter_exc()]))
-    assert r1.content == _DEGRADE_MESSAGE
-    assert r2.content == _DEGRADE_MESSAGE
+    assert is_degraded_result(r1.content)
+    assert is_degraded_result(r2.content)
     # 3rd degrade exceeds the budget of 2 → re-raise instead of degrading.
     with pytest.raises(openai.BadRequestError):
         await mw.awrap_model_call(None, handler_factory([content_filter_exc()]))

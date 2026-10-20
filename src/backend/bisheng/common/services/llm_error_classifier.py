@@ -54,6 +54,7 @@ class ErrorType(str, enum.Enum):
     """Fine-grained label consumed ONLY for the user-facing failure copy."""
 
     CONTENT_FILTER = "content_filter"
+    MODEL_REQUEST_INVALID = "model_request_invalid"
     QUOTA_EXHAUSTED = "quota_exhausted"
     AUTH_ERROR = "auth_error"
     RATE_LIMIT = "rate_limit"
@@ -190,6 +191,16 @@ _CONTENT_FILTER_KEYWORDS: tuple[str, ...] = (
     "风控",
 )
 
+# Non-retryable request-shape errors. These are platform/model integration
+# failures, not safety moderation; keeping them separate prevents the generic
+# "provider safety block" copy from claiming something the provider never said.
+_MODEL_REQUEST_INVALID_KEYWORDS: tuple[str, ...] = (
+    "invalid_request_error",
+    "image inputs are only supported in user messages",
+    "image inputs are not supported for this model",
+    "value error",
+    "malformed request",
+)
 
 # ---------------------------------------------------------------------------
 # Exception field extraction helpers
@@ -359,6 +370,8 @@ def label_text(text: str) -> ErrorType:
     lowered = (text or "").lower()
     if any(keyword in lowered for keyword in _CONTENT_FILTER_KEYWORDS):
         return ErrorType.CONTENT_FILTER
+    if any(keyword in lowered for keyword in _MODEL_REQUEST_INVALID_KEYWORDS):
+        return ErrorType.MODEL_REQUEST_INVALID
     if any(sig in lowered for sig in _QUOTA_SIGNATURES):
         return ErrorType.QUOTA_EXHAUSTED
     if any(sig in lowered for sig in _RATE_LIMIT_SIGNATURES):
@@ -394,6 +407,8 @@ def label_error(exc: BaseException) -> ErrorType:
     # honest story for the user, not the generic unknown card.
     if _is_transient_transport(exc):
         return ErrorType.SERVICE_UNAVAILABLE
+    if status == 400:
+        return ErrorType.MODEL_REQUEST_INVALID
     return ErrorType.UNKNOWN
 
 
