@@ -159,6 +159,8 @@ services:
   # 定时任务 never fires (manual "run now" and event triggers still work).
   # **Only one beat per broker**: running a second one (another compose stack or
   # a host process pointed at the same Redis) fires every schedule twice.
+  # `backend_worker` (entrypoint `worker` mode) intentionally does NOT start
+  # beat — this service is the single beat for the compose stack.
   # The default queue consumed by `backend_worker` (entrypoint `worker` mode uses
   # `start_min_worker -Q knowledge_celery,ocr_celery,workflow_celery,celery`)
   # executes the scans — no extra worker needed.
