@@ -1,4 +1,4 @@
-"""F067: result-CSV reader for the compare report — skip the total row, parse
+"""F090: result-CSV reader for the compare report — skip the total row, parse
 performance columns as plain numbers, and report success rate as N/A (not 0%)
 when the CSV predates the ``exec_status`` column.
 """

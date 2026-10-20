@@ -612,7 +612,7 @@ async def add_evaluation_task(evaluation_id: int):
             ("answer_recall", "recall", 3),
             ("answer_precision", "precision", 3),
             ("answer_f1", "F1", 3),
-            # F067: hallucination inputs. unit_type 1 keeps them out of the total-row
+            # F090: hallucination inputs. unit_type 1 keeps them out of the total-row
             # aggregation — the compare report computes Σcontradicted ÷ Σanswer itself.
             ("statements_contradicted_num", "statements_contradicted_num", 1),
             ("statements_num_answer", "statements_num_answer", 1),

@@ -122,7 +122,7 @@ const privateRouter = [
       { path: "log/chatlog/:cid", element: <DailyChatDetail />, permission: "log" },
       { path: "evaluation", element: <EvaluatingPage />, permission: 'evaluation' },
       { path: "evaluation/create", element: <EvaluatingCreate />, permission: 'evaluation' },
-      // F067: standalone visual comparison report page (replaces the F053 drawer for viewing)
+      // F090: standalone visual comparison report page (replaces the F053 drawer for viewing)
       { path: "evaluation/compare/:groupId", element: <EvaluationCompareReport />, permission: 'evaluation' },
       { path: "dataset", element: <DataSetPage />, permission: 'dataset' },
       { path: "label", element: <LabelPage />, permission: 'mark_task' },
