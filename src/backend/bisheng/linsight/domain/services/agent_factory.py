@@ -185,6 +185,12 @@ __KB_TOOL_LINE__- write_file / read_file / edit_file / ls：工作区文件工�
 __PATH_NAMESPACE_LINE__# 风格
 
 - 简洁，工具调用之间不加多余解释性文字。
+- 用户限定的字数、页数和指标范围是交付约束。约 N 字按全文约 80%-120% 控制，不是每节各写 N 字；简单问答直接作答，不扩成多节报告、待办或文件。
+- 复杂任务在首轮工具调用前用一句普通正文说明正在做什么，让用户看到行动；不要只把进展留在 thinking 中，也不要在每次工具之间重复计划或自我讨论。
+- 待办状态随实际工作阶段更新：开始当前阶段时标 in_progress，完成后标 completed；不要从头到尾停在 0/N 再一次全改完成，也不要每个工具调用都重写清单。
+- 委派只包含本次任务的原始资料、验收项和必要输出路径。成员具备某工具或技能不代表必须逐个测试；不要把无关的环境版本、时间或连接器连通性检查加进业务任务。多个成员独立复核一致后直接整合，只有冲突或缺项才追加复算。
+- 不扩展用户未要求且没有验证的统计结论。分位数等库函数有样本范围和边界，不能凭手工外推冒充 Excel 等工具的真实结果。
+- Excel 含公式时同时保证网页预览可用：优先用已有的 xlsxwriter 写入公式及实算缓存值（write_formula 的 value），保留可编辑公式；只写 openpyxl 公式并不产生缓存，不能把 data_only 为空当作核验通过。不要为可选预览安装整套 Office。
 - 不要凭空编造事实；交付内容应基于检索到的资料/依据；**不得声称执行过实际未执行的核对或验证**——环境里做不到的检查就不要写进回复或交付物。
 - 引用只写你**实际读到**的内容（检索结果正文、文件内容）；只拿到搜索摘要（snippet）时，不要写出精确的文件名、日期、条款号等出处细节——宁可不写，也不要外推。
 - 凡需要在回复中引用可下载/可预览的交付物，必须先 write_file 写入 output/；不得仅口头描述文件名。
@@ -368,16 +374,23 @@ def _build_linsight_system_prompt(
     sandbox_discipline_line = ""
     if has_code_interpreter:
         sandbox_discipline_line = (
-            "   - 【缺工具先安装，不猜路径】需要的工具不在预期位置时：最多用 `which` 确认一次；"
+            "   - 【优先复用依赖，不猜路径】需要的工具不在预期位置时：最多用 `shutil.which` 确认一次；"
             "**禁止**用 `find /`、`ls -R /` 等方法全盘扫描，也**禁止**读取系统目录"
             "（/root、/opt、/etc、/usr、/code、site-packages、以 . 开头的目录）搜寻工具或文件。"
-            "沙箱预装 Python（python-docx / openpyxl / pandas / matplotlib）与 Node.js，且以 root 运行、可联网，"
-            "**能安装的就安装**：Python 库用 `pip install`，Node 库用 `npm install`，"
-            "系统工具用 `apt-get update && apt-get install -y`（需要 soffice 装 libreoffice，"
-            "需要 pdftoppm 装 poppler-utils，需要格式转换装 pandoc）；安装作为单独一步执行，"
-            "装好后按技能原方案把步骤走完，不要图省事跳过。只有安装确实失败（包不存在、网络失败、超时），"
-            "才退回等价的 Python/Node 库实现同样产出；等价方案也做不到时才跳过该可选步骤。"
+            "沙箱提供 Python 与 Node.js；先用 importlib.util.find_spec 检查已有库，"
+            "优先用已有的等价库完成同样产出与核验，不因命令缺失就安装整套系统软件。"
+            "例如 PDF 抽页优先用已安装的 PyMuPDF（import fitz），无需 pdftoppm；"
+            "export_docx / export_pdf 在后端执行，后端转换成功不表示沙箱安装了同样的转换器。"
+            "只有已有能力确实无法完成必需步骤时才安装最小依赖，并按实际操作系统选择包管理器，"
+            "不能在 Windows 使用 apt-get。安装作为单独一步执行；安装失败（包不存在、网络失败、超时）"
+            "不得反复重装，基于已有材料如实说明尚未完成的核验。"
             "不得在收尾中声称做过实际没做的核对（例如“经 LibreOffice 渲染核对”）。\n"
+            "   - 【报告核验与性能】导出返回的是结构核验，文件大小和页数不能证明图片已嵌入或排版正确。"
+            "PDF 返回的 raster_images 是引用的栅格图像数，image_pages 是最多 3 个含图页的页码（从 1 开始），"
+            "不是视觉结论；矢量图不计入该图像数。需要视觉核对时先抽首页、含图页和代表性表格页，"
+            "去重后首轮最多 3 页，以 80–96 DPI 渲染到 scratch/，用 read_file 实际查看；"
+            "不要先把整份长报告逐页转图，只有发现问题才针对相关页扩查。"
+            "用 fitz 时页下标为页码减 1；同一文档只打开一次，避免逐页重复安装、打开或转换。\n"
             "   - 【禁止重复空转】同一条命令、同一个读取或同一工具调用，若重复执行且结果没有新信息，"
             "必须立即停止该路径并换方案；安装失败不要反复重装同一个包；确实无法推进时，"
             "基于已有材料如实收尾，绝不反复重试同一条命令。\n"
@@ -898,11 +911,8 @@ async def create_linsight_agent(
     # reasoning (thinking) in the user's language. See _LanguageTailMiddleware.
     middlewares.append(_LanguageTailMiddleware(_LINSIGHT_LANGUAGE_DIRECTIVE_ZH))
 
-    # No custom history-compression middleware: deepagents already ships a
-    # built-in summarization middleware (deepagents.middleware.summarization),
-    # so injecting our own duplicated it and tripped langchain's "duplicate
-    # middleware instances" assertion. The legacy 2.0 ``tool_buffer`` compression
-    # (design §3.8) is therefore retired in favor of the deepagents built-in.
+    # Context compaction is installed below after every child model is known.
+    # Its profile excludes the SDK default to avoid duplicate summarizers.
     # ask_user (HITL): a tool that calls langgraph ``interrupt()`` so the agent
     # can park-and-release for user input (F035 §4.6); deepagents ships no
     # built-in ask-human tool, so we inject our own.
@@ -960,6 +970,7 @@ async def create_linsight_agent(
 
     bind_cloud_workspace(tools, backend, require_e2b=bool(getattr(session_model, "agent_config", None)))
 
+    delegation = None
     if _agent_config:
         from bisheng.linsight.domain.services.configured_subagents import build_configured_subagents
         from bisheng.linsight.domain.services.recovery_middleware import RecoveryMiddleware
@@ -976,7 +987,6 @@ async def create_linsight_agent(
         # search_knowledge_base subset) in every harness run — also when a
         # configured member has no tools of its own.
         subagents = [*subagents, *configured_subagents]
-        middlewares.append(delegation)
 
     # Built-in role presets (builtin_roles.py, 2026-10-16): ALWAYS available, so
     # a task with no configured collaborators still offers more than the generic
@@ -994,6 +1004,23 @@ async def create_linsight_agent(
         ),
     ]
 
+    from bisheng.linsight.domain.services.context_compaction import build_context_compaction
+
+    middlewares.append(build_context_compaction(model, backend))
+    for spec in subagents:
+        spec["middleware"].append(build_context_compaction(spec.get("model", model), backend))
+
+    from bisheng.linsight.domain.services.subagent_context import DelegationMiddleware, SubagentIdentityMiddleware
+
+    if delegation is None:
+        delegation = DelegationMiddleware({})
+    for spec in subagents:
+        delegation.members.setdefault(spec["name"], {"id": f"builtin:{spec['name']}", "name": spec["name"]})
+        if not any(isinstance(item, SubagentIdentityMiddleware) for item in spec.get("middleware", [])):
+            spec["middleware"] = [SubagentIdentityMiddleware(), *spec.get("middleware", [])]
+    middlewares.append(delegation)
+    # The background wrapper must stay outside identity propagation so the child
+    # task owns its context until completion, rather than only the launch ACK.
     middlewares.insert(3, BackgroundSubagentMiddleware(allowed_subagents={spec["name"] for spec in subagents}))
 
     # Advertise search_knowledge_base in the system prompt IFF it is actually in

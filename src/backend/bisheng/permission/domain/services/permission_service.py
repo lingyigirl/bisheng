@@ -86,6 +86,25 @@ class PermissionService:
         tenant_id = get_current_tenant_id()
         return tenant_id is not None and tenant_id == resource_tenant_id and user_id == owner_id
 
+    @staticmethod
+    def can_read_task_artifact(user, task, share_link=None) -> bool:
+        """Read-only task exports honor a scoped active share, never an arbitrary object key."""
+        from time import time
+
+        from bisheng.core.context.tenant import get_current_tenant_id
+
+        if get_current_tenant_id() == task.tenant_id and (user.user_id == task.user_id or user.is_admin()):
+            return True
+        if share_link is None or share_link.tenant_id != task.tenant_id:
+            return False
+        if share_link.status != "active" or (share_link.expire_time and share_link.expire_time <= time()):
+            return False
+        return (share_link.resource_type == "workbench_chat" and share_link.resource_id == task.session_id) or (
+            share_link.resource_type == "linsight_session"
+            and share_link.resource_id == task.session_id
+            and (share_link.meta_data or {}).get("versionId") == task.id
+        )
+
     @classmethod
     async def check(
         cls,

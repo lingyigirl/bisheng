@@ -252,7 +252,7 @@ export function matchArtifactByRelPath(
     return fileList.find((f) => norm(f.file_name) === base);
 }
 
-const DELIVERABLE_LINK_EXT = /\.(md|markdown|html|htm|docx|pdf)$/i;
+const DELIVERABLE_LINK_EXT = /\.(md|markdown|html|htm|docx|pdf|xlsx|pptx|csv|png|jpe?g|webp)$/i;
 
 /** True when href looks like an internal workspace deliverable reference. */
 export function isDeliverableLinkHref(href: string): boolean {

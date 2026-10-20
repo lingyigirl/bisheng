@@ -17,6 +17,7 @@ from bisheng.linsight.domain.services.recovery_context import (
     execution_fence,
 )
 from bisheng.linsight.domain.services.recovery_middleware import validate_receipts
+from bisheng.linsight.domain.services.recovery_queue_scope import recovery_queue_namespace, recovery_scan_due
 
 _RENEW = """
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
@@ -139,7 +140,11 @@ class RecoveryService:
             tasks = await repository.candidates(after_id=after_id, limit=self.SCAN_BATCH)
             if not tasks:
                 return
-            eligible = [task for task in tasks if (task.recovery_state or {}).get("retry_after", 0) <= time.time()]
+            eligible = [
+                task
+                for task in tasks
+                if recovery_scan_due(task.recovery_state, time.time(), recovery_queue_namespace())
+            ]
             async with redis.pipeline(transaction=False) as pipeline:
                 for task in eligible:
                     pipeline.exists(f"linsight:replay:{{{task.tenant_id}:{task.id}}}:lease")

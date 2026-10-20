@@ -219,7 +219,7 @@ export function TaskTurnPanel({ versionId, liked, allowFeedback = true, conversa
             {/* session-level steps (planning-stage tools etc.); an answered clarify
                 renders as an inline IntentRow at its chronological position here
                 (时序内联) instead of being hoisted above the timeline. */}
-            <ExecutionTimeline history={sessionSteps} />
+            <ExecutionTimeline finalAnswerStepId={linsight?.output_result?.answer_step_id} history={sessionSteps} />
 
             {/* planning breathing row */}
             {planning && <BreathingRow state="planning" />}

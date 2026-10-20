@@ -3,6 +3,7 @@ import {LinsightInfo} from "~/store/linsight";
 import type {ContextUsageSnapshot} from "~/types/contextUsage";
 import type {SavedMember, SavedMemberPayload} from "~/types/harness";
 import request from "./request";
+import { getShareTokenFromPath } from '~/utils/shareToken';
 
 // 获取灵思会话信息
 export function getLinsightSessionVersionList(ConversationId: string, shareToken: string): Promise<any> {
@@ -219,14 +220,17 @@ export function getCaseDetail(sop_id: string): Promise<any> {
 }
 
 export function getMdDownload(file_info: {
+    session_version_id?: string;
     file_url: string;
     file_name: string
 }, to_type: 'pdf' | 'docx'): Promise<any> {
+    const shareToken = getShareTokenFromPath();
     return request.post('/api/v1/linsight/workbench/download-md-to-pdf-or-docx', {
             file_info: file_info,
             to_type: to_type
         }
         , {
-            responseType: 'blob' // 确保这里设置了 responseType
+            responseType: 'blob',
+            headers: shareToken ? { 'share-token': shareToken } : {},
         })
 }

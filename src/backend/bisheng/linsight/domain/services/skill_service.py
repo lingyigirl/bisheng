@@ -98,10 +98,24 @@ class SkillService:
 
     async def get_selectable(self) -> list[SkillSelectable]:
         skills = await self.repository.enabled()
-        return [
-            SkillSelectable(name=s.name, display_name=s.display_name or s.name, description=s.description)
-            for s in skills
-        ]
+        selectable = []
+        for skill in skills:
+            if not skill.content_hash:
+                # Legacy metadata can outlive its node-local bundle after a move.
+                # Versioned bundles remain portable; do not download them for a picker.
+                try:
+                    available = await asyncio.to_thread(self.store.exists, skill.tenant_id, skill.name)
+                except ValueError:
+                    available = False
+                if not available:
+                    logger.warning("Legacy skill excluded from picker: tenant={} name={}", skill.tenant_id, skill.name)
+                    continue
+            selectable.append(
+                SkillSelectable(
+                    name=skill.name, display_name=skill.display_name or skill.name, description=skill.description
+                )
+            )
+        return selectable
 
     async def get_detail(self, tenant_id: int, name: str) -> SkillDetail:
         skill = await self._get_or_404(name)

@@ -197,6 +197,8 @@ async def test_code_interpreter_preserves_admin_group_configuration(monkeypatch,
     assert params["type"] == "e2b"
     assert params["config"]["e2b"]["api_key"] == "test-key"
     assert params["config"]["e2b"]["local_sync_path"] == str(tmp_path)
+    assert params["config"]["e2b"]["keep_sandbox"] is True
+    assert params["config"]["e2b"]["prewarm_sandbox"] is False
     assert json.loads(group.extra) == group_config
 
 

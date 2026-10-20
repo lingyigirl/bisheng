@@ -54,13 +54,17 @@ async def coalesce_stream_events(
                     event = completed.result()
                 except StopAsyncIteration:
                     break
-                if isinstance(event, ExecStep) and event.step_type == "thinking":
+                if isinstance(event, ExecStep) and (
+                    event.step_type == "thinking"
+                    or (event.step_type == "assistant" and (event.extra_info or {}).get("text_mode") == "delta")
+                ):
                     key = (event.task_id, event.call_id, (event.extra_info or {}).get("namespace"))
                     previous = pending.get(key)
                     if previous is None:
                         pending[key] = event.model_copy(deep=True)
                     else:
                         previous.output = (previous.output or "") + (event.output or "")
+                        received_at = (previous.extra_info or {}).get("stream_received_at")
                         previous.extra_info = {
                             **(previous.extra_info or {}),
                             **(event.extra_info or {}),
@@ -69,6 +73,8 @@ async def coalesce_stream_events(
                                 or (event.extra_info or {}).get("truncated")
                             ),
                         }
+                        if event.step_type == "assistant":
+                            previous.extra_info["stream_received_at"] = received_at
                     chars += len(event.output or "")
                     if chars >= max_chars or loop.time() - last_flush >= interval:
                         await flush()

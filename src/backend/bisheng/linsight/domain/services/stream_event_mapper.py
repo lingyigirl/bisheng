@@ -33,6 +33,7 @@ from uuid import uuid4
 from loguru import logger
 
 from bisheng.common.utils.think_tags import strip_reasoning_tags
+from bisheng.linsight.domain.services.assistant_text_mapper import AssistantTextMapper
 from bisheng_langchain.linsight.event import (
     BaseEvent,
     ExecStep,
@@ -176,10 +177,23 @@ class StreamContext:
 class StreamEventMapper:
     """Translate ``(mode, chunk)`` tuples into ``BaseEvent`` instances."""
 
-    def __init__(self, svid: str):
+    def __init__(self, svid: str, text_protocol: bool = False):
+        self.text_mapper = AssistantTextMapper(svid, uuid4().hex[:8]) if text_protocol else None
         self.ctx = StreamContext(svid=svid)
         self._member_namespaces: dict[str, dict] = {}
         self._member_calls: dict[str, dict] = {}
+
+    @property
+    def last_answer_step_id(self):
+        return self.text_mapper.last_answer_step_id if self.text_mapper else None
+
+    def finish_text(self):
+        events = self.text_mapper.finish() if self.text_mapper else []
+        for event in events:
+            identity = self._member_namespaces.get((event.extra_info or {}).get("namespace", ""))
+            if identity:
+                event.extra_info = {**event.extra_info, **identity}
+        return events
 
     # -- public entry ------------------------------------------------------
 
@@ -199,6 +213,13 @@ class StreamEventMapper:
         # interrupt交织 tail-chunk discard §3.7).
         if self.ctx.terminated:
             return []
+
+        # Internal compaction calls share the graph's message stream but are
+        # not user-facing reasoning, answers, or tool invocations.
+        if mode == "messages" and isinstance(chunk, (list, tuple)) and len(chunk) > 1:
+            metadata = chunk[1]
+            if isinstance(metadata, dict) and metadata.get("lc_source") == "summarization":
+                return []
 
         ns = self._namespace_str(namespace)
         if mode == "custom":
@@ -322,6 +343,9 @@ class StreamEventMapper:
         for node_output in chunk.values():
             if not isinstance(node_output, dict):
                 continue
+            if self.text_mapper:
+                for message in node_output.get("messages", []):
+                    events.extend(self.text_mapper.message(message, ns))
             todos = node_output.get("todos")
             if todos is not None:
                 # design #1 §5.2(a): a subagent carries its OWN write_todos
@@ -492,6 +516,9 @@ class StreamEventMapper:
         enriched = self._reconcile_open_delegations()
 
         # Thinking stream: reasoning_content (DeepSeek-R1) or thinking blocks.
+        if self.text_mapper:
+            metadata = chunk[1] if isinstance(chunk, (list, tuple)) and len(chunk) > 1 else {}
+            enriched.extend(self.text_mapper.message(message, ns, metadata))
         thinking = self._extract_thinking(message)
         # A whitespace-only delta is the model's own line break and MUST survive:
         # dropping it split the segment (``normalize`` closes a segment on any
@@ -502,7 +529,7 @@ class StreamEventMapper:
         # fragment "未来展望14.". Only forward it while a segment is already OPEN,
         # so leading whitespace never mints an empty thinking row of its own.
         if thinking and (thinking.strip() or self._has_open_thinking(ns)):
-            return [*enriched, self._build_thinking_step(thinking, ns)]
+            enriched.append(self._build_thinking_step(thinking, ns))
 
         # Tool-call start frames live on AIMessage.tool_calls.
         tool_calls = getattr(message, "tool_calls", None)

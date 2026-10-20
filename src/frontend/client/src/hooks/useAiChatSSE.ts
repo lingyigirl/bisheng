@@ -138,7 +138,7 @@ export default function useAiChatSSE(submission: SSESubmission | null) {
 
         const sseUrl = submission.sseUrl || getSSEUrl();
         const sse = new SSE(sseUrl, {
-            payload: JSON.stringify(payload),
+            payload: JSON.stringify({ ...payload, client_capabilities: ["assistant_text_v1"] }),
             headers: { "Content-Type": "application/json" },
         });
         sseRef.current = sse;

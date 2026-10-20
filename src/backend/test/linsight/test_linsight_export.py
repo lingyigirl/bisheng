@@ -1,145 +1,90 @@
-"""Unit tests for the Linsight export tools (export_docx / export_pdf).
+"""覆盖 AC: AC-08-AC-19 - tool integration never advertises failed files."""
 
-The real converters (MarkDocx / md_to_pdf_bytes) are monkeypatched so these
-tests don't need pandoc/Playwright; we verify the tool wiring: closure-injected
-backend, read md -> convert -> write bytes, dest-path derivation, and the
-soft-return contract on failure (a raised exception would kill the whole task).
-"""
-
+import io
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
+import pytest
+from docx import Document
+from PIL import Image
+
+from bisheng.linsight.domain.services import report_export
 from bisheng.tool.domain.langchain import linsight_export
+from bisheng.tool.domain.services.report_runtime import ReportRuntime
 
 
-def _writable_backend(md_content="# Hello\n\ncontent", read_error=None):
-    backend = MagicMock()
-    backend.aread = AsyncMock(
-        return_value=SimpleNamespace(
-            error=read_error,
-            file_data=None if read_error else {"content": md_content},
-        )
+@pytest.fixture
+def backend():
+    image = io.BytesIO()
+    Image.new("RGB", (100, 60), "blue").save(image, format="PNG")
+    files = {"output/report.md": b"# Hello\n\n![Chart](chart.png)", "output/chart.png": image.getvalue()}
+
+    async def download(paths):
+        return [
+            SimpleNamespace(content=files.get(path), error=None if path in files else "not found") for path in paths
+        ]
+
+    return SimpleNamespace(
+        svid="test-task",
+        adownload_files=download,
+        awrite=AsyncMock(return_value=SimpleNamespace(path="/output/report.docx", error=None)),
     )
-    backend.awrite = AsyncMock(return_value=SimpleNamespace(path="/output/report.docx"))
-    return backend
 
 
-def test_init_returns_empty_for_non_writable_backend():
-    """A backend with no awrite (e.g. test FakeWorkspaceBackend) yields no tools."""
+def test_init_and_sync_mode(backend):
     assert linsight_export.init_linsight_export_tools(None) == []
-    assert linsight_export.init_linsight_export_tools(object()) == []  # no awrite attr
+    assert linsight_export.init_linsight_export_tools(object()) == []
+    assert len(linsight_export.init_linsight_export_tools(backend)) == 2
+    assert "not supported" in linsight_export.ExportPdfTool(backend=backend)._run()
 
 
-def test_init_returns_both_tools_for_writable_backend():
-    tools = linsight_export.init_linsight_export_tools(_writable_backend())
-    names = {t.name for t in tools}
-    assert names == {"export_docx", "export_pdf"}
+async def test_tool_produces_real_embedded_docx(backend, tmp_path, monkeypatch):
+    from bisheng.tool.domain.services.report_worker import main
 
+    async def execute(directory):
+        main(directory)
 
-async def test_export_docx_reads_converts_writes(monkeypatch):
-    import bisheng.common.utils.markdown_cmpnt.md_to_docx.markdocx as markdocx_mod
-
-    class _FakeMarkDocx:
-        def __call__(self, md):
-            assert md == "# Hello\n\ncontent"  # the md we wrote was read back
-            return (b"DOCXBYTES", "title")
-
-    monkeypatch.setattr(markdocx_mod, "MarkDocx", _FakeMarkDocx)
-
-    backend = _writable_backend()
-    tool = linsight_export.ExportDocxTool(backend=backend)
-    res = await tool._arun(source_path="output/report.md")
-
-    backend.aread.assert_awaited_once()
-    # dest defaults to source with .docx extension; binary written through
-    args, _ = backend.awrite.await_args
+    monkeypatch.setattr(report_export, "runtime", ReportRuntime(tmp_path, executor=execute))
+    result = await linsight_export.ExportDocxTool(backend=backend)._arun("output/report.md")
+    assert "已生成 Word" in result
+    args = backend.awrite.await_args.args
     assert args[0] == "output/report.docx"
-    assert args[1] == b"DOCXBYTES"
-    assert "已生成 Word" in res
+    assert len(Document(io.BytesIO(args[1])).inline_shapes) == 1
 
 
-async def test_export_docx_handles_memoryview(monkeypatch):
-    """MarkDocx returns a memoryview (BytesIO.getbuffer()); the tool must write
-    real bytes, never the stringified ``<memory at 0x...>`` (the Word-won't-open
-    bug). Regression guard for the memoryview path."""
-    import bisheng.common.utils.markdown_cmpnt.md_to_docx.markdocx as markdocx_mod
-
-    class _FakeMarkDocx:
-        def __call__(self, md):
-            return (memoryview(b"DOCXBYTES"), "title")
-
-    monkeypatch.setattr(markdocx_mod, "MarkDocx", _FakeMarkDocx)
-
-    backend = _writable_backend()
-    tool = linsight_export.ExportDocxTool(backend=backend)
-    res = await tool._arun(source_path="output/report.md")
-
-    args, _ = backend.awrite.await_args
-    assert args[1] == b"DOCXBYTES"  # memoryview copied to bytes, not stringified
-    assert "已生成 Word" in res
-
-
-async def test_export_pdf_reads_converts_writes(monkeypatch):
-    # PDF now goes markdown -> docx -> pdf (LibreOffice); patch the helper.
-    monkeypatch.setattr(linsight_export, "_md_to_pdf_bytes_via_libreoffice", lambda md: b"PDFBYTES")
-
-    backend = _writable_backend()
-    tool = linsight_export.ExportPdfTool(backend=backend)
-    res = await tool._arun(source_path="output/report.md", dest_path="output/custom.pdf")
-
-    args, _ = backend.awrite.await_args
-    assert args[0] == "output/custom.pdf"  # explicit dest honoured
-    assert args[1] == b"PDFBYTES"
-    assert "已生成 PDF" in res
-
-
-async def test_export_pdf_engine_error_soft_returns(monkeypatch):
-    """LibreOffice missing/errored must soft-return, never raise (would kill task)."""
-
-    def _boom(md):
-        raise RuntimeError("LibreOffice docx->pdf 转换失败 (soffice 缺失或出错)")
-
-    monkeypatch.setattr(linsight_export, "_md_to_pdf_bytes_via_libreoffice", _boom)
-
-    backend = _writable_backend()
-    tool = linsight_export.ExportPdfTool(backend=backend)
-    res = await tool._arun(source_path="output/report.md")
+async def test_missing_image_and_invalid_destination_do_not_write(backend):
+    result = await linsight_export.ExportDocxTool(backend=backend)._arun("output/missing.md")
+    assert "导出失败" in result
+    result = await linsight_export.ExportDocxTool(backend=backend)._arun("output/report.md", "../other.docx")
+    assert "导出失败" in result
     backend.awrite.assert_not_awaited()
-    assert "导出失败" in res
 
 
-async def test_export_docx_missing_source_soft_returns():
-    """Missing/unreadable source must soft-return (never raise → never kill task)."""
-    backend = _writable_backend(read_error="File 'output/x.md' not found")
-    tool = linsight_export.ExportDocxTool(backend=backend)
-    res = await tool._arun(source_path="output/x.md")
+async def test_runtime_failure_is_recoverable(backend, monkeypatch):
+    monkeypatch.setattr(report_export.runtime, "convert", AsyncMock(side_effect=RuntimeError("renderer missing")))
+    result = await linsight_export.ExportPdfTool(backend=backend)._arun("output/report.md")
+    assert "导出失败" in result
     backend.awrite.assert_not_awaited()
-    assert "导出失败" in res and "不存在" in res
 
 
-async def test_export_docx_non_writable_backend_soft_returns():
-    """A backend without awrite must soft-return, not blow up."""
-    tool = linsight_export.ExportDocxTool(backend=object())
-    res = await tool._arun(source_path="output/report.md")
-    assert "导出不可用" in res
+@pytest.mark.parametrize(
+    "path",
+    [
+        "../secret.png",
+        "/etc/passwd",
+        "workspace/other/output/a.png",
+        "https://example.com/x.png",
+        "file:///C:/x.png",
+        "C:\\temp\\x.png",
+    ],
+)
+def test_report_resource_path_rejects_escape(path):
+    with pytest.raises(ValueError):
+        report_export.workspace_path(path, "test-task", source="output/report.md")
 
 
-async def test_export_docx_converter_error_soft_returns(monkeypatch):
-    import bisheng.common.utils.markdown_cmpnt.md_to_docx.markdocx as markdocx_mod
-
-    class _BoomMarkDocx:
-        def __call__(self, md):
-            raise RuntimeError("pandoc missing")
-
-    monkeypatch.setattr(markdocx_mod, "MarkDocx", _BoomMarkDocx)
-
-    backend = _writable_backend()
-    tool = linsight_export.ExportDocxTool(backend=backend)
-    res = await tool._arun(source_path="output/report.md")
-    backend.awrite.assert_not_awaited()
-    assert "导出失败" in res
-
-
-def test_run_sync_unsupported():
-    tool = linsight_export.ExportPdfTool(backend=_writable_backend())
-    assert "not supported in sync mode" in tool._run()
+def test_report_resource_path_allows_parent_inside_workspace():
+    assert (
+        report_export.workspace_path("../uploads/中文 图.png", "task", source="output/report.md")
+        == "uploads/中文 图.png"
+    )

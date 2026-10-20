@@ -538,3 +538,60 @@ async def test_restamp_noop_without_recorded_answers(monkeypatch):
     await mgr.restamp_clarify_answers("svid")
 
     assert store["history"][0].get("is_completed") is not True
+
+
+async def test_assistant_projection_batches_and_flushes_terminal_barrier(monkeypatch):
+    """覆盖 AC: AC-21-AC-23 - durable replay avoids full projection writes per delta."""
+    mgr, store = _make_manager(monkeypatch)
+
+    def frame(text, mode, frame_id):
+        return ExecStep(
+            task_id="t1",
+            call_id="assistant1",
+            name="assistant",
+            call_reason="",
+            step_type="assistant",
+            status="end" if mode == "end" else "start",
+            output=text,
+            extra_info={"text_mode": mode, "text_frame_id": frame_id},
+        )
+
+    await mgr.add_execution_task_step("t1", frame("Hello ", "delta", "one"))
+    await mgr.add_execution_task_step("t1", frame("world", "delta", "two"))
+    await mgr.add_execution_task_step("t1", frame("!", "delta", "three"))
+    assert store["cache_writes"] == 1 and store["db_writes"] == 1
+    # A retried transport frame must not append the same text a second time.
+    await mgr.add_execution_task_step("t1", frame("!", "delta", "three"))
+    await mgr.add_execution_task_step("t1", frame("", "end", "four"))
+    assert store["history"][0]["output"] == "Hello world!"
+    assert store["history"][0]["status"] == "end"
+    assert store["cache_writes"] == 2 and store["db_writes"] == 2
+    assert not mgr._pending_text_tasks
+
+
+async def test_parallel_stream_keeps_advancing_during_slow_projection(monkeypatch):
+    """AC-21: slow SQL must not hold parallel member deltas behind earlier writes."""
+    from bisheng.linsight.domain.services import state_message_manager as smm
+    from bisheng.linsight.domain.services.step_projection_writer import deferred_step_projections
+
+    mgr, store = _make_manager(monkeypatch)
+    started, release = asyncio.Event(), asyncio.Event()
+    snapshots = []
+
+    async def slow_update(task_id, **kwargs):
+        snapshots.append(kwargs["history"])
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(smm.LinsightExecuteTaskDao, "update_by_id", slow_update)
+    async with deferred_step_projections(mgr, interval=0.001):
+        await mgr.add_execution_task_step("t1", _thinking("member-a", "first"))
+        await asyncio.wait_for(started.wait(), 1)
+        for index in range(100):
+            await asyncio.wait_for(mgr.add_execution_task_step("t1", _thinking(f"member-{index % 2}", str(index))), 0.1)
+        assert store["cache_writes"] == 0
+        assert len(snapshots[0]) == 1  # The in-flight snapshot cannot mutate.
+        release.set()
+    assert len(snapshots[-1]) == 3
+    assert store["cache_writes"] <= 2
+    assert not mgr._dirty_projection_tasks

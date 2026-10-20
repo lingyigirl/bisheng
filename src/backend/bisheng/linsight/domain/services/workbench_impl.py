@@ -333,6 +333,9 @@ class LinsightWorkbenchImpl:
                 skills=submit_obj.skills,
                 agent_config=agent_config,
             )
+            if agent_config and "assistant_text_v1" in getattr(submit_obj, "client_capabilities", []):
+                agent_config["text_protocol"] = 1
+                linsight_session_version.agent_config = agent_config
             linsight_session_version = await LinsightSessionVersionDao.insert_one(linsight_session_version)
             if agent_config:
                 from bisheng.linsight.domain.services.event_replay import EventReplayService
@@ -1488,6 +1491,9 @@ class LinsightWorkbenchImpl:
         # Default60Validity period of minutes
         code_config["config"]["e2b"]["timeout"] = 3600
         code_config["config"]["e2b"]["keep_sandbox"] = True
+        # Bind tools without starting a remote sandbox on the worker event loop.
+        # The first actual code call initializes it, then keep_sandbox reuses it.
+        code_config["config"]["e2b"]["prewarm_sandbox"] = False
         # ``file_list`` is the E2B copy-in set: E2bCodeExecutor.__init__ reads every
         # entry fully into worker memory and pushes it into the sandbox up front.
         # E2B's own contract caps that at SIZE_AUTOPUSH — anything larger is meant to

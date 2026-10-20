@@ -57,7 +57,6 @@ from bisheng.linsight.domain.services.state_message_manager import (
 from bisheng.linsight.domain.services.workbench_impl import LinsightWorkbenchImpl
 from bisheng.share_link.dependencies import header_share_token_parser
 from bisheng.share_link.domain.models.share_link import ShareLink
-from bisheng.utils import util
 
 router = APIRouter()
 
@@ -778,6 +777,7 @@ async def download_md_to_pdf_or_docx(
     file_info: DownloadFilesSchema = Body(..., description="File information"),
     to_type: Literal["pdf", "docx"] = Body(..., description="the target file type of the conversion,pdfORdocx"),
     login_user: UserPayload = Depends(UserPayload.get_login_user),
+    share_link: Union["ShareLink", None] = Depends(header_share_token_parser),
 ):
     """
     InspirationmdTransferpdf or docx Mengunduh
@@ -787,27 +787,14 @@ async def download_md_to_pdf_or_docx(
     :return:
     """
     try:
-        # Call the implementation class to process the file download
-        file_name, file_bytes = await LinsightWorkbenchImpl.download_file(file_info)
+        from bisheng.linsight.domain.services.report_export import ReportExportService
 
-        md_str = file_bytes.decode("utf-8")
-
-        # Filename Removal Extension
-        file_name = os.path.splitext(file_name)[0]
-
-        if to_type == "pdf":
-            from bisheng.common.utils.markdown_cmpnt.md_to_pdf import md_to_pdf_bytes
-
-            converted_bytes = await util.sync_func_to_async(md_to_pdf_bytes)(md_str)
-            file_name = f"{file_name}.pdf"
-            content_type = "application/pdf"
-        else:
-            from bisheng.common.utils.markdown_cmpnt.md_to_docx.markdocx import MarkDocx
-
-            mark_docx = MarkDocx()
-            converted_bytes, _ = await util.sync_func_to_async(mark_docx)(md_str)
-            file_name = f"{file_name}.docx"
-            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        file_name, converted_bytes, _ = await ReportExportService().save_as(file_info, to_type, login_user, share_link)
+        content_type = (
+            "application/pdf"
+            if to_type == "pdf"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
         # Convert to unicode String
         file_name = parse.quote(file_name)
         return StreamingResponse(
@@ -815,9 +802,9 @@ async def download_md_to_pdf_or_docx(
             media_type=content_type,
             headers={"Content-Disposition": f"attachment; filename={file_name}"},
         )
-    except Exception as e:
-        logger.error(f"This content failed to load: {e!s}")
-        return ResourceDownloadError.return_resp(data=str(e))
+    except ValueError as exc:
+        logger.exception("Report export validation failed")
+        raise ResourceDownloadError(msg=str(exc)) from exc
 
 
 @router.get(

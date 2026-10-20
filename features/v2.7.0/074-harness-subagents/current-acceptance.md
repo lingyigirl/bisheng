@@ -1,51 +1,52 @@
-# 新基线真实验收补充（2026-10-14）
+# Harness 当前验收摘要
 
-> 最新增量：执行中崩溃自动接续已开发，并完成主模型/子模型强杀、双 Worker 与重复消息竞争、未知外部调用阻断、用户终止、文件恢复真实联调。最终迁移 head 为 f074_recovery。以 [自动恢复实现与验收](./automatic-recovery-validation.md) 为当前结论；本文其余内容记录此前 E2B 与基线验收。
+更新时间：2026-10-18。本文为最新结论入口；历史逐轮报告保留原始环境、提交和测试数字。文档索引见 [README](./README.md)，停机与本机重启说明见 [本地环境交接](./local-environment-handoff.md)。
 
-> DM8 更新（2026-10-14）：已启动独立实例，F074 新增字段的迁移、重复升级、大文本同步/异步读写专项通过。详见 [dm8-validation.md](./dm8-validation.md)。下文“无 DM8 环境”为此前状态，整个平台 DM8 全量验收仍未完成。
+## 状态
 
-当前代码基于 feat/2.7.0/beijing-ns-llm-guardrail（f1b49c51f），所有变更仅保存在本地，未推送远端。
+- 已验证代码基线：`6db8e2657`，已推送至 `origin/feat/2.7.0/beijing-ns-llm-guardrail`，没有合并 main。
+- 本次收尾已停止本地 API、Linsight Worker、两端 Vite、HTTP 测试工具服务，以及 7 个 jinbao-f074 测试中间件容器；数据与证据保留，云端数据库和中间件未停止。
+- 核心场景通过，仍有已知问题与覆盖边界，T36 完整上线验收不勾选。记忆按约定排除。
 
-## 环境与迁移
+## 已验证能力
 
-保留原 bisheng 测试库，将其一致性快照导入独立 bisheng_f074_rebase。原库来自 f055 + F074；在副本将版本标记退回 f055（未降级表结构），执行新基线完整中间迁移至 f064 再到 f074，新增 agent_config 列的幂等检查保留数据。最终单 head 为 f074_agent_config。API 与 Worker 均已使用新配置重启；旧库和 SQL 备份保留，未迁移生产数据。
-
-配置/凭据、SQL 备份、原始响应和下载文件均在忽略目录 src/backend/.venv/f074-*，不提交。
-
-## 实际验证
-
-| 场景 | 结果 |
+| 能力 | 最新证据 |
 |---|---|
-| 真实上传与分析 | 上传包含 4 条销售记录的 f074-sales.csv，解析完成，任务 ef9572cc4ad24ff3a9f635bfeae7c1cd 由计算员在 E2B 中实际读取 CSV 并执行 pandas 汇总，核验员独立核验，主 Agent 汇总。两月各 200，总额 400 |
-| 产物回传下载 | 任务 completed，生成 report.md 和 monthly.csv；通过文件下载 API 获取签名路径，从本地 MinIO 读取实际 CSV 字节并解析，断言两行、每月 200、合计 400 |
-| E2B 深层目录同步 | 单独实际执行生成 output/nested/proof.csv，返回 new_files 标为产品，并从 WorkspaceBackend 读回精确 value/391 内容，验证真实 E2B → MinIO 工作区链路 |
-| 双成员与断线补播 | 针对上述新任务运行 test_harness_live.py，5 passed；覆盖不同成员调用身份、WebSocket 断开后补播顺序完全一致、无效游标和真实 Redis 协议 |
-| 人工等待后换进程 | 任务 3f60c5706cbd4143969cea1598eeb4ec 进入 ask_user 等待；终止并重启 API/Worker，确认旧事件 ID 序列保留；回答 A 后继续两个成员调用，completed，结果 399 |
-| 工具撤权 | 任务 c22ed9714a8f47efa4c7b70972c7e7e6 在等待点撤权，恢复执行被阻断，HTTP 连接器没有新调用 |
-| Skill 禁用 | 任务 f34d3bd274a14838993b32a2acec02c1 在等待点禁用 Skill，恢复执行被阻断，HTTP 连接器没有新调用；已恢复启用、撤销临时权限 |
-| 私有补播隔离 | 新完成任务对同租户另一用户、tenant 2 用户均拒绝访问 |
+| 无成员 Harness、自主计划和工具循环 | [完整本地验收](./full-local-acceptance-2026-10-18.md)、[无成员补测](./memberless-retest-2026-10-18.md) |
+| 云端 E2B、联网搜索、工作区文件与产物下载 | [完整本地验收](./full-local-acceptance-2026-10-18.md) |
+| 自定义协作人员的名称、提示词、模型、Skills、工具、连接器 | [完整本地验收](./full-local-acceptance-2026-10-18.md) |
+| 主 Agent 路由、后台委派、结果回收与整合 | [推送前回归](./prepush-validation-2026-10-18.md) |
+| 两个 DeepSeek 模型配置主/子互换 | [多模型与外部副作用补测](./multimodel-external-recovery-2026-10-18.md)；不是跨厂商验收 |
+| 流式反馈、游标补播、人工输入、继续、主动终止 | [完整本地验收](./full-local-acceptance-2026-10-18.md) |
+| 外部完成回执复用、未知结果阻断、不重复发送 | [多模型与外部副作用补测](./multimodel-external-recovery-2026-10-18.md)；不是所有业务连接器完整 E2E |
+| Skill 对象存储、缓存重建、迁移及权限 | [Skill 运维手册](./skill-object-storage/runbook.md)、[权限补齐](./skill-object-storage/openfga-repair-2026-10-18.md) |
+| 并行子代理流式积压优化 | [性能修复](./stream-buffer-performance-2026-10-18.md)：6000 段模拟写入减少 99.8%；真实双模型长输出约 32 秒完成 |
 
-## 本轮修复
+内置研究员、分析员、图表与质检角色和用户协作人员并存。内置角色继承主模型，自定义成员按快照解析各自模型。主 Agent 收尾前须收集必要后台结果；任务停止、异常及未知副作用遵循 [恢复策略](./recovery-policy.md)。
 
-- 初始化代码工具先读取工具组配置，避免工作区参数掩盖管理员保存的 E2B 配置。
-- Harness 检查穿透 ToolExecutor 包装层，正确识别 E2B 执行器。
-- Windows 上传路径转换为沙箱 POSIX 相对路径。
-- 工具参数兼容 code 别名，空白代码明确拒绝；无数据时提示主 Agent 澄清，禁止把密钥标识当数据搜索。
-- ToolExecutor 转发 close，确保任务结束时释放成员沙箱。
-- E2B 文件枚举遍历非隐藏子目录，解决 output/ 及深层产物漏报漏同步；新增贴近真实目录层级的测试。
+## 最新检查
 
-## 回归和边界
+以 [推送前回归](./prepush-validation-2026-10-18.md) 为最终执行记录：
 
-- 后端最终专项含迁移检查：152 passed。
-- 新基线真实 Redis/API/WebSocket：5 passed。
-- 前端前轮新基线回归：103 passed，类型检查及 i18n 通过；本轮未改前端。
-- 全量 frontend lint 仍有新基线自带的 59 项错误，位置及核对证据见 rebase-validation.md。
-- 本轮没有重复做浏览器 API 停机交互；此前浏览器自动重连证据与本轮协议测试分开计。未做数小时压力测试。
-- E2B 基础调用与真实 CSV 文件链路已通过，不再列为未配置；大文件、超时、多次覆盖同路径的沙箱文件同步不在本轮完整验收范围。
-- 长期记忆仍只有 MemoryAdapter，未注入外部提供者；WBS 8.2/8.3 待对接。
-- 自动接管已按新增协议实现；未知外部副作用及 E2B 原进程状态仍不自动重放，详见最新报告。
-- DM8 新增配置/恢复字段专项已通过；整个平台双库验收及长期记忆依赖不在本次完成范围，T36 不标全通过。
+- 后端 Linsight + 单 Alembic head + 相关权限/迁移：1121 passed、13 skipped。
+- Harness 前端：21 suites / 233 tests passed。
+- 真实 HTTP、云端 Redis 与进程故障恢复专项：37 passed。
+- 新增双子代理完成后重建/整合前中断检查点测试及相关定向回归：44 passed。
+- 前端工作区 typecheck、客户端 lint、i18n、增量架构检查通过。
 
-## 执行中崩溃实测补充
+上述测试范围有重叠，不相加为总通过数；未运行或未通过的全站检查不能写成通过。
 
-实施自动恢复前，子 Agent 执行中强杀 Worker 后重启曾被标 failed，保留 14 条 checkpoint 但没有接管。该历史故障见 [crash-resume-validation.md](./crash-resume-validation.md)；修复后的真实结果见 [automatic-recovery-validation.md](./automatic-recovery-validation.md)。
+## 未解决与边界
+
+| 项目 | 当前结论与下一步 |
+|---|---|
+| 旧长任务自动接续无结果 | `74bfc049f4dd4b1bba06930db86577bb` 自动接续曾失败，维护继续后交付成功；新增重建测试未重现，仍需单独定位，见 [性能修复](./stream-buffer-performance-2026-10-18.md) |
+| 一次本地 API 异常退出 | 故障注入后发生，原因未确认；后续复测未重现，见 [完整本地验收](./full-local-acceptance-2026-10-18.md) |
+| 5 个旧业务 Skill 缺源 | 需找回真实源包或重新导入；对象存储迁移不能从元数据生成原文 |
+| 全站存量质量问题 | 客户端完整测试 5 个失败套件、管理端 54 项 any lint 未处理；与当前 Harness 定向通过分开记录 |
+| 覆盖边界 | 长期记忆未接入；跨厂商、多物理机、生产级长时并发、所有外部工具副作用和平台 DM8 全量验收未完成 |
+| 沙箱恢复 | 文件可恢复不等于 Python 变量、后台进程或连接状态可恢复；必要时安全阻断，不承诺任意崩溃自动续跑 |
+
+## 历史材料
+
+原 2026-10-14 摘要已归档为 [新基线历史验收](./baseline-acceptance-2026-10-14.md)，其中“仅本地未推送”、本地副本数据库和早期迁移 head 只代表当时环境。2026-10-18 后续验证为本机应用连接云端中间件，最新已实测迁移 head 为 `f035_skill_object_storage`；详见 [云端启动迁移验证](./remote-startup-migration-validation-2026-10-18.md) 与 [完整本地验收](./full-local-acceptance-2026-10-18.md)。
