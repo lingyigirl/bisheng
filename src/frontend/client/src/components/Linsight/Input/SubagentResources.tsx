@@ -19,10 +19,10 @@ interface SubagentResourcesProps {
 
 type ResourceField = 'skill_names' | 'tool_refs' | 'connector_refs';
 type Resource = { id: string; name: string; detail: string; searchText: string; unavailable?: boolean };
-type ConnectorGroup = {
+type ResourceGroup = {
     id: string;
     name: string;
-    kind: 'API' | 'MCP';
+    kind: 'builtin' | 'api' | 'mcp';
     actions: Resource[];
     unavailable?: boolean;
 };
@@ -65,13 +65,13 @@ export function SubagentResources({ member, options, disabled, onChange }: Subag
         const missing = [...selectedIds].filter((id) => !known.has(id)).map((id) => ({ id, name: id, detail: '', searchText: id.toLowerCase(), unavailable: true }));
         return [...available, ...missing];
     }, [resources, category, selectedIds]);
-    const connectorGroups = useMemo<ConnectorGroup[]>(() => {
+    const resourceGroups = useMemo<ResourceGroup[]>(() => {
         const available = catalogGroups
-            .filter((group) => group.is_preset !== 1)
+            .filter((group) => (category === 'tool_refs' ? group.is_preset === 1 : group.is_preset !== 1))
             .map((group) => ({
                 id: String(group.id),
                 name: group.name,
-                kind: group.is_preset === 2 ? 'MCP' as const : 'API' as const,
+                kind: group.is_preset === 1 ? 'builtin' as const : group.is_preset === 2 ? 'mcp' as const : 'api' as const,
                 actions: (group.children || []).map((tool) => ({
                     id: String(tool.id),
                     name: tool.name,
@@ -90,15 +90,18 @@ export function SubagentResources({ member, options, disabled, onChange }: Subag
                 unavailable: true,
             }));
         return missing.length
-            ? [...available, { id: '__unavailable__', name: '', kind: 'API', actions: missing, unavailable: true }]
+            ? [...available, { id: '__unavailable__', name: '', kind: 'api', actions: missing, unavailable: true }]
             : available;
-    }, [catalogGroups, selectedIds]);
+    }, [catalogGroups, category, selectedIds]);
     const query = search.trim().toLowerCase();
     const filtered = useMemo(() => rows.filter((item) => (!selectedOnly || selectedIds.has(item.id)) && item.searchText.includes(query)), [rows, query, selectedOnly, selectedIds]);
-    const visibleConnectorGroups = useMemo(() => {
-        return connectorGroups
+    const visibleResourceGroups = useMemo(() => {
+        const unavailableLabel = category === 'connector_refs'
+            ? t('harness.unavailableConnector')
+            : t('harness.unavailableTools');
+        return resourceGroups
             .map((group) => {
-                const groupName = group.unavailable ? t('harness.unavailableConnector') : group.name;
+                const groupName = group.unavailable ? unavailableLabel : group.name;
                 const groupMatches = groupName.toLowerCase().includes(query);
                 const actions = group.actions
                     .filter((action) => !selectedOnly || selectedIds.has(action.id))
@@ -106,10 +109,10 @@ export function SubagentResources({ member, options, disabled, onChange }: Subag
                 return { ...group, groupName, actions };
             })
             .filter((group) => group.actions.length > 0);
-    }, [connectorGroups, query, selectedIds, selectedOnly, t]);
-    const isConnector = category === 'connector_refs';
-    const pageCount = isConnector ? 1 : Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-    const currentPage = isConnector ? 0 : Math.min(page, pageCount - 1);
+    }, [resourceGroups, category, query, selectedIds, selectedOnly, t]);
+    const isGrouped = category !== 'skill_names';
+    const pageCount = isGrouped ? 1 : Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    const currentPage = isGrouped ? 0 : Math.min(page, pageCount - 1);
     useEffect(() => {
         // Reset scrolling without remounting every checkbox on each keystroke.
         if (listRef.current) listRef.current.scrollTop = 0;
@@ -168,11 +171,12 @@ export function SubagentResources({ member, options, disabled, onChange }: Subag
                 <div ref={listRef} role="group" aria-label={kind} tabIndex={0} className="min-h-56 flex-1 space-y-1 overflow-y-auto overscroll-contain rounded-md outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                     {activeQuery.isLoading && <p className="p-2 text-text-3">{t('harness.loading')}</p>}
                     {activeQuery.isError && <p role="alert" className="p-2 text-danger">{t('harness.loadError')}</p>}
-                    {activeQuery.isSuccess && (isConnector ? visibleConnectorGroups.length === 0 : filtered.length === 0) && <p className="p-2 text-text-3">{t('harness.noMatchingResources')}</p>}
-                    {isConnector
-                        ? visibleConnectorGroups.map((group) => {
+                    {activeQuery.isSuccess && (isGrouped ? visibleResourceGroups.length === 0 : filtered.length === 0) && <p className="p-2 text-text-3">{t('harness.noMatchingResources')}</p>}
+                    {isGrouped
+                        ? visibleResourceGroups.map((group) => {
                             const selectedCount = group.actions.filter((action) => selectedIds.has(action.id)).length;
                             const expanded = Boolean(query) || selectedOnly || group.unavailable || expandedGroups.has(group.id);
+                            const groupKind = group.kind === 'builtin' ? t('harness.builtinTool') : group.kind.toUpperCase();
                             return (
                                 <div key={group.id} className="overflow-hidden rounded-md border border-border-base">
                                     <button
@@ -183,9 +187,9 @@ export function SubagentResources({ member, options, disabled, onChange }: Subag
                                     >
                                         <Outlined.Down size={14} className={expanded ? 'shrink-0' : 'shrink-0 -rotate-90'} />
                                         <span className="min-w-0 flex-1 truncate text-text-1">
-                                            {group.groupName || t('harness.unavailableConnector')}
+                                            {group.groupName || t('harness.unavailableTools')}
                                         </span>
-                                        {!group.unavailable && <span className="rounded bg-fill-3 px-1.5 text-caption text-text-3">{group.kind}</span>}
+                                        {!group.unavailable && <span className="rounded bg-fill-3 px-1.5 text-caption text-text-3">{groupKind}</span>}
                                         <span className="shrink-0 text-caption text-text-3">
                                             {t('harness.resourceCount', { selected: selectedCount, total: group.actions.length })}
                                         </span>

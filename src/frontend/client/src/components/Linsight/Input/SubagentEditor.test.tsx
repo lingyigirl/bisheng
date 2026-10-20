@@ -65,6 +65,23 @@ test('groups connector actions and auto-expands groups for search matches', asyn
     expect(await screen.findByText('getCurrentWeather')).toBeInTheDocument();
 });
 
+test('groups builtin tools by parent and keeps their actions collapsed by default', async () => {
+    (getMemberToolCatalog as jest.Mock).mockResolvedValue([
+        { id: 1, name: 'Arithmetic', is_preset: 1, children: [{ id: 10, name: 'Calculator' }, { id: 11, name: 'Converter' }] },
+        { id: 2, name: 'Multiplier', is_preset: 0, children: [{ id: 39, name: 'multiply' }] },
+    ]);
+    editor();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /harness.tools/ }), { button: 0, ctrlKey: false });
+
+    expect(await screen.findByRole('button', { name: /Arithmetic/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Calculator')).not.toBeInTheDocument();
+    expect(screen.queryByText('Multiplier')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Arithmetic/ }));
+    expect(screen.getByText('Calculator')).toBeInTheDocument();
+    expect(screen.getByText('Converter')).toBeInTheDocument();
+});
+
 test('keeps missing historical capabilities visible and read-only', async () => {
     (getMemberToolCatalog as jest.Mock).mockResolvedValue([]);
     editor(true);
