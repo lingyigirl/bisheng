@@ -143,6 +143,11 @@ async def _validate_identity_and_knowledge(
 # ── 审计 ─────────────────────────────────────────────────────────────
 
 
+def _preset_value_map(presets) -> dict[str, object]:
+    """preset key → value（仅用于比较，不写入审计）。"""
+    return {str(item.get("key") or item.get("label") or ""): item.get("value") for item in (presets or [])}
+
+
 def _task_snapshot(task: ScheduledTask) -> dict:
     """管理审计的安全快照（AC-49 / AC-51）。
 
@@ -248,6 +253,9 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
     fields: dict = {}
     changed: set[str] = set()
     before_full = _task_snapshot(task)
+    # 预设值不落审计（AC-51），但只改 value 时 before/after 的 preset_keys 完全相同；
+    # 这个布尔标记让审计能区分“预设值发生了修改”而无需记录值本身。
+    preset_values_changed: bool | None = None
 
     if req.name is not None and req.name != task.name:
         fields["name"] = req.name
@@ -260,6 +268,7 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
         fields["preset_inputs"] = presets
         # 只留 key，不把值写进审计（AC-51）。
         changed.add("preset_keys")
+        preset_values_changed = _preset_value_map(task.preset_inputs) != _preset_value_map(presets)
     if req.service_account_id is not None and req.service_account_id != task.service_account_id:
         # 换运行身份：走与创建期相同的校验（AC-03），通过后同时更新锁定的 owner。
         owner_user_id = await _validate_identity_and_knowledge(
@@ -290,7 +299,8 @@ async def update_task(user, task_id: int, req) -> ScheduledTask:
     after_full = _task_snapshot(task)
     before = {key: before_full.get(key) for key in changed}
     after = {key: after_full.get(key) for key in changed}
-    await _audit(user, ScheduledTaskAuditAction.TASK_UPDATE, task, before=before, after=after)
+    audit_extra = {} if preset_values_changed is None else {"preset_values_changed": preset_values_changed}
+    await _audit(user, ScheduledTaskAuditAction.TASK_UPDATE, task, before=before, after=after, **audit_extra)
     return task
 
 

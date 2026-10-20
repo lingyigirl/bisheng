@@ -43,6 +43,18 @@ function durationLabel(ms: number | null): string {
 }
 
 /**
+ * 是否存在可归因的真实运行。
+ *
+ * 计划轮次 FAIL/SKIP 不 claim、不产生运行：`last_run_at`/`last_trace_id` 会停留在
+ * 上一次真实运行，`last_duration_ms` 被清空。用“有耗时”作为真实运行的标记，避免
+ * 把上一轮的“开始时间/监控”错挂到本轮失败上；`needs_input` 是暂停中的真实运行，
+ * 尚未终态回写耗时，单独放行。
+ */
+function hasMonitorableRun(row: ScheduledTaskItem): boolean {
+    return typeof row.last_duration_ms === "number" || row.last_status === "needs_input"
+}
+
+/**
  * 「对外发布 → 定时任务」面板（AC-57/AC-58）。
  *
  * 列表列：触发计划 / 下次执行 / 上次结果（失败原因 Tooltip）/ 状态 / 操作。
@@ -191,12 +203,15 @@ export function ScheduledTaskPanel({ appId, appType }: ScheduledTaskPanelProps) 
                                                     </TooltipTrigger>
                                                     <TooltipContent>
                                                         <p>{row.last_error || t("last.noError")}</p>
-                                                        {row.last_run_at && (
+                                                        {hasMonitorableRun(row) && row.last_run_at && (
                                                             <p>
                                                                 {t("last.startedAt", {
                                                                     time: formatIsoDateTime(row.last_run_at),
                                                                 })}
                                                             </p>
+                                                        )}
+                                                        {row.last_status === "failed" && !hasMonitorableRun(row) && (
+                                                            <p>{t("last.planFailureHint")}</p>
                                                         )}
                                                     </TooltipContent>
                                                 </Tooltip>
@@ -241,6 +256,7 @@ export function ScheduledTaskPanel({ appId, appType }: ScheduledTaskPanelProps) 
                                     </td>
                                     <td className="p-2 text-right">
                                         {canViewMonitor &&
+                                            hasMonitorableRun(row) &&
                                             row.last_trace_id &&
                                             row.last_run_at &&
                                             row.last_status !== "skipped" && (
