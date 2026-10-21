@@ -30,6 +30,11 @@ Git 提交说明统一使用中文：标题和正文均用中文描述；可保�
 - 不创建 PR、不执行分支合并；SDD 的需求、设计确认与质量检查仍照常执行。
 - 如果远端更新导致推送被拒绝，先检查差异；不得擅自强推、覆盖他人提交或通过合并分支绕过本约定。
 
+**数据库操作审批规则（用户于 2026-10-21 确认）：**
+- 任何数据库操作都必须先获得用户针对该次操作的明确批准，包括只读查询、健康检查、迁移、DDL/DML、备份与恢复、数据修复及清理。
+- 规则适用于本地、共享远端、测试和生产数据库；此前的批准不得视为后续操作或其他数据库的长期授权。
+- 未获批准时，不得连接数据库，也不得通过 ORM、Alembic、SQL 脚本、命令行客户端或其他工具间接执行数据库操作。
+
 Dev / test / build commands live in each sub-project's `AGENTS.md`: `src/backend/AGENTS.md` · `src/frontend/platform/AGENTS.md` · `src/frontend/client/AGENTS.md`.
 
 Middleware (MySQL / Redis / Milvus / ES / MinIO / OpenFGA): integration tests run in **CI**; per-developer middleware machines are pending.
