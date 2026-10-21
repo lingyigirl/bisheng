@@ -386,6 +386,12 @@ keep-alive 阶段吞掉该错误后继续向死沙箱上传大型文件，否则
 | keep-alive 的 sandbox 404 不能在 copy-in 前被吞掉 | 随后向死沙箱上传会表现为 `10053`，一次性重建分支不触发 | `_keep_alive` 向上抛出已识别的 sandbox-not-found |
 | E2B 公开 `files.write` 会将 multipart 内容读入内存 | 超大型 required_files 补传仍有 Worker 内存峰值；本次只消除了 copy-out 峰值 | `_copy_in`，后续随 SDK 流式上传能力单独优化 |
 
+**2026-10-21 容量风险决策：暂不处理。** 当前 6MiB 的真实 sandbox
+重建与 `required_files` 恢复已通过，普通 output 回收始终使用流式链路。剩余
+风险只影响沙箱重建时的大型 `required_files` copy-in；在现有文件规模下不引入
+分片拼接、私有 E2B 接口或额外存储机制。后续只有在观察到 Worker OOM、稳定的
+上传超时/连接中断，或业务开始常态化恢复约 50MiB 以上文件时，才重新评估。
+
 ### 12.7 验证
 
 - 单元测试覆盖路径优先级、目录剪枝、未知 scratch 持久化、流式大小校验、超时、部分失败和旧协议字段。

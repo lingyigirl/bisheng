@@ -223,3 +223,4 @@ R06 的真实服务证据与离线/模拟覆盖分列在自动恢复验收报告
 - 新增 `required_files` 工具 schema/透传与 keep-alive 404 用例；大型 scratch 可从本地 `file_dir` 和 WorkspaceBackend 补传到重建后的沙箱。
 - `ruff format`、增量 `E4/E7/E9/I`、`arch-guard.sh`、`git diff --check` 通过。
 - 2026-10-21 真实 E2B：普通回收任务 `persisted=3 failed=0`，字体/build 临时文件未读取；6MiB scratch 在 sandbox 自然过期后从 `i9rd...` 重建为 `ixzfty...`，`required_files` 恢复后的 SHA-256 一致并输出 `RECOVERY_OK`。
+- 2026-10-21 用户确认：E2B `files.write` 导致的大型 `required_files` copy-in Worker 内存峰值暂无业务影响，**当前不修复**；保留为容量边界，出现真实 OOM、上传失败或常态化 50MiB 以上恢复需求时再评估。
