@@ -43,7 +43,7 @@ class FakeMinioStorage:
     # async surface used by WorkspaceBackend's a* methods --------------------
     async def put_object(self, *, bucket_name=None, object_name, file, **kwargs):
         bucket = bucket_name or self.bucket
-        data = file if isinstance(file, bytes) else bytes(file)
+        data = file.read() if hasattr(file, "read") else file if isinstance(file, bytes) else bytes(file)
         self.store[(bucket, object_name)] = data
 
     async def get_object(self, bucket_name=None, object_name=None):
@@ -53,7 +53,7 @@ class FakeMinioStorage:
     # sync surface ----------------------------------------------------------
     def put_object_sync(self, *, bucket_name=None, object_name, file, **kwargs):
         bucket = bucket_name or self.bucket
-        data = file if isinstance(file, bytes) else bytes(file)
+        data = file.read() if hasattr(file, "read") else file if isinstance(file, bytes) else bytes(file)
         self.store[(bucket, object_name)] = data
 
     def get_object_sync(self, bucket_name=None, object_name=None):
@@ -132,6 +132,68 @@ def test_write_caches_and_writes_through(fake_minio, file_dir):
     cached = Path(file_dir) / "output" / "report.md"
     assert cached.exists()
     assert cached.read_bytes() == b"hello world"
+
+
+def test_write_stream_caches_and_writes_through_without_inline_bytes(fake_minio, file_dir):
+    """Large E2B streams are staged on disk before MinIO publication."""
+    be = make_backend("sv1", fake_minio, file_dir)
+
+    def chunks():
+        yield b"hello "
+        yield b"stream"
+
+    res = be.write_stream("/output/report.bin", chunks(), expected_size=12)
+
+    assert res.error is None
+    key = f"{WORKSPACE_PREFIX}/sv1/output/report.bin"
+    assert fake_minio.store[(fake_minio.bucket, key)] == b"hello stream"
+    assert (Path(file_dir) / "output" / "report.bin").read_bytes() == b"hello stream"
+
+
+def test_write_stream_rejects_size_mismatch_without_publishing(fake_minio, file_dir):
+    be = make_backend("sv1", fake_minio, file_dir)
+
+    def chunks():
+        yield b"short"
+
+    with pytest.raises(ValueError, match="size mismatch"):
+        be.write_stream("/output/report.bin", chunks(), expected_size=6)
+
+    key = f"{WORKSPACE_PREFIX}/sv1/output/report.bin"
+    assert (fake_minio.bucket, key) not in fake_minio.store
+    assert not (Path(file_dir) / "output" / "report.bin").exists()
+
+
+def test_write_stream_does_not_publish_partial_input(fake_minio, file_dir):
+    be = make_backend("sv1", fake_minio, file_dir)
+
+    def broken_stream():
+        yield b"partial"
+        raise RuntimeError("source stream failed")
+
+    with pytest.raises(RuntimeError, match="source stream failed"):
+        be.write_stream("/output/report.bin", broken_stream(), expected_size=14)
+
+    key = f"{WORKSPACE_PREFIX}/sv1/output/report.bin"
+    assert (fake_minio.bucket, key) not in fake_minio.store
+    assert not (Path(file_dir) / "output" / "report.bin").exists()
+
+
+def test_write_stream_upload_failure_keeps_no_local_cache(fake_minio, file_dir, monkeypatch):
+    be = make_backend("sv1", fake_minio, file_dir)
+
+    def fail_upload(*args, **kwargs):
+        raise OSError("object store unavailable")
+
+    monkeypatch.setattr(fake_minio, "put_object_sync", fail_upload)
+
+    def chunks():
+        yield b"complete"
+
+    with pytest.raises(OSError, match="object store unavailable"):
+        be.write_stream("/output/report.bin", chunks(), expected_size=8)
+
+    assert not (Path(file_dir) / "output" / "report.bin").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -16,11 +16,13 @@ import matplotlib
 from loguru import logger
 from matplotlib import font_manager
 
+from bisheng_langchain.gpts.tools.code_interpreter.artifact_policy import (
+    ArtifactDisposition,
+    classify_workspace_path,
+)
 from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
     OUTPUT_DIR_NAME,
     BaseExecutor,
-    is_generated_font_cache_path,
-    is_skipped_workspace_name,
     path_namespace_rules,
 )
 
@@ -313,14 +315,17 @@ class LocalExecutor(BaseExecutor):
                 d
                 for d in dirs
                 if not d.startswith(".")
-                and not is_skipped_workspace_name(d)
-                and not is_generated_font_cache_path(os.path.relpath(os.path.join(root, d), dir_path))
+                and classify_workspace_path(os.path.relpath(os.path.join(root, d), dir_path)).disposition
+                is ArtifactDisposition.PERSIST
             ]
             for name in files:
                 if name.startswith("."):
                     continue
                 abs_path = os.path.join(root, name)
-                if is_generated_font_cache_path(os.path.relpath(abs_path, dir_path)):
+                if (
+                    classify_workspace_path(os.path.relpath(abs_path, dir_path)).disposition
+                    is not ArtifactDisposition.PERSIST
+                ):
                     continue
                 try:
                     stat = os.stat(abs_path)
@@ -465,8 +470,7 @@ class LocalExecutor(BaseExecutor):
             rel_path = os.path.relpath(file.path, root_path)
             if (
                 file.name.startswith(".")
-                or is_skipped_workspace_name(file.name)
-                or is_generated_font_cache_path(rel_path)
+                or classify_workspace_path(rel_path).disposition is not ArtifactDisposition.PERSIST
             ):
                 continue
             if file.is_file():

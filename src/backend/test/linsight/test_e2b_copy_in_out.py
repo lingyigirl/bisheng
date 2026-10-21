@@ -23,12 +23,12 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
 from bisheng_langchain.gpts.tools.code_interpreter.e2b_executor import (
     SIZE_AUTOPUSH,
-    SIZE_INLINE,
     E2bCodeExecutor,
 )
 
@@ -42,6 +42,7 @@ class FakeEntry:
     path: str
     type: str  # "file" | "dir"
     modified_time: float = 0.0
+    size: int = 0
 
 
 class FakeExecution:
@@ -79,11 +80,22 @@ class FakeFiles:
     def list(self, path):
         entries = []
         for p in sorted(self.store):
-            entries.append(FakeEntry(name=p.split("/")[-1], path=p, type="file", modified_time=self.mtime.get(p, 0.0)))
+            entries.append(
+                FakeEntry(
+                    name=p.split("/")[-1],
+                    path=p,
+                    type="file",
+                    modified_time=self.mtime.get(p, 0.0),
+                    size=len(self.store[p]),
+                )
+            )
         return entries
 
-    def read(self, path, format="bytes"):
-        return self.store[path]
+    def read(self, path, format="bytes", request_timeout=None):
+        data = self.store[path]
+        if format == "stream":
+            return iter([data[: len(data) // 2], data[len(data) // 2 :]])
+        return data
 
     def remove(self, path, **kwargs):
         self.store.pop(path, None)
@@ -117,6 +129,9 @@ class _SkillDownload:
 class RecordingWorkspace:
     def __init__(self, skills: dict | None = None):
         self.writes: dict[str, bytes] = {}
+        self.stream_writes: dict[str, bytes] = {}
+        self.write_stream_calls: list[tuple[str, int | None]] = []
+        self.cache_dir: str | None = None
         # Workspace `skills/` tree served to the executor's lazy staging
         # (workspace path -> bytes); empty by default.
         self.skill_files: dict[str, bytes] = dict(skills or {})
@@ -126,7 +141,13 @@ class RecordingWorkspace:
         self.ls_calls += 1
         listing = type("Listing", (), {})()
         listing.error = None
-        listing.entries = [{"path": p, "is_dir": False, "size": len(b)} for p, b in self.skill_files.items()]
+        prefix = path.strip("/")
+        prefix = prefix + "/" if prefix else ""
+        listing.entries = [
+            {"path": p, "is_dir": False, "size": len(b)}
+            for p, b in self.skill_files.items()
+            if p.lstrip("/").startswith(prefix)
+        ]
         return listing
 
     def download_files(self, paths):
@@ -137,6 +158,21 @@ class RecordingWorkspace:
 
     def write(self, path, content):
         self.writes[path.lstrip("/")] = content if isinstance(content, bytes) else content.encode()
+
+    def write_stream(self, path, chunks, *, expected_size=None):
+        if isinstance(chunks, (bytes, bytearray, memoryview)):
+            data = bytes(chunks)
+        else:
+            data = b"".join(bytes(chunk) for chunk in chunks)
+        normalized = path.lstrip("/")
+        self.writes[normalized] = data
+        self.stream_writes[normalized] = data
+        self.write_stream_calls.append((normalized, expected_size))
+        if self.cache_dir:
+            cache_path = Path(self.cache_dir) / normalized
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_bytes(data)
+        return type("WriteResult", (), {"error": None, "path": "/" + normalized})()
 
     def read(self, path, offset=0, limit=2000):
         class R:
@@ -194,6 +230,7 @@ def test_small_skill_files_are_batched_once_and_unchanged_inputs_are_not_downloa
     workspace = RecordingWorkspace(skills)
     exe = make_executor(monkeypatch, workspace)
     exe.local_sync_path = str(tmp_path)
+    workspace.cache_dir = str(tmp_path)
     read = Mock(wraps=exe.sandbox.files.read)
     write = Mock(wraps=exe.sandbox.files.write)
     listing = Mock(wraps=exe.sandbox.files.list)
@@ -423,6 +460,30 @@ def test_workspace_sync_skips_toolchain_and_oversize(monkeypatch, tmp_path):
     assert "big.bin" not in exe._ws_synced
 
 
+def test_required_large_scratch_reloads_from_local_workspace(monkeypatch, tmp_path):
+    exe = make_executor(monkeypatch)
+    exe.local_sync_path = str(tmp_path)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    payload = b"x" * (SIZE_AUTOPUSH + 10)
+    (scratch / "model.bin").write_bytes(payload)
+
+    hint = exe._copy_in(["scratch/model.bin"])
+
+    assert hint is None
+    assert exe.sandbox.files.store["scratch/model.bin"] == payload
+
+
+def test_required_large_scratch_reloads_from_workspace_backend(monkeypatch):
+    workspace = RecordingWorkspace({"/scratch/model.bin": b"x" * (SIZE_AUTOPUSH + 10)})
+    exe = make_executor(monkeypatch, workspace=workspace)
+
+    hint = exe._copy_in(["scratch/model.bin"])
+
+    assert hint is None
+    assert exe.sandbox.files.store["scratch/model.bin"] == workspace.skill_files["/scratch/model.bin"]
+
+
 def test_workspace_sync_failure_rolls_back_state(monkeypatch, tmp_path):
     """Best-effort: a failed push rolls the tracked state back and never raises —
     the next run retries the whole delta and the current run still executes."""
@@ -518,7 +579,6 @@ def test_run_without_required_files(monkeypatch):
 
 def test_thresholds_exposed():
     assert SIZE_AUTOPUSH > 0
-    assert SIZE_INLINE > 0
 
 
 def test_copy_out_walks_real_directory_shape(monkeypatch):
@@ -589,7 +649,7 @@ def test_copy_out_skips_generated_font_cache(monkeypatch):
                 FakeEntry("other.otf", "/home/user/scratch/other.otf", "file"),
             ],
             "/home/user/output": [
-                FakeEntry("chart.png", "/home/user/output/chart.png", "file"),
+                FakeEntry("chart.png", "/home/user/output/chart.png", "file", size=3),
             ],
         }[path]
     )
@@ -598,11 +658,138 @@ def test_copy_out_skips_generated_font_cache(monkeypatch):
 
     products = exe._copy_out({})
 
-    assert products == [{"path": "output/chart.png", "size": 3, "is_product": True}]
+    assert products == [
+        {
+            "path": "output/chart.png",
+            "size": 3,
+            "is_product": True,
+            "persisted": True,
+            "storage": "workspace",
+            "skip_reason": None,
+            "error": None,
+        }
+    ]
     assert workspace.writes == {"output/chart.png": b"png"}
-    read.assert_called_once_with("/home/user/output/chart.png", format="bytes")
+    read.assert_called_once_with(
+        "/home/user/output/chart.png",
+        format="stream",
+        request_timeout=exe.file_request_timeout,
+    )
     listed = [call.args[0] for call in exe.sandbox.files.list.call_args_list]
     assert "/home/user/scratch/fonts" not in listed
+
+
+def test_copy_out_streams_durable_files_and_reports_sandbox_only_entries(monkeypatch):
+    from unittest.mock import Mock
+
+    workspace = RecordingWorkspace()
+    exe = make_executor(monkeypatch, workspace=workspace)
+    exe.sandbox.files.list = Mock(
+        side_effect=lambda path: {
+            "./": [
+                FakeEntry("scratch", "/home/user/scratch", "dir"),
+                FakeEntry("output", "/home/user/output", "dir"),
+            ],
+            "/home/user/scratch": [
+                FakeEntry("model.bin", "/home/user/scratch/model.bin", "file", size=7 * 1024 * 1024),
+                FakeEntry("fonts", "/home/user/scratch/fonts", "dir"),
+            ],
+            "/home/user/output": [
+                FakeEntry("report.pdf", "/home/user/output/report.pdf", "file", size=11 * 1024 * 1024),
+            ],
+        }[path]
+    )
+    for path in (
+        "/home/user/scratch/model.bin",
+        "/home/user/output/report.pdf",
+        "/home/user/scratch/fonts/font.otf",
+    ):
+        exe.sandbox.files.store[path] = b"x" * 16
+    read = Mock(wraps=exe.sandbox.files.read)
+    exe.sandbox.files.read = read
+
+    files = exe._copy_out({})
+
+    by_path = {item["path"]: item for item in files}
+    assert by_path["output/report.pdf"]["persisted"] is True
+    assert by_path["output/report.pdf"]["is_product"] is True
+    assert by_path["scratch/model.bin"]["persisted"] is True
+    assert by_path["scratch/model.bin"]["is_product"] is False
+    assert set(workspace.stream_writes) == {"output/report.pdf", "scratch/model.bin"}
+    assert workspace.write_stream_calls == [
+        ("output/report.pdf", 11 * 1024 * 1024),
+        ("scratch/model.bin", 7 * 1024 * 1024),
+    ]
+    assert {call.args[0]: call.kwargs["request_timeout"] for call in read.call_args_list} == {
+        "/home/user/output/report.pdf": exe.file_request_timeout,
+        "/home/user/scratch/model.bin": exe.file_request_timeout,
+    }
+    assert all(call.kwargs["format"] == "stream" for call in read.call_args_list)
+    listed = [call.args[0] for call in exe.sandbox.files.list.call_args_list]
+    assert "/home/user/scratch/fonts" not in listed
+
+
+def test_copy_out_continues_after_single_file_failure(monkeypatch):
+    from unittest.mock import Mock
+
+    workspace = RecordingWorkspace()
+    exe = make_executor(monkeypatch, workspace=workspace)
+    exe.sandbox.files.list = Mock(
+        return_value=[
+            FakeEntry("a.md", "/home/user/output/a.md", "file", size=1),
+            FakeEntry("b.pdf", "/home/user/output/b.pdf", "file", size=2),
+        ]
+    )
+    exe.sandbox.files.store["/home/user/output/a.md"] = b"a"
+    exe.sandbox.files.store["/home/user/output/b.pdf"] = b"bb"
+    original = workspace.write_stream
+
+    def write_stream(path, chunks, *, expected_size=None):
+        if path == "/output/b.pdf":
+            raise OSError("object store unavailable")
+        return original(path, chunks, expected_size=expected_size)
+
+    workspace.write_stream = write_stream
+
+    files = exe._copy_out({})
+
+    by_path = {item["path"]: item for item in files}
+    assert by_path["output/a.md"]["persisted"] is True
+    assert by_path["output/b.pdf"]["persisted"] is False
+    assert "object store unavailable" in by_path["output/b.pdf"]["error"]
+    assert set(workspace.stream_writes) == {"output/a.md"}
+
+
+def test_copy_out_closes_failed_source_stream(monkeypatch):
+    from unittest.mock import Mock
+
+    workspace = RecordingWorkspace()
+    exe = make_executor(monkeypatch, workspace=workspace)
+    entry = FakeEntry("a.pdf", "/home/user/output/a.pdf", "file", size=5)
+    exe.sandbox.files.list = Mock(return_value=[entry])
+    closed = {"value": False}
+
+    class ClosableStream:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            raise StopIteration
+
+        def close(self):
+            closed["value"] = True
+
+    exe.sandbox.files.read = Mock(return_value=ClosableStream())
+
+    def fail_write_stream(path, chunks, *, expected_size=None):
+        raise OSError("upload failed before consuming")
+
+    workspace.write_stream = fail_write_stream
+
+    result = exe._copy_out({})
+
+    assert result[0]["persisted"] is False
+    assert closed["value"] is True
 
 
 def test_local_sync_skips_toolchain_trees(tmp_path):

@@ -235,10 +235,14 @@ async def test_e2b_file_list_skips_toolchain_trees(monkeypatch: pytest.MonkeyPat
 
 
 async def test_e2b_file_list_skips_generated_font_cache(monkeypatch: pytest.MonkeyPatch, tmp_path):
-    """Temporary plotting fonts must not enter the task-start copy-in snapshot."""
+    """Only explicit scratch byproducts are absent from the task-start copy-in snapshot."""
     fonts = tmp_path / "scratch" / "fonts"
     fonts.mkdir(parents=True)
     (fonts / "NotoSansCJKsc-Bold.otf").write_bytes(b"font")
+    build = tmp_path / "scratch" / "build"
+    build.mkdir()
+    (build / "cache.bin").write_bytes(b"build-cache")
+    (tmp_path / "scratch" / "model.bin").write_bytes(b"unknown-scratch-state")
     (tmp_path / "uploads").mkdir()
     (tmp_path / "uploads" / "data.csv").write_bytes(b"a,b\n")
 
@@ -257,4 +261,6 @@ async def test_e2b_file_list_skips_generated_font_cache(monkeypatch: pytest.Monk
     bound_row = init_one.await_args.kwargs["tool"]
     pushed = {entry.path for entry in bound_row.extra["config"]["e2b"]["file_list"]}
     assert "./uploads/data.csv" in pushed
+    assert "./scratch/model.bin" in pushed
     assert not any("scratch/fonts" in path for path in pushed)
+    assert not any("scratch/build" in path for path in pushed)

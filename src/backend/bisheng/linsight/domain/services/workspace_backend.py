@@ -29,7 +29,9 @@ MinIO layout under ``workspace/{svid}/``:
   - ``uploads/<name>/index.md`` (+ ``images/``) — parsed attachments
   - ``output/`` — deliverables (product area)
   - ``scratch/`` — intermediate state (persistent, not a deliverable)
-  - ``manifest.json`` — pointer manifest for large/binary files
+  - ``manifest.json`` — optional pointer file retained when present; this module
+    does not currently write a large-file manifest, so callers must not assume
+    one exists
 
 **Binary content.** Since the dual-track write (e96ce0017) ``uploads/`` holds the
 ORIGINAL xlsx / docx / pdf next to its ``.md`` view, so every read path here must
@@ -54,9 +56,12 @@ import base64
 import hashlib
 import os
 import re
+import tempfile
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 from loguru import logger
 from minio.error import S3Error
@@ -495,7 +500,7 @@ class WorkspaceBackend(FilesystemBackend):
                 return None
             raise
 
-    def _minio_put_sync(self, rel_path: str, data: bytes) -> None:
+    def _minio_put_sync(self, rel_path: str, data: bytes | BinaryIO) -> None:
         self.minio.put_object_sync(
             bucket_name=self._bucket(),
             object_name=self._object_key(rel_path),
@@ -539,6 +544,56 @@ class WorkspaceBackend(FilesystemBackend):
         self._cache_write(rel, data)
         self._minio_put_sync(rel, data)
         return WriteResult(path="/" + rel)
+
+    def write_stream(
+        self,
+        file_path: str,
+        chunks: Iterable[bytes | bytearray | memoryview],
+        *,
+        expected_size: int | None = None,
+    ) -> WriteResult:
+        """Persist a stream without materialising the complete file in memory."""
+        rel = self._ws_rel(file_path)
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=".workspace-stream-",
+                dir=self.file_dir,
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                received = 0
+                for chunk in chunks:
+                    if not isinstance(chunk, bytes):
+                        chunk = bytes(chunk)
+                    if chunk:
+                        temp_file.write(chunk)
+                        received += len(chunk)
+                temp_file.flush()
+
+            if expected_size is not None and received != expected_size:
+                raise ValueError(f"stream size mismatch: expected {expected_size}, received {received}")
+
+            with temp_path.open("rb") as upload:
+                self._minio_put_sync(rel, upload)
+
+            cache_path = self._cache_path(rel)
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(temp_path, cache_path)
+                temp_path = None
+            except OSError as exc:
+                # MinIO is the truth source; a cache failure must not turn a
+                # successfully persisted object into a task failure.
+                logger.warning("workspace stream persisted but local cache write failed: {}", exc)
+            return WriteResult(path="/" + rel)
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.debug("temporary workspace stream cleanup failed: {}", exc)
 
     # -- read ---------------------------------------------------------------
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:

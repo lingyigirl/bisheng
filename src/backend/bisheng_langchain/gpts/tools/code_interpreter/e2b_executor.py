@@ -9,10 +9,13 @@ from e2b.sandbox.filesystem.filesystem import EntryInfo, FileType, WriteEntry
 from e2b_code_interpreter import Result, Sandbox
 from loguru import logger
 
+from bisheng_langchain.gpts.tools.code_interpreter.artifact_policy import (
+    ArtifactDisposition,
+    classify_workspace_path,
+    normalize_workspace_path,
+)
 from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
     BaseExecutor,
-    is_generated_font_cache_path,
-    is_skipped_workspace_name,
     path_namespace_rules,
 )
 
@@ -21,10 +24,10 @@ from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
 #  - SIZE_AUTOPUSH: working-set files at/under this size are auto-pushed into the
 #    sandbox before each run (delta by md5). Larger files must be explicitly
 #    declared in ``run(required_files=...)`` to avoid silent bulk transfer.
-#  - SIZE_INLINE: copy-out products at/under this size may be inlined; larger
-#    products are pointer-tracked (manifest) by the workspace backend.
+# Copy-out uses a bounded stream for every selected file, so it has no separate
+# inline/drop threshold.
 SIZE_AUTOPUSH = 5 * 1024 * 1024  # 5 MB
-SIZE_INLINE = 1 * 1024 * 1024  # 1 MB
+DEFAULT_FILE_REQUEST_TIMEOUT = 300.0
 UPLOAD_BATCH_FILES = 32
 UPLOAD_BATCH_BYTES = 8 * 1024 * 1024
 
@@ -39,6 +42,7 @@ class E2bCodeExecutor(BaseExecutor):
         domain: str = None,
         template: str | None = None,
         timeout: int = 900,
+        file_request_timeout: float = DEFAULT_FILE_REQUEST_TIMEOUT,
         file_list: list[WriteEntry] = None,
         keep_sandbox: bool = False,
         prewarm_sandbox: bool = True,
@@ -64,6 +68,7 @@ class E2bCodeExecutor(BaseExecutor):
         self.domain = domain
         self.template = template
         self.timeout = timeout
+        self.file_request_timeout = file_request_timeout
         self.file_list = file_list
         self.keep_sandbox = keep_sandbox  # 是否保持一个sandbox, 默认只有在执行的时候才创建一个沙盒
         self.sandbox_file_cache = {}  # 缓存已经下载过的文件，避免重复下载
@@ -122,6 +127,8 @@ class E2bCodeExecutor(BaseExecutor):
             "(for example xlsxwriter for formula caches or PyMuPDF for required PDF sampling). "
             "For CJK plots, use an installed font family directly; do not extract faces from "
             "TTC/OTC collections or copy font files into the workspace. "
+            "Use output/ only for deliverables and avoid generating build caches in scratch/; "
+            "recognized transient caches remain in the sandbox and are not durable workspace files. "
             "Use the actual operating system's package manager, never apt-get on Windows. "
             "Run any necessary install as its own step. Check `which <tool>` at most once; never hunt for it with "
             "`find /` or by reading system directories (/root, /opt, /etc, /usr, /code, "
@@ -212,10 +219,11 @@ class E2bCodeExecutor(BaseExecutor):
         # copy-out: enumerate new files vs the pre-run snapshot
         new_files = self._copy_out(pre_paths)
         logger.info(
-            "E2B run phases: execute={:.3f}s collect={:.3f}s products={}",
+            "E2B run phases: execute={:.3f}s collect={:.3f}s persisted={} failed={}",
             executed_at - prepared_at,
             time.perf_counter() - executed_at,
-            len(new_files),
+            sum(item["persisted"] for item in new_files),
+            sum(not item["persisted"] for item in new_files),
         )
 
         result = {
@@ -363,7 +371,8 @@ class E2bCodeExecutor(BaseExecutor):
     def _copy_in(self, required_files: list[str]) -> str | None:
         """Push working-set files into the sandbox. Returns a hint string when a
         large file was present but not declared in ``required_files``."""
-        working_set = self._materialize_working_set()
+        working_set = dict(self._materialize_working_set())
+        required_hints = self._load_required_files(required_files, working_set)
         undeclared_large: list[str] = []
         planned = {}
         uploads = []
@@ -384,13 +393,48 @@ class E2bCodeExecutor(BaseExecutor):
             self._skills_staged = False
             raise
         self._pushed_md5.update(planned)
+        hints = list(required_hints)
         if undeclared_large:
             self._skills_staged = False
-            return (
+            hints.append(
                 "Some files exceed the auto-push size limit and were not staged. "
                 f"Declare them in required_files to use them: {undeclared_large}"
             )
-        return None
+        return "\n".join(hints) if hints else None
+
+    def _load_required_files(self, required_files: list[str], working_set: dict[str, bytes]) -> list[str]:
+        """Load explicitly declared workspace files, including arbitrary large paths."""
+        hints: list[str] = []
+        backend = self.workspace_backend
+        for raw_path in required_files:
+            rel_path = normalize_workspace_path(raw_path)
+            if not rel_path or ".." in rel_path.split("/"):
+                hints.append(f"Invalid required file path: {raw_path}")
+                continue
+            decision = classify_workspace_path(rel_path)
+            if decision.disposition is not ArtifactDisposition.PERSIST:
+                hints.append(f"Required file is not durable workspace state: {rel_path}")
+                continue
+            if rel_path in working_set or self._pushed_md5.get(rel_path):
+                continue
+
+            local_path = os.path.join(self.local_sync_path, rel_path) if self.local_sync_path else None
+            if local_path and os.path.isfile(local_path):
+                with open(local_path, "rb") as required_file:
+                    working_set[rel_path] = required_file.read()
+                continue
+
+            if backend is None or not callable(getattr(backend, "download_files", None)):
+                hints.append(f"Required file not found in workspace: {rel_path}")
+                continue
+            responses = backend.download_files(["/" + rel_path])
+            response = responses[0] if responses else None
+            content = getattr(response, "content", None)
+            if response is None or getattr(response, "error", None) or content is None:
+                hints.append(f"Required file not found in workspace: {rel_path}")
+                continue
+            working_set[rel_path] = content.encode("utf-8") if isinstance(content, str) else bytes(content)
+        return hints
 
     def _write_batches(self, entries):
         """Bound multipart payloads without issuing one request per small file."""
@@ -455,15 +499,15 @@ class E2bCodeExecutor(BaseExecutor):
                 d
                 for d in dirnames
                 if not d.startswith(".")
-                and not is_skipped_workspace_name(d)
-                and not is_generated_font_cache_path(os.path.relpath(os.path.join(dirpath, d), root).replace("\\", "/"))
+                and classify_workspace_path(os.path.relpath(os.path.join(dirpath, d), root)).disposition
+                is ArtifactDisposition.PERSIST
             ]
             for name in filenames:
                 if name.startswith("."):
                     continue
                 host_path = os.path.join(dirpath, name)
                 rel = os.path.relpath(host_path, root).replace("\\", "/")
-                if is_generated_font_cache_path(rel):
+                if classify_workspace_path(rel).disposition is not ArtifactDisposition.PERSIST:
                     continue
                 try:
                     stat = os.stat(host_path)
@@ -546,22 +590,63 @@ class E2bCodeExecutor(BaseExecutor):
             if pre_mtime is not None and entry.modified_time <= pre_mtime:
                 continue  # untouched since the snapshot
             rel_path = self._to_workspace_rel(entry.path)
-            content = self.sandbox.files.read(entry.path, format="bytes")
-            if not isinstance(content, bytes):
-                content = content.encode("utf-8") if isinstance(content, str) else bytes(content)
             is_product = rel_path.startswith("output/")
-            new_files.append({"path": rel_path, "size": len(content), "is_product": is_product})
-            if self.workspace_backend is not None:
-                # Large products are pointer-tracked by the backend; small ones inlined.
-                self.workspace_backend.write(rel_path, content)
-            if self.local_sync_path and os.path.isdir(self.local_sync_path):
-                self._write_local_file(entry, content)
-                if len(content) <= SIZE_AUTOPUSH:
-                    stat = os.stat(os.path.join(self.local_sync_path, rel_path))
-                    self._ws_synced[rel_path] = (stat.st_mtime_ns, stat.st_size)
-                    self._pushed_md5[rel_path] = hashlib.md5(content).hexdigest()
+            item = {
+                "path": rel_path,
+                "size": entry.size,
+                "is_product": is_product,
+                "persisted": False,
+                "storage": "none",
+                "skip_reason": None,
+                "error": None,
+            }
+            try:
+                content = self._persist_entry_to_workspace(entry, rel_path)
+                if content is not None and self.local_sync_path and os.path.isdir(self.local_sync_path):
+                    self._write_local_file(entry, content)
+                if self.local_sync_path and os.path.isdir(self.local_sync_path):
+                    local_path = os.path.join(self.local_sync_path, rel_path)
+                    if os.path.isfile(local_path) and entry.size <= SIZE_AUTOPUSH:
+                        stat = os.stat(local_path)
+                        self._ws_synced[rel_path] = (stat.st_mtime_ns, stat.st_size)
+                        if content is not None:
+                            self._pushed_md5[rel_path] = hashlib.md5(content).hexdigest()
+            except Exception as exc:
+                if self._sandbox_is_gone(exc):
+                    raise
+                logger.warning("E2B artifact persistence failed for {}: {}", rel_path, exc)
+                item["error"] = f"{type(exc).__name__}: {exc}"
+                new_files.append(item)
+                continue
+            item["persisted"] = True
+            item["storage"] = "workspace"
+            new_files.append(item)
             self.sandbox_file_cache[entry.path] = entry
         return new_files
+
+    def _persist_entry_to_workspace(self, entry: EntryInfo, rel_path: str) -> bytes | None:
+        """Persist one selected entry, returning bytes only on the compatibility path."""
+        backend = self.workspace_backend
+        if backend is not None and callable(getattr(backend, "write_stream", None)):
+            chunks = self.sandbox.files.read(
+                entry.path,
+                format="stream",
+                request_timeout=self.file_request_timeout,
+            )
+            try:
+                backend.write_stream("/" + rel_path, chunks, expected_size=entry.size)
+            finally:
+                close = getattr(chunks, "close", None)
+                if callable(close):
+                    close()
+            return None
+
+        content = self.sandbox.files.read(entry.path, format="bytes")
+        if not isinstance(content, bytes):
+            content = content.encode("utf-8") if isinstance(content, str) else bytes(content)
+        if backend is not None:
+            backend.write(rel_path, content)
+        return content
 
     def _walk_sandbox(self) -> list[EntryInfo]:
         """Flat list of all (non-hidden) file entries in the sandbox."""
@@ -577,8 +662,7 @@ class E2bCodeExecutor(BaseExecutor):
                 rel_path = self._to_workspace_rel(entry.path)
                 if (
                     entry.name.startswith(".")
-                    or is_skipped_workspace_name(entry.name)
-                    or is_generated_font_cache_path(rel_path)
+                    or classify_workspace_path(rel_path).disposition is not ArtifactDisposition.PERSIST
                 ):
                     continue
                 if entry.type in (FileType.FILE, "file"):
@@ -659,10 +743,10 @@ class E2bCodeExecutor(BaseExecutor):
         for file in files_info:
             # hidden files and toolchain trees (node_modules / caches) are never
             # task state — syncing them per run was minutes of wasted file calls
+            rel_path = self._to_workspace_rel(file.path)
             if (
                 file.name.startswith(".")
-                or is_skipped_workspace_name(file.name)
-                or is_generated_font_cache_path(self._to_workspace_rel(file.path))
+                or classify_workspace_path(rel_path).disposition is not ArtifactDisposition.PERSIST
             ):
                 continue
             # Same string-or-enum tolerance as ``_walk_sandbox``: some SDK

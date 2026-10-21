@@ -227,3 +227,174 @@
 ## E2B 文件传输性能收口（2026-10-18）
 
 文件同步采用 32 文件/8 MiB 有界批次，上传确认按路径及内容摘要复用，避免工作区与 Skills 两次传输。标准执行路径由 copy-out 统一完成变更文件的持久与本地回传，parse_results 不再独立全树下载；legacy 单沙箱接口保持原同步。批次成功后才确认缓存，失败允许重新暂存；执行后的未知结果不自动重跑。分段指标、真实两次调用及限制见 `e2b-performance-validation-2026-10-18.md`。
+
+## E2B 产物分类与流式回收（2026-10-21）
+
+### 12.1 目标与当前问题
+
+2026-10-21 的真实图表任务中，代码本身约 1.7 秒完成，但 Agent 从 Noto TTC 提取的字体会被全树 copy-out 当成产物，单个字体经 E2B 文件接口下载约 199 秒，随后继续下载第二个字体，任务最终超过 360 秒并因恢复租约丢失而终止。
+
+根因不是单纯“沙箱慢”，而是以下三项叠加：
+
+1. copy-out 会递归发现所有未知文件，这是为了避免脚本不调用 `write_file` 时漏掉产物；
+2. `EntryInfo.size` 未参与读取决策；
+3. `SIZE_INLINE` 只有常量定义，没有进入生产路径，所有变更文件都被 `read()` 成完整 `bytes`。
+
+### 12.2 当前数据流
+
+```text
+代码执行
+  → 扫描沙箱元数据
+  → 与 pre-run snapshot 按 mtime 比较
+  → 对所有变更文件调用 files.read(format="bytes")
+  → WorkspaceBackend.write(bytes)
+  → 本地写穿缓存
+  → 返回 new_files
+```
+
+扫描元数据用于发现未知文件，不能简单改为只扫描 `output/`：脚本可以写任意目录，且未知 scratch 文件在同任务后续代码调用中仍需可读。
+
+### 12.3 决策
+
+1. **保留全树元数据发现，增加产物决策器。**
+   - 选定：`output/` → 必须持久化；非 `output/` 下全局工具链目录 → 目录级剪枝；`scratch/` 下明确临时产物 → `sandbox_only`；其余文件 → 必须持久化。
+   - 否决“只采集 output”：会丢失仍被后续代码使用的 scratch 文件。
+   - 否决“全局按后缀黑名单”：会误删用户交付的字体、日志、压缩包或源码。
+   - 重新考虑触发：真实任务显示超过 90% 的未知 scratch 都是可证明的中间缓存，并且能够由明确 manifest 声明保存。
+
+2. **`output/` 的持久化优先级高于缓存目录名称。**
+   - 选定：先判断 `output/`，再应用工具目录剪枝。代码明确写入交付区的文件不能被全局缓存规则吞掉。
+   - 否决“任何位置的 node_modules/cache 都剪枝”：会把用户明确要求交付的同名目录静默删除。
+   - 重新考虑触发：`output/` 出现持久化的大型工具链垃圾并被观测为稳定风险。
+
+3. **未知 scratch 不按大小丢弃。**
+   - 选定：类型未知时一律持久化；大小只决定传输方式。
+   - 否决“超过 5MB 的 scratch 只留沙箱”：推演确认沙箱过期重建后文件会丢失，导致同任务后续代码读取失败。
+   - 重新考虑触发：业务明确把所有 scratch 定义为不可恢复临时区，且所有跨调用依赖必须写入 output。
+
+4. **目录级剪枝先于文件级过滤。**
+   - 选定：遇到工具链/明确临时目录时直接从遍历队列移除，不再对其子孙调用 `files.list`。
+   - 否决“先列全树再逐文件过滤”：十万级 build/cache 文件仍会产生大量 RPC。
+   - 重新考虑触发：E2B SDK 提供可服务端一次性过滤的 manifest API。
+
+5. **选中文件采用流式回收。**
+   - 选定：E2B `files.read(path, format="stream", request_timeout=...)` 按块读取；`WorkspaceBackend.write_stream` 先写入临时文件并校验 `EntryInfo.size`，再以文件对象上传 MinIO，最后写入本地缓存。
+   - 否决“继续 `format=bytes`”：会把大文件完整放入 Worker 内存，无法控制内存峰值。
+   - 重新考虑触发：E2B SDK 提供受限时、可取消且不依赖 Worker 临时盘的新接口。
+
+6. **单文件失败不污染整批成功语义。**
+   - 选定：成功文件正常持久化；失败文件在 `new_files` 中以 `persisted=false` 和 `error` 返回，其他文件继续处理。沙箱消失或全局存储不可用仍按现有异常路径中止，不自动重跑用户代码。
+   - 否决“任何文件失败都立即丢弃整批”：会让一个缓存文件错误阻断已成功产物。
+   - 重新考虑触发：存储层无法提供可靠的逐文件错误类型。
+
+7. **恢复边界保持不变。**
+   - 选定：`bisheng_code_interpreter` 仍是有状态工具；执行或回收阶段出现未知结果时继续阻断自动恢复。
+   - 否决“文件已经持久化，所以可以重跑代码”：代码可能产生外部副作用，持久文件不能证明执行恰好一次。
+   - 重新考虑触发：获得 E2B 沙箱级事务快照或可靠执行收据。
+
+### 12.4 产物决策契约
+
+新增内部模块 `bisheng_langchain/gpts/tools/code_interpreter/artifact_policy.py`：
+
+```python
+class ArtifactDisposition(str, Enum):
+    PERSIST = "persist"
+    SANDBOX_ONLY = "sandbox_only"
+    PRUNE = "prune"
+
+@dataclass(frozen=True)
+class ArtifactDecision:
+    disposition: ArtifactDisposition
+    reason: str
+    is_product: bool
+```
+
+路径优先级固定为：
+
+```text
+output/**                       → PERSIST
+非 output 的工具链目录          → PRUNE
+scratch/** 明确临时产物         → SANDBOX_ONLY
+其他所有路径                    → PERSIST
+```
+
+明确临时产物只允许位于 `scratch/`，包括字体缓存、`build/dist/target/coverage/test-results/playwright-report`、LaTeX 辅助文件、Office 锁文件和通用临时/部分下载文件。
+
+### 12.5 内部接口
+
+`WorkspaceBackend` 新增：
+
+```python
+def write_stream(
+    self,
+    file_path: str,
+    chunks: Iterable[bytes],
+    *,
+    expected_size: int | None = None,
+) -> WriteResult:
+    ...
+```
+
+语义：
+
+- 逐块写临时文件，不把完整内容保留在内存；
+- 实际字节数与 `expected_size` 不一致时删除临时文件并报错；
+- 完整接收后才上传 MinIO；
+- 上传成功后原子写入本地缓存；
+- 任一步失败不得返回成功。
+
+E2B `_copy_out` 返回的每个 `new_files` 项保持旧字段并新增：
+
+```json
+{
+  "path": "output/report.pdf",
+  "size": 123,
+  "is_product": true,
+  "persisted": true,
+  "storage": "workspace",
+  "skip_reason": null,
+  "error": null
+}
+```
+
+沙箱重建后，大型 `scratch` 文件通过 `required_files` 显式补传：`_copy_in`
+先查本地 `file_dir`，再查 `WorkspaceBackend.download_files`，不得把
+`required_files` 只解释为预物化 Skills 的子集。
+
+### 12.6 已知坑
+
+| 事实 | 如果不知道会怎样 | 处理位置 |
+|---|---|---|
+| `output/` 必须先于全局缓存名判断 | 正常交付的同名目录会被静默剪枝 | `artifact_policy.py` |
+| unknown scratch 不能按大小丢弃 | 沙箱过期重建后文件消失，后续代码失败 | `artifact_policy.py` + `_copy_out` |
+| 目录剪枝必须发生在递归 `list()` 前 | 仍会产生大量 E2B RPC，性能优化失效 | `_walk_sandbox`、LocalExecutor、copy-in |
+| `files.read(format="stream")` 仍需要显式 `request_timeout` | 网络半挂起时任务仍可能长时间无界等待 | `_copy_out` |
+| 流结束后才能发布 MinIO 对象 | 半截文件会被误认为完整交付物 | `WorkspaceBackend.write_stream` |
+| 恢复阻断与文件是否持久化无关 | 会把“文件存在”误当成“代码可安全重放” | 现有 `RecoveryMiddleware`，本增量不修改 |
+| `manifest.json` 目前没有写入链路 | 依赖它会制造虚假的“大型文件已追踪”状态 | 本增量不依赖 manifest |
+| 迁移后的大 scratch 仍需显式 `required_files` | 自动扫描会持久化但不会自动把超过 5MB 的文件重新推回新沙箱 | `_copy_in` 从本地/后端按声明路径补传 |
+| E2B 公开 `files.write` 会将 multipart 内容读入内存 | 超大型 required_files 补传仍有 Worker 内存峰值；本次只消除了 copy-out 峰值 | `_copy_in`，后续随 SDK 流式上传能力单独优化 |
+
+### 12.7 验证
+
+- 单元测试覆盖路径优先级、目录剪枝、未知 scratch 持久化、流式大小校验、超时、部分失败和旧协议字段。
+- 同一路径先创建后修改仍需回收最新版本。
+- 未变化输入不读取、不重写；持久文件在沙箱重建后恢复。
+- 恢复测试继续证明代码执行未知结果后禁止自动重放。
+- 真实 E2B 聚焦任务验证：字体缓存不传输、正常图表交付、10～50MB scratch 不被丢弃、大 output 流式落 MinIO。
+
+快速离线验证：
+
+```powershell
+cd src/backend
+uv run pytest test/linsight/test_code_interpreter_artifact_policy.py test/linsight/test_e2b_copy_in_out.py test/linsight/test_workspace_backend.py test/linsight/test_init_config_tools.py test/linsight/test_final_result_selection.py test/linsight/test_crash_recovery.py -q
+uv run ruff check <changed-python-files>
+```
+
+浏览器验证入口为 `http://127.0.0.1:3001/workspace/c/new`，使用本机已登录的测试账号；凭据不写入仓库。验证后应能在工作区预览正常 PNG，并且 E2B 日志中不出现 `scratch/fonts` 下载。
+
+### 12.8 修订历史
+
+| 日期 | 改动 | 原因 |
+|---|---|---|
+| 2026-10-21 | 新增产物分类、目录剪枝、流式回收和部分失败语义 | 字体缓存被误回收导致任务超过 360 秒；用户确认优化方案并要求实施 |

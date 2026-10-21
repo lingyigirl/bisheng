@@ -230,10 +230,15 @@ def test_snapshot_file_paths_skips_toolchain_and_font_cache(tmp_path):
     fonts = tmp_path / "scratch" / "fonts"
     fonts.mkdir(parents=True)
     (fonts / "NotoSansCJKsc-Bold.otf").write_bytes(b"font")
+    build = tmp_path / "scratch" / "build"
+    build.mkdir()
+    (build / "cache.bin").write_bytes(b"build-cache")
+    unknown_scratch = tmp_path / "scratch" / "model.bin"
+    unknown_scratch.write_bytes(b"task-state")
 
     snap = snapshot_file_paths(str(tmp_path))
 
-    assert snap == {str(tmp_path / "output" / "a.md")}
+    assert snap == {str(tmp_path / "output" / "a.md"), str(unknown_scratch)}
 
 
 async def test_read_file_directory_skips_toolchain_and_font_cache(tmp_path):
@@ -245,7 +250,14 @@ async def test_read_file_directory_skips_toolchain_and_font_cache(tmp_path):
     fonts = tmp_path / "scratch" / "fonts"
     fonts.mkdir(parents=True)
     (fonts / "NotoSansCJKsc-Bold.otf").write_bytes(b"font")
+    build = tmp_path / "scratch" / "build"
+    build.mkdir()
+    (build / "cache.bin").write_bytes(b"build-cache")
+    (tmp_path / "scratch" / "model.bin").write_bytes(b"task-state")
 
     details = await read_file_directory(str(tmp_path))
 
-    assert [d["rel_path"] for d in details] == [os.path.join("output", "a.md")]
+    assert [d["rel_path"] for d in details] == [
+        os.path.join("output", "a.md"),
+        os.path.join("scratch", "model.bin"),
+    ]

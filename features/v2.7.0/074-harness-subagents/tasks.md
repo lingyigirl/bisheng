@@ -182,3 +182,44 @@ R06 的真实服务证据与离线/模拟覆盖分列在自动恢复验收报告
 - [x] 2026-10-18 依用户要求完成当前分支推送前复测：后端 1121 项、Harness UI 233 项、真实副作用与恢复 37 项通过；新增双子代理完成后检查点重建/整合前中断回归，定向 44 项通过；类型、客户端 lint、i18n 与服务健康通过。已知边界保留，见 `prepush-validation-2026-10-18.md`。
 
 - [x] 2026-10-18 收尾：停止本地 API、Worker、双前端、测试 HTTP 服务和 7 个本地中间件容器，保留数据与忽略目录证据；新增文档索引与环境交接，归档旧当前验收并更新摘要。见 `README.md`、`local-environment-handoff.md`。
+
+## 2026-10-21 E2B 产物分类与流式回收
+
+路径缩写：`B=src/backend/bisheng`，`L=src/backend/bisheng_langchain/gpts/tools/code_interpreter`，`BT=src/backend/test/linsight`。
+
+### Wave 5：测试先行
+
+| ID | 状态 | 类型 | 工作与文件 | 依赖 |
+|---|---|---|---|---|
+| T38 | [x] | 后端测试 | `BT/test_code_interpreter_artifact_policy.py`（新增）：路径优先级、`output/` 保护、scratch 明确临时产物、未知大型 scratch、旧路径命名空间；覆盖 AC: AC-20, AC-21, AC-22 | 设计确认 |
+| T39 | [x] | 后端测试 | `BT/test_workspace_backend.py`：`write_stream` 完整成功、流中失败、声明大小不一致、上传失败、本地缓存与 MinIO 状态；覆盖 AC: AC-20, AC-23 | T38 |
+| T40 | [x] | 后端测试 | `BT/test_e2b_copy_in_out.py`：目录级剪枝、已知垃圾不读取、未知 scratch 必持久化、大 output 走 stream、单文件失败继续；覆盖 AC: AC-20, AC-21, AC-22, AC-23 | T39 |
+| T41 | [x] | 后端测试 | `BT/test_init_config_tools.py`、`BT/test_final_result_selection.py`：任务 copy-in 与交付物扫描使用相同策略，scratch 临时产物不会进入 E2B copy-in 或工作区；覆盖 AC: AC-21, AC-22 | T40 |
+| T42 | [x] | 后端测试 | `BT/test_crash_recovery.py`：有状态代码工具在执行/回收未知结果后仍阻断恢复，逐文件持久化不得改变重放规则；覆盖 AC: AC-24 | T40 |
+
+### Wave 6：实现
+
+| ID | 状态 | 类型 | 工作与文件 | 依赖 |
+|---|---|---|---|---|
+| T43 | [x] | 后端 Domain | `L/artifact_policy.py`（新增）：集中路径规范化、`ArtifactDecision`、`output/` 优先、全局工具目录剪枝、scratch 临时产物规则 | T38 |
+| T44 | [x] | 后端 Domain | `B/linsight/domain/services/workspace_backend.py`：新增 `write_stream`，临时文件承接 E2B 流，校验大小后上传 MinIO 并写穿本地缓存 | T39 |
+| T45 | [x] | 后端 Domain | `L/e2b_executor.py`：元数据扫描接入决策器，已知垃圾不读取，选中文件使用 `format="stream"` + `request_timeout`，逐文件错误与兼容字段；`required_files` 可从本地/后端补传超过 5MB 的 scratch | T40,T43,T44 |
+| T46 | [x] | 后端 Domain | `L/local_executor.py`：使用同一目录与临时产物策略，仅持久化真实任务状态 | T41,T43 |
+| T47 | [x] | 后端 Domain | `B/linsight/domain/services/workbench_impl.py`、`B/linsight/domain/utils.py`：copy-in、基线、交付扫描统一使用产物决策器，保持 output/scratch 语义 | T41,T43 |
+| T48 | [x] | 后端 Domain | `L/base_executor.py`、`L/e2b_executor.py`：移除无生产用途的阈值歧义，工具描述说明未知 scratch 持久化与临时产物边界；保持旧返回字段 | T45 |
+
+### Wave 7：端到端与验收
+
+| ID | 状态 | 类型 | 工作与文件 | 依赖 |
+|---|---|---|---|---|
+| T49 | [x] | 集成测试 | `BT/test_e2b_copy_in_out.py`、`BT/test_workspace_backend.py`：汇总定向回归，验证流式链路、MinIO 写穿、旧协议和恢复安全；覆盖 AC: AC-20, AC-21, AC-22, AC-23, AC-24 | T42,T46,T47,T48 |
+| T50 | [ ] | E2E | 真实 E2B 聚焦验证：字体缓存跳过、正常图表交付、未知 scratch 在沙箱重建后可恢复、大 output 落 MinIO；记录到 `e2b-artifact-policy-validation-2026-10-21.md` | T49 |
+| T51 | [ ] | 交付 | `/task-review`、后端定向与邻域回归、Ruff 增量、arch-guard、`git diff --check`、文档同步；证据追加到 `tasks.md` 和验证文档 | T50 |
+
+### 离线验证记录
+
+- 2026-10-21：产物策略、E2B copy-in/out、WorkspaceBackend、copy-in、交付扫描、超时、路径重定位、恢复安全等 11 个测试文件定向回归 **227 passed**。
+- 新增 `write_stream` 用例覆盖完整流、源流中断、大小不一致、MinIO 上传失败与本地缓存状态；全部通过。
+- 新增 `required_files` 大型 scratch 回归，验证可从本地 `file_dir` 和 WorkspaceBackend 补传到重建后的沙箱。
+- `ruff format`、增量 `E4/E7/E9/I`、`arch-guard.sh`、`git diff --check` 通过。
+- 真实 E2B 与浏览器验收尚未执行；该运行会启动/重启连接共享 MySQL/Redis 的 Worker，须取得该次数据库操作批准后再进行。

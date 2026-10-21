@@ -23,9 +23,9 @@ from bisheng.linsight.domain.models.linsight_session_version import (
     SessionVersionStatusEnum,
 )
 from bisheng.utils import util
-from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
-    is_generated_font_cache_path,
-    is_skipped_workspace_name,
+from bisheng_langchain.gpts.tools.code_interpreter.artifact_policy import (
+    ArtifactDisposition,
+    classify_workspace_path,
 )
 
 
@@ -121,9 +121,7 @@ def _is_skipped_workspace_path(path: str) -> bool:
     by-products, not deliverables: the 2026-10-14 docx/npm task spent ~14 min of
     file-API calls crawling node_modules and then uploaded 470+ junk files.
     """
-    return is_generated_font_cache_path(path) or any(
-        is_skipped_workspace_name(part) for part in path.replace("\\", "/").split("/")
-    )
+    return classify_workspace_path(path).disposition is not ArtifactDisposition.PERSIST
 
 
 def snapshot_file_paths(file_dir: str) -> set[str]:
