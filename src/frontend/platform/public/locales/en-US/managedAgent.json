@@ -112,5 +112,14 @@
     "calls": "Calls",
     "successRate": "Success rate",
     "avgLatency": "Avg latency"
+  },
+  "credential": {
+    "none": "Not set",
+    "bearer": "Bearer token",
+    "api_key": "API key"
+  },
+  "runStatus": {
+    "success": "Success",
+    "failed": "Failed"
   }
 }

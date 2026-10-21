@@ -194,7 +194,7 @@ export default function ManagedAgentsPage() {
                         <TableRow key={agent.id}>
                             <TableCell>
                                 <button className="font-medium hover:underline" onClick={() => setDetail(agent)}>{agent.name}</button>
-                                <div className="text-xs text-muted-foreground">{agent.protocol}</div>
+                                <div className="text-xs text-muted-foreground">{t(`protocol.${agent.protocol}`)}</div>
                             </TableCell>
                             <TableCell>{t(`source.${agent.source_kind}`)}</TableCell>
                             <TableCell><Badge variant={statusVariant(agent.status)}>{t(`status.${agent.status}`)}</Badge></TableCell>
@@ -210,7 +210,7 @@ export default function ManagedAgentsPage() {
                             </TableCell>
                             <TableCell className="text-sm">
                                 {agent.last_call_at || "—"}
-                                {agent.last_run_status && <span className="ml-2">{agent.last_run_status}</span>}
+                                {agent.last_run_status && <span className="ml-2">{t(`runStatus.${agent.last_run_status}`)}</span>}
                             </TableCell>
                             <TableCell className="text-right">
                                 <div className="flex flex-wrap justify-end gap-1">
@@ -250,12 +250,12 @@ export default function ManagedAgentsPage() {
                     {detail && (
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-3 text-sm">
-                                <div><span className="text-muted-foreground">{t("columns.source")}: </span>{t(`source.${detail.source_kind}`)} / {detail.protocol}</div>
+                                <div><span className="text-muted-foreground">{t("columns.source")}: </span>{t(`source.${detail.source_kind}`)} / {t(`protocol.${detail.protocol}`)}</div>
                                 <div><span className="text-muted-foreground">{t("columns.status")}: </span>{t(`status.${detail.status}`)}</div>
                                 <div><span className="text-muted-foreground">{t("form.endpoint")}: </span>{detail.endpoint || "—"}</div>
                                 <div><span className="text-muted-foreground">{t("form.nativeAppId")}: </span>{detail.native_app_id || "—"}</div>
                                 <div><span className="text-muted-foreground">{t("columns.classification")}: </span>{detail.scenario_name || detail.scenario_code || "—"} / {detail.industry_name || detail.industry_code || "—"}</div>
-                                <div><span className="text-muted-foreground">{t("form.credentialType")}: </span>{detail.credential_type}{detail.credential_mask ? ` (${detail.credential_mask})` : ""}</div>
+                                <div><span className="text-muted-foreground">{t("form.credentialType")}: </span>{t(`credential.${detail.credential_type}`)}{detail.credential_mask ? ` (${detail.credential_mask})` : ""}</div>
                             </div>
                             <div className="grid grid-cols-3 gap-3 border-t pt-4 text-sm">
                                 <div className="rounded-md border p-3">

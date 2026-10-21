@@ -292,9 +292,9 @@ export function AgentFormDialog({ open, onClose, agent, onSaved }: Props) {
                         <Select value={form.credential_type} onValueChange={(v) => set("credential_type", v as FormState["credential_type"])}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="none">{t("form.none")}</SelectItem>
-                                <SelectItem value="bearer">Bearer</SelectItem>
-                                <SelectItem value="api_key">API Key</SelectItem>
+                                <SelectItem value="none">{t("credential.none")}</SelectItem>
+                                <SelectItem value="bearer">{t("credential.bearer")}</SelectItem>
+                                <SelectItem value="api_key">{t("credential.api_key")}</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>

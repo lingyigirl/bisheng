@@ -112,5 +112,14 @@
     "calls": "调用次数",
     "successRate": "成功率",
     "avgLatency": "平均耗时"
+  },
+  "credential": {
+    "none": "不设置",
+    "bearer": "Bearer 令牌",
+    "api_key": "API 密钥"
+  },
+  "runStatus": {
+    "success": "成功",
+    "failed": "失败"
   }
 }
