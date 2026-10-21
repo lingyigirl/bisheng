@@ -361,6 +361,15 @@ E2B `_copy_out` 返回的每个 `new_files` 项保持旧字段并新增：
 先查本地 `file_dir`，再查 `WorkspaceBackend.download_files`，不得把
 `required_files` 只解释为预物化 Skills 的子集。
 
+`required_files` 同时加入面向模型的 `bisheng_code_interpreter` 参数 schema，
+否则执行器虽支持恢复声明，任务智能体在真实调用中无法使用。LocalExecutor
+保留同一签名但不做沙箱 copy-in；工具位置参数 `python_code` 保持不变。
+
+沙箱生命周期刷新返回明确的 404（`Sandbox "... " doesn't exist or you don't
+have access to it`）时，必须在任何 copy-in 之前进入一次性重建分支。不能在
+keep-alive 阶段吞掉该错误后继续向死沙箱上传大型文件，否则恢复会退化成普通
+连接中断且无法触发重建。
+
 ### 12.6 已知坑
 
 | 事实 | 如果不知道会怎样 | 处理位置 |
@@ -373,6 +382,8 @@ E2B `_copy_out` 返回的每个 `new_files` 项保持旧字段并新增：
 | 恢复阻断与文件是否持久化无关 | 会把“文件存在”误当成“代码可安全重放” | 现有 `RecoveryMiddleware`，本增量不修改 |
 | `manifest.json` 目前没有写入链路 | 依赖它会制造虚假的“大型文件已追踪”状态 | 本增量不依赖 manifest |
 | 迁移后的大 scratch 仍需显式 `required_files` | 自动扫描会持久化但不会自动把超过 5MB 的文件重新推回新沙箱 | `_copy_in` 从本地/后端按声明路径补传 |
+| `required_files` 必须出现在模型工具 schema | 执行器支持但智能体无法声明，真实重建时仍会丢文件 | `CodeInterpreterToolArguments`、`BaseExecutor.run` |
+| keep-alive 的 sandbox 404 不能在 copy-in 前被吞掉 | 随后向死沙箱上传会表现为 `10053`，一次性重建分支不触发 | `_keep_alive` 向上抛出已识别的 sandbox-not-found |
 | E2B 公开 `files.write` 会将 multipart 内容读入内存 | 超大型 required_files 补传仍有 Worker 内存峰值；本次只消除了 copy-out 峰值 | `_copy_in`，后续随 SDK 流式上传能力单独优化 |
 
 ### 12.7 验证
@@ -381,7 +392,7 @@ E2B `_copy_out` 返回的每个 `new_files` 项保持旧字段并新增：
 - 同一路径先创建后修改仍需回收最新版本。
 - 未变化输入不读取、不重写；持久文件在沙箱重建后恢复。
 - 恢复测试继续证明代码执行未知结果后禁止自动重放。
-- 真实 E2B 聚焦任务验证：字体缓存不传输、正常图表交付、10～50MB scratch 不被丢弃、大 output 流式落 MinIO。
+- 真实 E2B 聚焦任务验证：字体缓存不传输、正常图表交付、6MiB scratch 持久化、旧 sandbox 自然过期后重建并通过 `required_files` 恢复、大 output 流式落 MinIO。
 
 快速离线验证：
 

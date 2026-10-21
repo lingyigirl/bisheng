@@ -422,7 +422,8 @@ class LocalExecutor(BaseExecutor):
             return logs
         return LOG_TRUNCATED_NOTICE + logs[-limit:]
 
-    def run(self, code: str) -> Any:
+    def run(self, code: str, required_files: list[str] | None = None) -> Any:
+        _ = required_files
         original_code = code
         code_blocks = self.extract_code(code)
         logs_all = ""

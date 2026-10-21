@@ -37,13 +37,15 @@ uv run pytest test/linsight/test_code_interpreter_artifact_policy.py `
   test/linsight/test_builtin_roles.py -q
 ```
 
-结果：**227 passed**。
+结果：**232 passed**。
 
 覆盖：
 
 - `output/` 优先级高于工具链目录；
 - 字体、build、target、coverage、测试报告、LaTeX 辅助文件和临时文件仅在 scratch 下跳过；
 - 未知大型 scratch 持久化，并可从本地缓存或 WorkspaceBackend 通过 `required_files` 补传；
+- 模型工具 schema 暴露 `required_files` 并透传到执行器，符合路径保持 workspace-relative；
+- keep-alive 收到 E2B sandbox 404 时在任何 copy-in 前进入一次性重建，不再退化为 `10053`；
 - E2B 只读取选中文件，使用 stream 和 300 秒请求超时；
 - 单文件失败不阻断其他文件，返回 `persisted=false` 和错误；
 - 大型 `required_files` 可从本地 `file_dir` 或 WorkspaceBackend 补传；
@@ -64,7 +66,7 @@ uv run pytest test/linsight/test_code_interpreter_artifact_policy.py `
 |---|---|---|
 | T38～T42 | PASS | 测试先行，AC 标注完整；测试仅使用 fake sandbox、fake MinIO、fakeredis 或临时目录。 |
 | T43～T48 | PASS | 分层、命名、序列化、信息泄漏和设计同步检查通过；未新增数据库、权限或 API 契约。 |
-| T49 | PASS | 定向集成回归 227 passed；旧字段兼容和恢复安全均保留。 |
+| T49 | PASS | 定向集成回归 232 passed；旧字段兼容和恢复安全均保留。 |
 
 ## 特性级代码审查（/code-review）
 
@@ -76,19 +78,88 @@ uv run pytest test/linsight/test_code_interpreter_artifact_policy.py `
 - 代码风格：PASS；产物规则集中在单一模块，未复制多套判断。
 - 文档同步：PASS；spec、design、tasks 和本验证文档已同步。
 
-## 真实 E2E（待执行）
+## 真实 E2E
 
-执行真实 E2E 需要重启加载新代码的 Linsight Worker；Worker 会连接共享 MySQL/Redis，因此必须先获得该次数据库操作批准。
+用户针对本轮明确批准了 API/Worker 重启及共享 MySQL/Redis/E2B 验收；未执行
+迁移、DDL/DML、数据修复或其他数据库内容操作。
 
-1. 重启 API、Linsight Worker，保留现有管理端和工作台。
-2. 在工作台提交短图表任务，要求使用 `chart-designer`。
-3. 确认执行日志没有 `scratch/fonts` 文件读取或上传。
-4. 确认 PNG 进入 `output/`，工作区可预览且 MD5 与 MinIO 对象一致。
-5. 生成大于 5MB 的未知 scratch 文件并保存到 `required_files`，重建沙箱后执行读取。
-6. 生成大于 5MB 的正常 output 文件，确认流式落盘、下载和预览。
-7. 注入单文件上传失败，确认工具结果是部分失败而非全部成功。
-8. 停止沙箱后的未知执行结果仍显示恢复阻断，不自动重放代码。
+### 运行环境
+
+- 重启本地 API 与 Linsight Worker，使用既有远端中间件配置。
+- API `http://127.0.0.1:7860/health`、管理端 `:3001`、工作台 `:4001/workspace` 均为 HTTP 200。
+- Worker 的 Redis、MySQL、OpenFGA 初始化成功；测试结束后 Worker 以正式
+  `timeout=3600` 配置重新启动，临时 10 秒故障注入已还原且未进入提交。
+
+### 普通产物回收
+
+工作台任务 trace：`bf6aafecac29451b8c4b8084b87aeaf9`。
+
+同一代码调用生成 5 个文件：
+
+| 路径 | 大小 | 预期 | 实际 |
+|---|---:|---|---|
+| `output/e2b-policy-large.bin` | 6,291,456 | 持久化 | `persisted=true` |
+| `output/e2b-policy-chart.png` | 317 | 持久化 | `persisted=true` |
+| `scratch/e2b-policy-large-state.bin` | 6,291,456 | 持久化、非产品 | `persisted=true`, `storage=workspace` |
+| `scratch/fonts/e2b-policy-font.otf` | 512 | sandbox-only | 未持久化 |
+| `scratch/build/e2b-policy-cache.bin` | 1,024 | sandbox-only | 未持久化 |
+
+Worker 日志：
+
+```text
+E2B run phases: execute=7.110s collect=9.692s persisted=3 failed=0
+```
+
+Copy-out 只出现 3 个文件读取请求：两个 `output/` 和一个未知大型
+`scratch/`；没有 `scratch/fonts` 或 `scratch/build` 的 `/files?path=` 请求。
+
+工作台“工作区”只展示两个 `is_product=true` 的下载项，符合产物过滤语义。
+浏览器实际下载并核对：
+
+| 下载文件 | 字节数 | SHA-256 |
+|---|---:|---|
+| `e2b-policy-large.bin` | 6,291,456 | `1f3a2c46f47bd900ef863a5db1412bf0e38a9ae9e46a660eeec820439f4036a1` |
+| `e2b-policy-chart.png` | 317 | `d0e75f9781c94cea4910b74246e72926467250d254b60f50be6e551f7bece471` |
+
+两者均与沙箱工具返回值完全一致；PNG 的签名、IHDR/IDAT/IEND chunk 与 CRC
+已由生成代码校验。
+
+### Sandbox 自然过期与恢复
+
+为验证真实过期路径，本地测试进程临时把初始 sandbox TTL 设为 10 秒，并仅让
+重建后的测试 sandbox 获得足够完成 6MiB copy-in 的 300 秒窗口。两处测试注入
+随后已移除，正式 Worker 已恢复 3,600 秒 TTL。
+
+工作台任务 trace：`29d39726ccd942028c48d148cf1e327b`。
+
+1. 第一次调用生成 `scratch/e2b-recovery-final-pass2.bin`：
+   - 大小：6,291,456 字节；
+   - SHA-256：`07d935b0bceac315c31166447ca335053764a53d17a4151a3737ad6fd3f62870`；
+   - copy-out：`persisted=1 failed=0`。
+2. 第二次调用在 keep-alive 时收到旧 sandbox `i9rd...` 的明确 404。
+3. 执行器在 copy-in 前重建为 sandbox `ixzfty...`，没有把后续失败误报成
+   无上下文的 `10053`。
+4. `required_files=["scratch/e2b-recovery-final-pass2.bin"]` 完成回灌：
+   - `prepare=5.042s`；
+   - `execute=6.086s`；
+   - `collect=0.708s`；
+   - 第二次读取大小仍为 6,291,456 字节；
+   - SHA-256 仍为 `07d935b0...f62870`；
+   - 输出 `match: True`、`RECOVERY_OK`。
+
+### 恢复边界
+
+- 跨用户轮次会创建新的 session workspace；`scratch/` 按既有设计不从前一轮
+  自动复制，因此跨轮恢复不能作为同一 sandbox 重建证据。
+- 在人工 `ask_user` 暂停后强杀整个 Worker，系统按 AC-24 保持“上次有状态工具
+  结果无法确认”的自动续跑阻断。该行为是预期安全边界，不是本次文件恢复失败。
+- 本验证不自动重放工具；sandbox 消失发生在下一次代码执行开始前，才允许一次
+  重建/重试。
 
 ## 当前结论
 
-离线实现与逻辑验证通过，真实 E2B 网络性能和浏览器预览仍待数据库审批后的现场验证。本阶段未连接共享数据库，未执行迁移，未提交或推送。
+离线 **232 passed**，真实 E2B 的常规回收、浏览器下载、字体/build 跳过、
+6MiB 大 output、未知 scratch 持久化、sandbox 自然过期重建和大型
+`required_files` 回灌均通过。已知限制是 E2B 公开 `files.write` 仍会将
+required-file multipart 内容读入 Worker 内存；本次只消除了 copy-out 的大文件
+内存峰值。未执行迁移或数据修改，未推送远端。

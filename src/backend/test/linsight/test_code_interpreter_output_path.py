@@ -19,6 +19,8 @@ subprocess / matplotlib / MinIO is involved.
 
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
 from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
@@ -31,6 +33,10 @@ from bisheng_langchain.gpts.tools.code_interpreter.local_executor import (
     MAX_FAILURE_LOG_CHARS,
     TIMEOUT_MSG,
     LocalExecutor,
+)
+from bisheng_langchain.gpts.tools.code_interpreter.tool import (
+    CodeInterpreterTool,
+    CodeInterpreterToolArguments,
 )
 
 
@@ -67,6 +73,46 @@ def test_advisory_flags_absolute_deliverable_paths(code):
 )
 def test_advisory_silent_for_relative_or_unrelated(code):
     assert BaseExecutor.absolute_path_advisory(code) == ""
+
+
+# ---------------------------------------------------------------------------
+# CodeInterpreterTool: expose and forward large-file recovery declarations
+# ---------------------------------------------------------------------------
+def test_required_files_is_part_of_the_model_tool_schema():
+    field = CodeInterpreterToolArguments.model_fields["required_files"]
+
+    assert field.default_factory() == []
+    assert "5 MiB" in field.description
+    assert "sandbox was recreated" in field.description
+
+
+def test_code_tool_forwards_required_files_to_executor():
+    executor = Mock()
+    executor.run.return_value = {"new_files": []}
+    tool = CodeInterpreterTool(executor=executor)
+
+    result = tool.run(
+        {
+            "python_code": "print('read recovered state')",
+            "required_files": ["scratch/e2b-policy-large-state.bin"],
+        }
+    )
+
+    assert result == {"new_files": []}
+    executor.run.assert_called_once_with(
+        "print('read recovered state')",
+        required_files=["scratch/e2b-policy-large-state.bin"],
+    )
+
+
+def test_code_tool_defaults_required_files_to_empty_list():
+    executor = Mock()
+    executor.run.return_value = {"new_files": []}
+    tool = CodeInterpreterTool(executor=executor)
+
+    tool.run({"python_code": "print('fresh run')"})
+
+    executor.run.assert_called_once_with("print('fresh run')", required_files=[])
 
 
 # ---------------------------------------------------------------------------

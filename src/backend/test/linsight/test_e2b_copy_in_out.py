@@ -910,6 +910,37 @@ def test_sandbox_gone_recreates_and_retries(monkeypatch):
     assert any("result.csv" in f["path"] for f in result["new_files"])  # retried once
 
 
+def test_sandbox_gone_during_keep_alive_recreates_before_copy_in(monkeypatch):
+    exe = make_executor(monkeypatch)
+    dead = exe.sandbox
+
+    def _boom(_timeout):
+        raise RuntimeError("404: Sandbox \"iaykl9zpfmezda9d9j5ri\" doesn't exist or you don't have access to it")
+
+    dead.set_timeout = _boom
+    fresh = FakeSandbox()
+    monkeypatch.setattr(exe, "init_sandbox", lambda: setattr(exe, "sandbox", fresh))
+
+    result = exe.run("print('hi')")
+
+    assert exe.sandbox is fresh
+    assert dead.killed is True
+    assert any("result.csv" in f["path"] for f in result["new_files"])
+
+
+def test_keep_alive_ignores_unrelated_errors(monkeypatch):
+    exe = make_executor(monkeypatch)
+
+    def _boom(_timeout):
+        raise ValueError("keep-alive transport hiccup")
+
+    exe.sandbox.set_timeout = _boom
+
+    result = exe.run("print('hi')")
+
+    assert any("result.csv" in f["path"] for f in result["new_files"])
+
+
 def test_sandbox_gone_retry_is_single_shot(monkeypatch):
     exe = make_executor(monkeypatch)
 

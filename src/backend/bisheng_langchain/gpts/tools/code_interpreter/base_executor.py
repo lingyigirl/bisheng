@@ -169,7 +169,7 @@ class BaseExecutor(ABC):
         self.local_sync_path = kwargs.get("local_sync_path", None)
 
     @abstractmethod
-    def run(self, code: str) -> Any:
+    def run(self, code: str, required_files: list[str] | None = None) -> Any:
         raise NotImplementedError()
 
     @staticmethod

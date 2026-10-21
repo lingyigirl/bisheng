@@ -263,7 +263,10 @@ class E2bCodeExecutor(BaseExecutor):
             return
         try:
             setter(self.timeout)
-        except Exception as exc:  # lifetime refresh must never fail the run
+        except Exception as exc:
+            if self._sandbox_is_gone(exc):
+                logger.warning("E2B sandbox gone during keep-alive ({}); recreating before prepare", exc)
+                raise
             logger.debug(f"E2B set_timeout failed (ignored): {exc}")
 
     @staticmethod
@@ -274,6 +277,7 @@ class E2bCodeExecutor(BaseExecutor):
             "sandbox was not found" in text
             or "sandbox not found" in text
             or "sandbox is not running" in text
+            or ("sandbox" in text and "doesn't exist or you don't have access to it" in text)
             or ("notfound" in type(exc).__name__.lower().replace("_", "") and "sandbox" in text)
         )
 

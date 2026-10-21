@@ -52,6 +52,14 @@ class CodeInterpreterToolArguments(BaseModel):
             "It should not be in markdown format."
         ),
     )
+    required_files: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional workspace-relative durable files required by this run. "
+            "Use this for files above 5 MiB that must be restored after an E2B "
+            "sandbox was recreated."
+        ),
+    )
 
     @field_validator("python_code")
     @classmethod
@@ -76,8 +84,8 @@ class CodeInterpreterTool(BaseTool):
             tool_input.pop("code")
         return super()._parse_input(tool_input, tool_call_id)
 
-    def _run(self, python_code: str) -> dict:
-        return self.executor.run(python_code)
+    def _run(self, python_code: str, required_files: list[str] | None = None) -> dict:
+        return self.executor.run(python_code, required_files=required_files or [])
 
     def close(self) -> None:
         self.executor.close()
