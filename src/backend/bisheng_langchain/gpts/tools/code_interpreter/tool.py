@@ -82,10 +82,16 @@ class CodeInterpreterTool(BaseTool):
         if isinstance(tool_input, dict) and "code" in tool_input and "python_code" not in tool_input:
             tool_input = {**tool_input, "python_code": tool_input["code"]}
             tool_input.pop("code")
-        return super()._parse_input(tool_input, tool_call_id)
+        required_files_supplied = isinstance(tool_input, dict) and "required_files" in tool_input
+        parsed = super()._parse_input(tool_input, tool_call_id)
+        if isinstance(parsed, dict) and not required_files_supplied:
+            parsed.pop("required_files", None)
+        return parsed
 
     def _run(self, python_code: str, required_files: list[str] | None = None) -> dict:
-        return self.executor.run(python_code, required_files=required_files or [])
+        if required_files:
+            return self.executor.run(python_code, required_files=required_files)
+        return self.executor.run(python_code)
 
     def close(self) -> None:
         self.executor.close()

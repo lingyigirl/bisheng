@@ -7,6 +7,7 @@
 | 文档 | 用途 |
 |---|---|
 | [当前验收摘要](./current-acceptance.md) | 已验证能力、最新检查、未解决问题与责任边界 |
+| [2026-10-21 全流程复测](./harness-end-to-end-retest-2026-10-21.md) | 排除长期记忆后的自主规划、E2B、重连、暂停/Worker 重启续跑、工具与 MCP、子 Agent 整合 |
 | [本地环境交接](./local-environment-handoff.md) | 停机范围、保留内容、后续启动与配置位置 |
 | [推送前回归](./prepush-validation-2026-10-18.md) | 已推送代码基线 6db8e2657 的检查结果与限制 |
 | [任务清单](./tasks.md) | 实施进度；T36 未全量验收 |

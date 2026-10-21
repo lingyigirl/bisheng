@@ -1,11 +1,11 @@
 # Harness 当前验收摘要
 
-更新时间：2026-10-18。本文为最新结论入口；历史逐轮报告保留原始环境、提交和测试数字。文档索引见 [README](./README.md)，停机与本机重启说明见 [本地环境交接](./local-environment-handoff.md)。
+更新时间：2026-10-21。本文为最新结论入口；历史逐轮报告保留原始环境、提交和测试数字。文档索引见 [README](./README.md)，停机与本机重启说明见 [本地环境交接](./local-environment-handoff.md)。
 
 ## 状态
 
-- 已验证代码基线：`6db8e2657`，已推送至 `origin/feat/2.7.0/beijing-ns-llm-guardrail`，没有合并 main。
-- 本次收尾已停止本地 API、Linsight Worker、两端 Vite、HTTP 测试工具服务，以及 7 个 jinbao-f074 测试中间件容器；数据与证据保留，云端数据库和中间件未停止。
+- 最新 Harness 全流程复测基于 `3bed230fc` 及本地兼容修复；没有合并 main。
+- 2026-10-21 复测期间本地 API、Linsight Worker 和两端 Vite 正在运行，使用云端中间件；复测结束后 Worker 保持运行。
 - 核心场景通过，仍有已知问题与覆盖边界，T36 完整上线验收不勾选。记忆按约定排除。
 
 ## 已验证能力
@@ -21,10 +21,18 @@
 | 外部完成回执复用、未知结果阻断、不重复发送 | [多模型与外部副作用补测](./multimodel-external-recovery-2026-10-18.md)；不是所有业务连接器完整 E2E |
 | Skill 对象存储、缓存重建、迁移及权限 | [Skill 运维手册](./skill-object-storage/runbook.md)、[权限补齐](./skill-object-storage/openfga-repair-2026-10-18.md) |
 | 并行子代理流式积压优化 | [性能修复](./stream-buffer-performance-2026-10-18.md)：6000 段模拟写入减少 99.8%；真实双模型长输出约 32 秒完成 |
+| 2026-10-21 全流程复测 | [Harness 全流程复测](./harness-end-to-end-retest-2026-10-21.md)：自主规划、E2B、错误后调整、刷新重连、暂停恢复、Worker 重启续跑、工具与 MCP 连接器、主/子 Agent 整合均通过 |
 
 内置研究员、分析员、图表与质检角色和用户协作人员并存。内置角色继承主模型，自定义成员按快照解析各自模型。主 Agent 收尾前须收集必要后台结果；任务停止、异常及未知副作用遵循 [恢复策略](./recovery-policy.md)。
 
 ## 最新检查
+
+2026-10-21 复测：
+
+- 后端 Linsight：1126 passed、16 skipped。
+- Client Harness：22 suites / 245 tests passed。
+- 前端 typecheck、client lint、i18n 通过。
+- Platform ESLint 仍有既有 54 个 `no-explicit-any`，不属于本次 Harness 回归。
 
 以 [推送前回归](./prepush-validation-2026-10-18.md) 为最终执行记录：
 
@@ -40,12 +48,14 @@
 
 | 项目 | 当前结论与下一步 |
 |---|---|
-| 旧长任务自动接续无结果 | `74bfc049f4dd4b1bba06930db86577bb` 自动接续曾失败，维护继续后交付成功；新增重建测试未重现，仍需单独定位，见 [性能修复](./stream-buffer-performance-2026-10-18.md) |
+| 旧长任务自动接续无结果 | 2026-10-21 未复现。简单 Worker 重启续跑任务没有规划子任务和 `TaskEnd`，因此按设计走 direct-answer fallback 并正常收集文件；该日志目前为 WARNING，建议后续按“是否存在真实规划任务”区分 INFO/WARNING，避免监控误报 |
 | 一次本地 API 异常退出 | 故障注入后发生，原因未确认；后续复测未重现，见 [完整本地验收](./full-local-acceptance-2026-10-18.md) |
 | 5 个旧业务 Skill 缺源 | 需找回真实源包或重新导入；对象存储迁移不能从元数据生成原文 |
 | 全站存量质量问题 | 客户端完整测试 5 个失败套件、管理端 54 项 any lint 未处理；与当前 Harness 定向通过分开记录 |
 | 覆盖边界 | 长期记忆未接入；跨厂商、多物理机、生产级长时并发、所有外部工具副作用和平台 DM8 全量验收未完成 |
 | 沙箱恢复 | 文件可恢复不等于 Python 变量、后台进程或连接状态可恢复；必要时安全阻断，不承诺任意崩溃自动续跑 |
+| 成员测试约定 | 自定义成员的 Skills、工具和连接器列表彼此独立；要求成员使用某工具前必须确保该成员实际配置了该工具 |
+| 连接器稳定性 | 知识产权 MCP 流程查询曾出现一次 `context canceled`，同调用重试成功；需要继续观察远端数据库连接稳定性 |
 
 ## 历史材料
 

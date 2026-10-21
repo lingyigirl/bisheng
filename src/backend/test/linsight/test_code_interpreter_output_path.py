@@ -105,14 +105,14 @@ def test_code_tool_forwards_required_files_to_executor():
     )
 
 
-def test_code_tool_defaults_required_files_to_empty_list():
+def test_code_tool_omits_required_files_when_not_declared():
     executor = Mock()
     executor.run.return_value = {"new_files": []}
     tool = CodeInterpreterTool(executor=executor)
 
     tool.run({"python_code": "print('fresh run')"})
 
-    executor.run.assert_called_once_with("print('fresh run')", required_files=[])
+    executor.run.assert_called_once_with("print('fresh run')")
 
 
 # ---------------------------------------------------------------------------

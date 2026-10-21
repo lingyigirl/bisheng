@@ -224,3 +224,4 @@ R06 的真实服务证据与离线/模拟覆盖分列在自动恢复验收报告
 - `ruff format`、增量 `E4/E7/E9/I`、`arch-guard.sh`、`git diff --check` 通过。
 - 2026-10-21 真实 E2B：普通回收任务 `persisted=3 failed=0`，字体/build 临时文件未读取；6MiB scratch 在 sandbox 自然过期后从 `i9rd...` 重建为 `ixzfty...`，`required_files` 恢复后的 SHA-256 一致并输出 `RECOVERY_OK`。
 - 2026-10-21 用户确认：E2B `files.write` 导致的大型 `required_files` copy-in Worker 内存峰值暂无业务影响，**当前不修复**；保留为容量边界，出现真实 OOM、上传失败或常态化 50MiB 以上恢复需求时再评估。
+- 2026-10-21 Harness 全流程复测：后端 Linsight **1126 passed / 16 skipped**，Client Harness **22 suites / 245 tests passed**；真实工作台完成自主规划、E2B、错误后调整、刷新重连、ask_user 恢复、Worker 重启续跑、MCP 连接器调用和主/子 Agent 整合。证据见 `harness-end-to-end-retest-2026-10-21.md`。T36 仍因生产级并发、跨物理机、全连接器副作用和 DM8 覆盖边界保持未勾选。
