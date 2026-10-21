@@ -19,6 +19,7 @@ from matplotlib import font_manager
 from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
     OUTPUT_DIR_NAME,
     BaseExecutor,
+    is_generated_font_cache_path,
     is_skipped_workspace_name,
     path_namespace_rules,
 )
@@ -308,11 +309,19 @@ class LocalExecutor(BaseExecutor):
         for root, dirs, files in os.walk(dir_path):
             # hidden dirs, caches and toolchain trees (node_modules / venvs) are
             # never deliverables or inputs; walking them per run is pure cost
-            dirs[:] = [d for d in dirs if not d.startswith(".") and not is_skipped_workspace_name(d)]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".")
+                and not is_skipped_workspace_name(d)
+                and not is_generated_font_cache_path(os.path.relpath(os.path.join(root, d), dir_path))
+            ]
             for name in files:
                 if name.startswith("."):
                     continue
                 abs_path = os.path.join(root, name)
+                if is_generated_font_cache_path(os.path.relpath(abs_path, dir_path)):
+                    continue
                 try:
                     stat = os.stat(abs_path)
                 except OSError:
@@ -453,7 +462,12 @@ class LocalExecutor(BaseExecutor):
         for file in files_info:
             # hidden files and toolchain trees (node_modules / caches) are never
             # task state
-            if file.name.startswith(".") or is_skipped_workspace_name(file.name):
+            rel_path = os.path.relpath(file.path, root_path)
+            if (
+                file.name.startswith(".")
+                or is_skipped_workspace_name(file.name)
+                or is_generated_font_cache_path(rel_path)
+            ):
                 continue
             if file.is_file():
                 self.download_file(file, root_path)

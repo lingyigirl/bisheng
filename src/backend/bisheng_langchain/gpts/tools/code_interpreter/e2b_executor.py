@@ -11,6 +11,7 @@ from loguru import logger
 
 from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
     BaseExecutor,
+    is_generated_font_cache_path,
     is_skipped_workspace_name,
     path_namespace_rules,
 )
@@ -119,6 +120,8 @@ class E2bCodeExecutor(BaseExecutor):
             "If visual rendering is unavailable, verify structure and disclose that limitation. "
             "Only install the smallest dependency needed for a required deliverable or check "
             "(for example xlsxwriter for formula caches or PyMuPDF for required PDF sampling). "
+            "For CJK plots, use an installed font family directly; do not extract faces from "
+            "TTC/OTC collections or copy font files into the workspace. "
             "Use the actual operating system's package manager, never apt-get on Windows. "
             "Run any necessary install as its own step. Check `which <tool>` at most once; never hunt for it with "
             "`find /` or by reading system directories (/root, /opt, /etc, /usr, /code, "
@@ -448,12 +451,20 @@ class E2bCodeExecutor(BaseExecutor):
         planned: dict[str, tuple[int, int]] = {}
         contents: dict[str, bytes] = {}
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".") and not is_skipped_workspace_name(d)]
+            dirnames[:] = [
+                d
+                for d in dirnames
+                if not d.startswith(".")
+                and not is_skipped_workspace_name(d)
+                and not is_generated_font_cache_path(os.path.relpath(os.path.join(dirpath, d), root).replace("\\", "/"))
+            ]
             for name in filenames:
                 if name.startswith("."):
                     continue
                 host_path = os.path.join(dirpath, name)
                 rel = os.path.relpath(host_path, root).replace("\\", "/")
+                if is_generated_font_cache_path(rel):
+                    continue
                 try:
                     stat = os.stat(host_path)
                 except OSError:
@@ -563,7 +574,12 @@ class E2bCodeExecutor(BaseExecutor):
                 continue
             visited.add(directory)
             for entry in self.sandbox.files.list(directory):
-                if entry.name.startswith(".") or is_skipped_workspace_name(entry.name):
+                rel_path = self._to_workspace_rel(entry.path)
+                if (
+                    entry.name.startswith(".")
+                    or is_skipped_workspace_name(entry.name)
+                    or is_generated_font_cache_path(rel_path)
+                ):
                     continue
                 if entry.type in (FileType.FILE, "file"):
                     files.append(entry)
@@ -643,7 +659,11 @@ class E2bCodeExecutor(BaseExecutor):
         for file in files_info:
             # hidden files and toolchain trees (node_modules / caches) are never
             # task state — syncing them per run was minutes of wasted file calls
-            if file.name.startswith(".") or is_skipped_workspace_name(file.name):
+            if (
+                file.name.startswith(".")
+                or is_skipped_workspace_name(file.name)
+                or is_generated_font_cache_path(self._to_workspace_rel(file.path))
+            ):
                 continue
             # Same string-or-enum tolerance as ``_walk_sandbox``: some SDK
             # generations hand back the raw ``"file"``/``"dir"`` strings.

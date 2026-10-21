@@ -232,3 +232,29 @@ async def test_e2b_file_list_skips_toolchain_trees(monkeypatch: pytest.MonkeyPat
     pushed = {entry.path for entry in bound_row.extra["config"]["e2b"]["file_list"]}
     assert "./uploads/data.csv" in pushed
     assert not any("node_modules" in path for path in pushed)
+
+
+async def test_e2b_file_list_skips_generated_font_cache(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Temporary plotting fonts must not enter the task-start copy-in snapshot."""
+    fonts = tmp_path / "scratch" / "fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "NotoSansCJKsc-Bold.otf").write_bytes(b"font")
+    (tmp_path / "uploads").mkdir()
+    (tmp_path / "uploads" / "data.csv").write_bytes(b"a,b\n")
+
+    monkeypatch.setattr(GptsToolsDao, "aget_tool_by_tool_key", AsyncMock(return_value=_fake_code_tool_row()))
+    init_one = AsyncMock(return_value=object())
+    monkeypatch.setattr(ToolExecutor, "init_by_tool_id", init_one)
+    monkeypatch.setattr(ToolExecutor, "init_by_tool_ids", AsyncMock(return_value=[]))
+
+    await LinsightWorkbenchImpl.init_linsight_config_tools(
+        session_version=_session_with_tools([CODE_TOOL_ID]),
+        llm=object(),
+        need_upload=True,
+        file_dir=str(tmp_path),
+    )
+
+    bound_row = init_one.await_args.kwargs["tool"]
+    pushed = {entry.path for entry in bound_row.extra["config"]["e2b"]["file_list"]}
+    assert "./uploads/data.csv" in pushed
+    assert not any("scratch/fonts" in path for path in pushed)

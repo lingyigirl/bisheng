@@ -572,6 +572,39 @@ def test_sandbox_walk_skips_toolchain_trees(monkeypatch):
     assert "output/report.md" in workspace.writes
 
 
+def test_copy_out_skips_generated_font_cache(monkeypatch):
+    """Large temporary fonts stay in the sandbox instead of crossing E2B's file API."""
+    from unittest.mock import Mock
+
+    workspace = RecordingWorkspace()
+    exe = make_executor(monkeypatch, workspace=workspace)
+    exe.sandbox.files.list = Mock(
+        side_effect=lambda path: {
+            "./": [
+                FakeEntry("scratch", "/home/user/scratch", "dir"),
+                FakeEntry("output", "/home/user/output", "dir"),
+            ],
+            "/home/user/scratch": [
+                FakeEntry("fonts", "/home/user/scratch/fonts", "dir"),
+                FakeEntry("other.otf", "/home/user/scratch/other.otf", "file"),
+            ],
+            "/home/user/output": [
+                FakeEntry("chart.png", "/home/user/output/chart.png", "file"),
+            ],
+        }[path]
+    )
+    read = Mock(return_value=b"png")
+    exe.sandbox.files.read = read
+
+    products = exe._copy_out({})
+
+    assert products == [{"path": "output/chart.png", "size": 3, "is_product": True}]
+    assert workspace.writes == {"output/chart.png": b"png"}
+    read.assert_called_once_with("/home/user/output/chart.png", format="bytes")
+    listed = [call.args[0] for call in exe.sandbox.files.list.call_args_list]
+    assert "/home/user/scratch/fonts" not in listed
+
+
 def test_local_sync_skips_toolchain_trees(tmp_path):
     from unittest.mock import Mock
 
@@ -583,6 +616,35 @@ def test_local_sync_skips_toolchain_trees(tmp_path):
 
     exe.sandbox.files.list.assert_not_called()
     assert not list(tmp_path.rglob("*"))
+
+
+def test_local_sync_skips_generated_font_cache(monkeypatch):
+    from unittest.mock import Mock
+
+    exe = make_executor(monkeypatch)
+    exe.local_sync_path = "unused"
+    exe.download_file = Mock()
+
+    exe.sync_files_to_local(
+        [
+            FakeEntry("fonts", "/home/user/scratch/fonts", "dir"),
+            FakeEntry("font.otf", "/home/user/scratch/font.otf", "file"),
+        ]
+    )
+
+    exe.download_file.assert_not_called()
+
+
+def test_workspace_sync_ignores_local_generated_font_cache(monkeypatch, tmp_path):
+    exe = make_executor(monkeypatch)
+    exe.local_sync_path = str(tmp_path)
+    font_dir = tmp_path / "scratch" / "fonts"
+    font_dir.mkdir(parents=True)
+    (font_dir / "font.otf").write_bytes(b"large-font")
+
+    exe._sync_workspace_to_sandbox()
+
+    assert "/home/user/scratch/fonts/font.otf" not in exe.sandbox.files.store
 
 
 def test_local_sync_skips_content_equal_rewrites(tmp_path):

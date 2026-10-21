@@ -46,7 +46,10 @@ from bisheng.tool.domain.models.gpts_tools import GptsToolsDao
 from bisheng.tool.domain.services.executor import ToolExecutor
 from bisheng.utils import util
 from bisheng.utils.util import async_calculate_md5
-from bisheng_langchain.gpts.tools.code_interpreter.base_executor import is_skipped_workspace_name
+from bisheng_langchain.gpts.tools.code_interpreter.base_executor import (
+    is_generated_font_cache_path,
+    is_skipped_workspace_name,
+)
 from bisheng_langchain.gpts.tools.code_interpreter.e2b_executor import SIZE_AUTOPUSH
 
 
@@ -1507,9 +1510,17 @@ class LinsightWorkbenchImpl:
             # Toolchain trees (node_modules / caches) are never task inputs; the
             # E2B copy-in reads every entry fully into worker memory, so pruning
             # them here keeps the push — and every later sandbox walk — cheap.
-            dirs[:] = [d for d in dirs if not is_skipped_workspace_name(d)]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not is_skipped_workspace_name(d)
+                and not is_generated_font_cache_path(os.path.relpath(os.path.join(root, d), file_dir))
+            ]
             for file in files:
                 file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, file_dir)
+                if is_generated_font_cache_path(rel_path):
+                    continue
                 try:
                     if os.path.getsize(file_path) > SIZE_AUTOPUSH:
                         oversized.append(file_path)

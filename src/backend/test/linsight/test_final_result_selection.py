@@ -211,12 +211,13 @@ async def test_read_file_directory_carries_zone_and_mtime(tmp_path):
     assert _names(select_deliverables(details)) == [os.path.join("output", "报告.md")]
 
 
-def test_snapshot_file_paths_skips_toolchain_trees(tmp_path):
-    """node_modules / cache trees are toolchain by-products, not task state.
+def test_snapshot_file_paths_skips_toolchain_and_font_cache(tmp_path):
+    """Toolchain trees and generated fonts are by-products, not task state.
 
     2026-10-14 docx incident: a task that ran ``npm install`` spent ~14 min of
     file-API calls crawling node_modules per run, and its completion harvest
-    uploaded 470+ junk files; the baselines must ignore those trees outright.
+    uploaded 470+ junk files. A plotting task later paid another multi-minute
+    transfer for fonts extracted under ``scratch/fonts``.
     """
     (tmp_path / "output").mkdir()
     (tmp_path / "output" / "a.md").write_text("a")
@@ -226,18 +227,24 @@ def test_snapshot_file_paths_skips_toolchain_trees(tmp_path):
     pycache = tmp_path / "__pycache__"
     pycache.mkdir()
     (pycache / "mod.pyc").write_bytes(b"0")
+    fonts = tmp_path / "scratch" / "fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "NotoSansCJKsc-Bold.otf").write_bytes(b"font")
 
     snap = snapshot_file_paths(str(tmp_path))
 
     assert snap == {str(tmp_path / "output" / "a.md")}
 
 
-async def test_read_file_directory_skips_toolchain_trees(tmp_path):
+async def test_read_file_directory_skips_toolchain_and_font_cache(tmp_path):
     (tmp_path / "output").mkdir()
     (tmp_path / "output" / "a.md").write_text("a")
     nm = tmp_path / "node_modules"
     nm.mkdir()
     (nm / "index.js").write_text("junk")
+    fonts = tmp_path / "scratch" / "fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "NotoSansCJKsc-Bold.otf").write_bytes(b"font")
 
     details = await read_file_directory(str(tmp_path))
 

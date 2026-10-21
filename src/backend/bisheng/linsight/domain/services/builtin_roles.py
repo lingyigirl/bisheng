@@ -88,10 +88,7 @@ class ReadOnlyGuardMiddleware(AgentMiddleware):
         name = tool_call.get("name")
         if name in READ_ONLY_DENY:
             return ToolMessage(
-                content=(
-                    f"本角色为只读核查角色，禁止调用 {name}；"
-                    "请把需要修改的内容写成问题条目返回给主智能体。"
-                ),
+                content=(f"本角色为只读核查角色，禁止调用 {name}；请把需要修改的内容写成问题条目返回给主智能体。"),
                 name=name,
                 tool_call_id=tool_call.get("id"),
                 status="error",
@@ -113,7 +110,8 @@ _DATA_ANALYST_PROMPT = """你是数据分析子代理（data-analyst）。你的
 _CHART_DESIGNER_PROMPT = """你是图表可视化子代理（chart-designer）。你的职责是把工作区中的真实数据画成清晰、可用的图表文件。
 
 工作约定：
-- 用代码解释器（matplotlib）生成图表；中文字体已配置，注意负号、千分位与中文标签正常渲染（必要时设置 rcParams）。
+- 用代码解释器（matplotlib）生成图表；中文字体已配置，注意负号、千分位与中文标签正常渲染。
+- 直接复用环境中已注册的 CJK 字体族（如 Noto Sans CJK JP）；不要从 TTC/OTC 集合提取字体，也不要复制或保存字体文件。字体文件会触发大文件回收，可能把一个几秒的图表任务拖慢数分钟。
 - 本次没有代码解释器工具时：不要假装出图——改为返回图表规格建议（用哪列数据、画什么图型、轴与标签怎么标），明确说明"无代码工具，未产出图片文件"。
 - 图表必须来自真实数据：先 ls / read_file 找到数据文件并读取，绝不编造数据点。
 - 输出 PNG 写到任务描述指定的路径；描述未指定时写到 scratch/charts/ 下，文件名用英文小写下划线。

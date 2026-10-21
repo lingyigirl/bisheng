@@ -89,11 +89,14 @@ def test_full_pool_roles_share_the_safe_blacklist_filtered_pool():
         _FakeTool("export_docx"),
     ]
     expected = {t.name for t in _subagent_tools(plain_tools)}
-    specs = {spec["name"]: spec for spec in build_builtin_role_specs(
-        _subagent_tools(plain_tools),
-        _factory(),
-        artifact_contract=SUBAGENT_ARTIFACT_REPORT_CONTRACT,
-    )}
+    specs = {
+        spec["name"]: spec
+        for spec in build_builtin_role_specs(
+            _subagent_tools(plain_tools),
+            _factory(),
+            artifact_contract=SUBAGENT_ARTIFACT_REPORT_CONTRACT,
+        )
+    }
 
     for role in ("data-analyst", "chart-designer"):
         names = {t.name for t in specs[role]["tools"]}
@@ -171,6 +174,14 @@ async def test_read_only_guard_denies_write_calls_at_execution_time():
 
 def test_read_only_deny_covers_exactly_the_fs_write_tools():
     assert READ_ONLY_DENY == {"write_file", "edit_file"}
+
+
+def test_chart_designer_avoids_slow_ttc_font_extraction():
+    specs = {spec["name"]: spec for spec in _build()}
+    prompt = specs["chart-designer"]["system_prompt"]
+
+    assert "直接复用" in prompt
+    assert "不要从 TTC/OTC 集合提取字体" in prompt
 
 
 def test_main_prompt_advertises_the_builtin_roles():

@@ -76,10 +76,39 @@ SKIPPED_WORKSPACE_NAMES = frozenset(
     }
 )
 
+GENERATED_FONT_EXTENSIONS = frozenset({".otf", ".ttc", ".ttf", ".otc", ".woff", ".woff2"})
+
 
 def is_skipped_workspace_name(name: str) -> bool:
     """True for toolchain/cache entries that are not task workspace state."""
     return name in SKIPPED_WORKSPACE_NAMES
+
+
+def is_generated_font_cache_path(path: str) -> bool:
+    """True for generated font caches that must not cross the E2B file API.
+
+    Plotting agents sometimes extract one face from a large CJK TTC into
+    ``scratch/fonts``. Those files are temporary rendering dependencies, not
+    task outputs. Harvesting them through the sandbox file API can take minutes
+    while the actual chart code finishes in seconds.
+    """
+    normalized = path.replace("\\", "/").lstrip("/")
+    if normalized.startswith("./"):
+        normalized = normalized[2:]
+    if normalized.startswith("home/user/"):
+        normalized = normalized[len("home/user/") :]
+    if not normalized.startswith(SCRATCH_DIR_NAME + "/"):
+        marker = "/" + SCRATCH_DIR_NAME + "/"
+        marker_index = normalized.rfind(marker)
+        if marker_index >= 0:
+            normalized = normalized[marker_index + 1 :]
+    if normalized == SCRATCH_DIR_NAME + "/fonts":
+        return True
+    if normalized.startswith(SCRATCH_DIR_NAME + "/fonts/"):
+        return True
+    if not normalized.startswith(SCRATCH_DIR_NAME + "/"):
+        return False
+    return any(normalized.lower().endswith(ext) for ext in GENERATED_FONT_EXTENSIONS)
 
 
 def path_namespace_rules(include_skills: bool = True) -> str:
