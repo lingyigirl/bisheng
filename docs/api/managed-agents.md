@@ -10,8 +10,10 @@
    ```bash
    bash scripts/migrate_fga_add_managed_agent_type.sh --dry-run
    bash scripts/migrate_fga_add_managed_agent_type.sh --apply
-   .venv/bin/python scripts/migrate_fga_skill_permissions.py --report /tmp/fga-skill-dry-run.json
-   .venv/bin/python scripts/migrate_fga_skill_permissions.py --apply --report /tmp/fga-skill-apply.json
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py --report /tmp/fga-skill-plan.json
+   # --expected-model-id 取 preview 输出的 old_model_id；report 每次用新路径（O_EXCL）
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py \
+     --apply --expected-model-id <old_model_id> --report /tmp/fga-skill-apply-<timestamp>.json
    ```
    写入后按部署惯例 pin `openfga.model_id` 或重启让 manager 取最新模型（见脚本输出）。
 3. 外部调用需要 F076 的服务账号密钥，且密钥带 `managed_agent:invoke` 权限位；服务账号的专用身份还需在「系统 → 服务账号 → 授权」里被授予目标智能体的 `editor`（运行）档。
@@ -21,7 +23,7 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/v1/managed-agents` | 列表（keyword/source_kind/protocol/status/scenario_code/industry_code/page/page_size） |
+| GET | `/api/v1/managed-agents` | 列表（keyword/source_kind/protocol/status/scenario_code/industry_code/tag_id/page/page_size） |
 | POST | `/api/v1/managed-agents` | 登记（本平台投影或第三方） |
 | GET/PUT/DELETE | `/api/v1/managed-agents/{id}` | 详情/编辑/删除（有启用中定时任务时删除返回 12110） |
 | POST | `/api/v1/managed-agents/{id}/publish` | 上线 |
@@ -30,7 +32,8 @@
 | POST | `/api/v1/managed-agents/{id}/health-check` | 手动健康检查（失败返回 12108） |
 | GET | `/api/v1/managed-agents/{id}/stats` | 调用量/成功率/平均延迟（默认排除健康检查） |
 | GET | `/api/v1/managed-agents/catalog` | 客户端目录（仅 online + 当前用户可见） |
-| GET/POST/PUT/DELETE | `/api/v1/managed-agent-taxonomies` | 场景/行业分类维护 |
+| GET/POST | `/api/v1/managed-agent-taxonomies` | 场景/行业分类列表/新增 |
+| PUT/DELETE | `/api/v1/managed-agent-taxonomies/{row_id}` | 场景/行业分类修改/删除 |
 
 登记请求示例（第三方 OpenAI-compatible）：
 
@@ -54,6 +57,7 @@
 
 - `source_kind=native` 时必须给 `native_app_id` + `native_app_type`（5=助手 / 10=工作流），且 `protocol=native`。
 - 凭据写入后**永不回显**；详情只返回 `has_credential` / `credential_type` / 掩码。编辑时 secret 留空 = 不变。
+- 标签：请求 `tags: [tag_id]`；列表/详情返回 `tags`（id）与 `tag_names`；列表支持 `tag_id` 过滤。
 - 接入地址在同一租户内唯一；原生投影使用内部 hash，不占用接入地址。
 
 ## 3. 统一调用（`/api/v2`）
@@ -73,6 +77,7 @@ Content-Type: application/json
 ```
 
 - 请求体只接受 `agent_id` / `input` / `session_id`；其他字段返回 12114。
+- `session_id` 仅 `custom_http` 适配器使用；`native` 与 `openai_compatible` 忽略，平台不持久化对话历史。
 - 只调用已上线智能体；可见性/权限失败按防枚举返回 404/11809，状态失败返回 12105。
 - 频控：每租户+智能体每分钟 `managed_agent.rate_limit_per_minute`（默认 60），超限 429/12112，带 `Retry-After`。
 - 上游 4xx/5xx/超时返回 12106；非法/超限响应返回 12113；出站地址被拒返回 12111。
@@ -98,6 +103,8 @@ Content-Type: application/json
 | 12114 | 400 | 调用请求体含白名单外字段 |
 
 另沿用 F076：缺权限位 11807/403、未登记端点 11811/500、调用方指定身份 11817/400、防枚举 11809/404。
+
+> **HTTP 语义**：本表的 HTTP 列是 `/api/v2` 调用面的真实状态；`/api/v1` 管理面业务错误一律返回 **HTTP 200 + `{status_code,status_message,data}` 信封**，请按 `status_code` 分支。FastAPI 请求体校验失败同样是 HTTP 200 + body `status_code=422`。
 
 ## 5. 与定时任务的关系
 

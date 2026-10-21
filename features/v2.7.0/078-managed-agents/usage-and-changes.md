@@ -68,7 +68,7 @@
 ### 客户端（`src/frontend/client`）
 
 - `pages/apps/explore.tsx` 增加 Tabs：原生应用广场 / 第三方智能体。
-- `ManagedAgentTab/Card/Filters`：只展示 online + 有查看权限的纳管智能体；场景/行业/标签筛选、标签展示、预览抽屉。
+- `ManagedAgentTab/Card/Filters`：只展示 online + 有查看权限的纳管智能体；场景/行业/标签筛选、标签展示、预览弹窗。
 - `api/managedAgents.ts` + 三语 `translation.json` 键。
 
 ---
@@ -84,8 +84,10 @@
    bash scripts/migrate_fga_add_managed_agent_type.sh --dry-run
    bash scripts/migrate_fga_add_managed_agent_type.sh --apply
    # skill 脚本默认只读；写入用 --apply，报告路径按环境替换
-   .venv/bin/python scripts/migrate_fga_skill_permissions.py --report /tmp/fga-skill-dry-run.json
-   .venv/bin/python scripts/migrate_fga_skill_permissions.py --apply --report /tmp/fga-skill-apply.json
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py --report /tmp/fga-skill-plan.json
+   # --expected-model-id 取 preview 输出的 old_model_id；report 每次用新路径
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py \
+     --apply --expected-model-id <old_model_id> --report /tmp/fga-skill-apply-$(date +%s).json
    ```
    合并后的模型是 `v2.0.5` / 19 类型（`managed_agent` + `linsight_skill`）。只跑 managed_agent 脚本时，若 store 已有 `managed_agent` 但缺 `linsight_skill`，脚本会判定“已存在”而 no-op；两个脚本任一顺序都能收敛到完整模型。按输出 pin `openfga.model_id` 或重启让 manager 取最新模型。
 3. 在目标环境 `config.yaml` 开启：
@@ -121,11 +123,11 @@
 ## 5. 验证记录
 
 - 后端回归 **644 passed**（`config=config.yaml`：`test/managed_agent` + `test/open_api` + `test/scheduled_task` + FGA/F013）；现场配置 `config=config.celery-private.yaml` 下 **643 passed, 1 skipped**（开关打开时路由挂载用例按设计跳过）。
-- 平台 `pnpm typecheck` **434 strict 全过**；客户端 `pnpm typecheck` **1304 strict 全过**；`check-i18n` OK。
+- 平台 `pnpm typecheck` **434 strict 全过**；客户端 `pnpm typecheck` **1305 strict 全过**；`check-i18n` OK。
 - 客户端/平台本次改动文件 eslint 0。
 - MySQL DDL 离线编译：31/11/20 列；DM8 无本机实例，按清单留现场。
 - e2e 套件 `test/e2e/test_e2e_managed_agents.py` **9 passed**（本机运行实例，启用 `allow_private_networks` + allowlist `127.0.0.1`）。
-- 现场验收报告 §6 的 9 项问题已逐项核实与修复，见 `docs/F078-报告问题修复说明.md`。
+- 现场验收报告 §6 的 9 项问题 + 补充复核 #10 共 10 项已逐项核实与修复，见 `docs/F078-报告问题修复说明.md`。
 
 ---
 
@@ -135,4 +137,6 @@
 - 原生工作流同步调用只支持至多一次人工输入；多输入/文件输入走定时任务或原生工作流接口。
 - 健康检查默认只标记 unhealthy，不自动下线（`auto_offline_on_health_failure` 默认 false）。
 - 复用既有硬编码 Fernet key（平台既有 C6 缺口）；换 key 会导致已存凭据不可解密。
-- `docs/report.md` 为并行会话文件，不在本特性提交范围。
+- **平台编辑当前 HEAD 存在缺陷**：编辑弹窗 PUT 会带 `source_kind`，后端 `ManagedAgentUpdateReq` 为 `extra='forbid'` 且无该字段，保存返回 HTTP 200 + body `status_code=422`。规避：API PUT 省略 `source_kind`；前端单行修复待提交。
+- 编辑字段以 `None` 表示「不修改」，控制台无法清空 `description/model_name/version/health_url/scenario_code/industry_code/agent_card`；`ManagedAgentItem` 不返回 `agent_card`/`health_url`，编辑弹窗留空即沿用原值。
+- `docs/F078-report.md` 为现场验收输入报告，当前未跟踪；其截图/日志链接在仓库内不可用。
