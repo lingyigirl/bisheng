@@ -1004,6 +1004,8 @@
     "reportExportHtml": "HTML report (opens in browser)",
     "reportExportXlsx": "Excel data workbook",
     "reportNotReady": "Report is not ready yet. Make sure both versions finished evaluating.",
+    "reportNotReadyRunning": "A comparison needs both versions to finish. One version is still running — please try again later.",
+    "reportNotReadyFailed": "A comparison needs both versions to finish successfully. One version failed — rerun it before comparing.",
     "reportApp": "App",
     "reportDataset": "Dataset",
     "reportChangeKind": "Change",

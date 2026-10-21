@@ -6,14 +6,14 @@
 
 **关联**: [spec.md](./spec.md) · [tasks.md](./tasks.md)
 **版本**: v2.8.0
-**最后更新**: 2026-10-16
+**最后更新**: 2026-10-20
 
 ---
 
 ## 1. 目标与非目标
 
-- **目标**：在**智能体（工作流）双版本对比组**上，提供一个**可视化对比报告页**（对比对象条 / 一句话结论 / 对比分析 / 指标卡 / 图表 / 逐题明细可下钻可切指标），并支持**把报告全量导出**（Excel 先）。同时补齐报告所需指标：**幻觉率**（内容级）、延迟 / Token（读 F066 已采集的 CSV 列）。
-- **非目标**（详见 spec §范围边界）：N 路(>2)对比、按场景/题型拆分、LLM 自由生成的"建议"、**达标线/是否通过判定（归 6.4）**、faithfulness 型幻觉率、助手评测、PDF/HTML 导出、**修旧对比抽屉 CompareSheet 的 v1/v2 标签 bug**、雷达/箱线图。
+- **目标**：在**智能体（工作流）双版本对比组**上，提供一个**可视化对比报告页**（对比对象条 / 一句话结论 / 对比分析 / 指标卡 / 图表 / 逐题明细可下钻可切指标），并支持**把报告全量导出**（页面提供 PDF / Word；xlsx / HTML 保留 API 兼容）。同时补齐报告所需指标：**幻觉率**（内容级）、延迟 / Token（读 F066 已采集的 CSV 列）。
+- **非目标**（详见 spec §范围边界）：N 路(>2)对比、按场景/题型拆分、LLM 自由生成的"建议"、**达标线/是否通过判定（归 6.4）**、faithfulness 型幻觉率、助手评测、Excel/HTML 页面入口、**修旧对比抽屉 CompareSheet 的 v1/v2 标签 bug**、雷达/箱线图。
 
 ---
 
@@ -28,7 +28,7 @@
   - **自建** —— 他**没做或做错**的部分：**跳末尾总行的 CSV reader**、**结论引擎**、**幻觉率**。
 - **既有评测行为零回归**：新增裁判第 4 桶、CSV 读取、报告接口均**纯增量**；单版本评测（无对比组）行为不变（spec AC-16）。
 - **多租户**：新接口的读查询走既有 repository（自动注入 `tenant_id`），并在属主维度过滤（spec AC-15）。
-- **错误码**：评测模块历史实现（含 `get_evaluation_compare`）统一用 `HTTPException` + detail，不引入 MMM 段。本 feature **沿用模块既有约定**（与 F066 决策一致），复用既有 HTTP 4xx。
+- **错误码**：评测模块历史实现（含 `get_evaluation_compare`）统一用 `HTTPException` + detail，不引入 MMM 段。本 feature **沿用模块既有约定**（与 F066 决策一致），复用既有 HTTP 4xx（新增 409 就绪错误，detail 带 machine-readable `code`）。
 - **无新增第三方依赖**：图表用已在 `platform/package.json:62` 声明的 `recharts ^2.12.7`；xlsx 用已声明的 `openpyxl` + `pandas`。
 
 ---
@@ -108,15 +108,19 @@
 - **反直觉点**：`compute_answer_correctness` 用 `item.get(_KEY_MAP[...], "")` 取桶 → **加第 4 键不会破坏解析**（对多出的键容错）；只要提示词里让裁判多返回一个键即可。
 - **何时该重新考虑**：若改为"幻觉率 N/A 也可接受"，可退回 B。
 
-### 决策 7：导出 —— 后端生成、复用 F066 xlsx
+### 决策 7：导出 —— 后端生成；页面 PDF / Word，xlsx / HTML 保留 API 兼容
 
 - **备选**：
   - A. 前端截图/打印转 PDF（所见即所得）。
   - B. **后端按与报告页同一份数据生成**文件。
 - **选定**：B（spec AC-14 硬要求）。
-- **原因**：前端截图对**中文、字体、分页**不友好（信创浏览器尤甚）→ 输出不稳；后端生成可复现、可全量。**Excel 复用 F066 的 openpyxl 生成做法/工具**（决策 3）——但注意 F066 的 `build_report_bytes` 是**单评测**结构（一个版本一个汇总 sheet），**两版对比的 sheet 布局要自建**，只是复用其"openpyxl 写 sheet / 单元格 / N/A 口径"这层。
-- **口径**：导出 = **全量**（每个指标的逐题值都在），**不随界面当前所选指标变化**（spec AC-13）。分期 Excel → PDF → 其他；PDF/HTML 本期不做。
-- **何时该重新考虑**：要求"像素级还原界面"时才考虑 A。
+- **原因**：前端截图对**中文、字体、分页**不友好（信创浏览器尤甚）→ 输出不稳；后端生成可复现、可全量。
+- **格式（2026-10-19 用户调整，2026-10-20 落档）**：面向用户的导出是**可直接转发的完整报告**，页面只提供 **PDF / Word(.docx)**：
+  - `build_export_pdf`：复用项目既有 Playwright/Chromium 渲染 `build_export_html` 的自包含 HTML（内联 CSS + SVG 图表），A4；
+  - `build_export_docx`：python-docx + matplotlib 图表；
+  - `build_export_xlsx` 与 `build_export_html` **保留**（`format` 支持 `xlsx | html | pdf | docx`，默认仍 `xlsx` 兼容旧调用），页面不暴露。
+- **口径**：导出 = **全量**（每个指标的逐题值都在），**不随界面当前所选指标变化**（spec AC-13）。PDF 运行前提：`playwright install chromium` + 系统库（部署镜像同样需要）。
+- **何时该重新考虑**：要求"像素级还原界面"时才考虑 A；若确认只需一种格式，可删除其余生成器。
 
 ### 决策 8：图表库 —— recharts（既有依赖）
 
@@ -163,9 +167,12 @@
   GET /api/v1/evaluation/compare/{group_id}/report
     ├─ 校验: 当前用户可访问该 compare_group（租户 + 属主/组内）
     ├─ EvaluationRepository.get_compare_group(group_id, user_id)   ← 复用 F053，每组恰 2 条
+    ├─ 就绪校验: 两版 status 均须 success，否则 409 + {code: compare_not_ready, reason: running|failed, evaluation_id, version}
     ├─ 对每版（按 version 升序 → v1=旧 / v2=新）:
     │   ├─ 读结果 CSV: <自建 reader> 跳末尾总行 → 逐题行
     │   │     （复用 summarize_performance 汇总；collect_token_usage 已由 F066 采集进 CSV 列，不再查 ES）
+    │   │     无 exec_status 列（历史 CSV）→ 成功率/成功数/失败数 = N/A，不记 0%
+    │   │     exec_status == failed 的题 → 六项指标全部 N/A，且不进任何均值/聚合
     │   └─ flow_version.data → 取 LLM 节点（system_prompt/user_prompt/model_id）
     ├─ 结论引擎（自建）: 准确率→幻觉率→成本(Token)→延迟；方向归一；分类容差 → conclusion
     ├─ 对比对象条: compare_flow_versions(v1.data, v2.data) → node_changes（筛 LLM）；model_id→名
@@ -173,9 +180,9 @@
     └─ 返回 { group_id, evaluations[v1,v2], object_bar, conclusion, analysis, metrics, charts, per_question }
 
 报告导出（新增，后端按同一份数据生成）:
-  GET /api/v1/evaluation/compare/{group_id}/report/export?format=xlsx
-    ├─ 同上组装同一份报告数据
-    ├─ Excel: 复用 F066 的 openpyxl 生成函数（汇总 sheet + 逐题全指标 sheet）
+  GET /api/v1/evaluation/compare/{group_id}/report/export?format=pdf|docx|xlsx|html
+    ├─ 同上组装同一份报告数据（含 409 就绪校验）
+    ├─ pdf / docx: 页面入口；xlsx / html: 保留的 API 兼容格式
     └─ 返回预签名下载链接（不依赖前端截图）
 
 裁判（评测执行期，改）:
@@ -190,7 +197,7 @@
 
 | 字段 / 结构 | 类型 / 格式 | 说明 | 谁会消费 |
 |---|---|---|---|
-| 报告数据 `evaluations[]` | `{ id, version, version_name, status, result_score, description }` | 两版元信息，**按 version 升序**（v1=旧/v2=新）。`version_name` 走 `FlowVersion.name`（列表接口同源，`evaluation_service.py:235`） | 报告页头 / 对比对象条 |
+| 报告数据 `evaluations[]` | `{ id, version, version_name, status, result_score, description, question_count, success_count, failed_count, success_rate }` | 两版元信息，**按 version 升序**（v1=旧/v2=新）。`version_name` 走 `FlowVersion.name`（列表接口同源，`evaluation_service.py:235`）。三个成功/失败计数字段在历史 CSV（无 `exec_status`）下为 `null`（前端显示 N/A） | 报告页头 / 对比对象条 |
 | `object_bar` | `{ app_name, data_set, models: {v1:[], v2:[]}, prompt_nodes: {v1:[], v2:[]}, change_kind: "model"\|"prompt"\|"both"` }` | 对比对象条；`change_kind=='both'` 时前端标"多变量" | 报告页头 |
 | `conclusion` | `"v1" \| "v2" \| "unable"` | 只方向，**不含指标名/✅❌**（spec AC-03） | 一句话结论 |
 | `metrics[]`（指标卡） | `{ key, label, v1, v2, delta, unit }` | 准确率/F1/召回/幻觉率/延迟/成本；**不判达标** | 指标卡 |
@@ -216,15 +223,16 @@
   |---|---|---|
   | 对比组不存在 / 不属本用户 | 404 | `compare group not found` |
   | 组内两版非同一智能体 | 400 | `compare group agents mismatch` |
+  | 任一版未执行完成 | 409 | `{code: "compare_not_ready", reason: "running"\|"failed", evaluation_id, version}`（两版都成功才可出报告） |
   | 结果文件不可读 | 400 | `result csv unreadable`（对外可辨识，不静默成功） |
 
 #### 4.3.2 报告导出
 
 `GET /api/v1/evaluation/compare/{group_id}/report/export`
 
-- 入参：路径参数 `group_id`；查询参数 `format`（本期固定 `xlsx`）
+- 入参：路径参数 `group_id`；查询参数 `format`（`pdf | docx | xlsx | html`，默认 `xlsx`；页面只调用 `pdf` / `docx`）
 - 出参：`{ status_code: 200, data: { url, file_name } }`（预签名）
-- 错误：同上；`format` 非支持值 → 400。
+- 错误：同上（含 409 就绪校验）；`format` 非支持值 → 400。
 
 ### 4.4 关键模块职责
 
@@ -244,9 +252,9 @@
 
 ### 4.5 前端交互
 
-- **入口**：评测列表「对比」按钮 → 打开**新报告页**（新路由），参数为 `compare_group_id`（**不按列表相邻行推成员**）。
+- **入口**：评测列表「对比」按钮 → 打开**新报告页**（新路由），参数为 `compare_group_id`（**不按列表相邻行推成员**）。列表侧只在**相邻两条对比组成员均 `success`** 时启用按钮，否则置灰并提示；报告页对 409 的 `reason` 分别展示「运行中」「失败」文案（请求走 `silent`，页面读 `detail`）。
 - **报告页结构**（自上而下）：对比对象条 → 一句话结论 → 对比分析 → 指标卡 → 图表（分组柱状 + 逐题折线）→ 逐题明细（**下拉切指标**，判据 = 该指标有逐题值；**更好/更差按所选指标方向翻转**：准确率/F1/召回 越高越好，幻觉率/延迟/Token 越低越好）→ 导出按钮。
-- **逐题标题**：`共 N 题 · 成功 ×% · 失败 M`；失败题在「结果」列标**失败原因**，其各指标 **N/A**。
+- **逐题标题**：`共 N 题 · 成功 ×% · 失败 M`；历史 CSV 无状态时成功率 / 失败数显示 **N/A**；失败题在「结果」列标**失败原因**，其各指标 **N/A** 且不进聚合。
 - **导出**：调后端导出接口 → 用既有 `downloadFile` 走预签名链接。
 - **i18n**：新增文案三语同 PR；`compareBetter`（`bs.json:824`）当前硬编码"准确性更高"，报告页**不得**复用它（结论中性、无指标名），另起 key。
 
@@ -260,7 +268,7 @@
 |---|---|---|---|
 | 1 | 分组柱状 3 指标（准确率/F1/召回）同为 % 可共用一根 y 轴；**幻觉率同为 %，不进该图的原因是"方向"（柱越高越差）+ 清爽，不是量纲**；**延迟(秒)/Token(个) 才是异量纲** | 把延迟 3.2 秒画进 0–100% 的轴 → 柱子贴地 → 被误读成"该指标差" | 延迟/Token 出图各自单开、独立纵轴 |
 | 2 | `_parse_percent` 对**纯数值列**（`np.int64`）`isinstance(x,int)` 为 False → 走字符串分支 → `"1234"` ÷100 = **12.34**；列里**一旦混入 `"N/A"`** 变 float → 返回 **1234.0（对）** | 延迟/Token 用 `_parse_percent` → **全成功时**乱、有失败题时反而对（值随失败题有无翻转） | 延迟/Token **必须用独立数值解析**，不与百分比解析共用 |
-| 3 | 结果 CSV 有**末尾总行**（`build_result_table` 追加），其 `recall/precision/F1` 是**非空字符串** → `dropna(how="all")` **剔不掉**（F066 现有 bug，已复现：2 题报成 3 题 / 66.67%） | 题目总数多 1、成功率偏低；老 CSV（无 `exec_status`）成功率显示成 0% | **自建 reader**：按 `question` 为空/NaN 剔总行；无 `exec_status` 列时成功率记 **N/A**（不是 0%）。此 bug 只**列出**给晓晨，是否转告伟华由他定 |
+| 3 | 结果 CSV 有**末尾总行**（`build_result_table` 追加），其 `recall/precision/F1` 是**非空字符串** → `dropna(how="all")` **剔不掉**（F066 现有 bug，已复现：2 题报成 3 题 / 66.67%） | 题目总数多 1、成功率偏低；老 CSV（无 `exec_status`）成功率显示成 0% | **自建 reader** 按 `question` 为空/NaN 剔总行；**`_evaluation_meta`** 用 `compute_success_rate` 决定成功率/成功数/失败数——无任何状态记录时三项均为 `None`（N/A），**不得**用 `summarize_performance` 的 `success_count=0` 默认值。此 reader bug 只**列出**给晓晨，是否转告伟华由他定 |
 | 4 | 幻觉率是**内容级 Σ/Σ**（按总陈述数加权），**不是逐题均值** | 沿用 totals 的均值路径 → 长短题等权、失真 | 幻觉率**单独按 Σ/Σ 算**，不走均值路径 |
 | 5 | "与标准答案**矛盾**"的陈述很可能**同时落在"多答"（FP）清单里** | 分子/分母都虚（重复计数） | 把"矛盾"做成 **FP 的子类**（`contradicted ⊆ FP`）；总陈述数 = `TP + FP` |
 | 6 | `compute_answer_correctness` 用 `item.get(_KEY_MAP[...], "")` 取桶，**对多出的键容错** | 以为加第 4 桶会破坏解析，从而去改解析 → 多余改动 | 只**加提示词指令 + 加一个键**，解析不动 |
@@ -271,6 +279,9 @@
 | 11 | 老抽屉 `CompareSheet` 有 **v1/v2 标签错位** bug（前端按列表序贴、后端按 version 升序） | 扩它 → 把错位带进新报告 | **不改老抽屉**；新页按 `compare_group_id` 取成员、按 version 升序贴标签（v1=旧/v2=新） |
 | 12 | 配对须按**唯一标识**而非题面文本（题面可能重复）；系统追加的**汇总行不算一道题**；表单型题无题面时用**表单摘要**当题面 | 取错题 / 题数虚高 / 题面空白 | `_align_questions` 现有文本配对（同数据集走位置快路径）；reader 跳总行；表单摘要兜底 |
 | 13 | 幻觉数在**评测执行期**由裁判产出，报告期**不重跑裁判** → 必须先落**逐题原始计数**（只想存率会丢 Σ/Σ 加权） | 报告期算不出逐题幻觉率；Σ/Σ 退化成逐题均值 | 结果 CSV 新增 `statements_contradicted_num`/`statements_num_answer`（决策 10） |
+| 14 | `summarize_performance` **不过滤失败题**：F066 `_inject_failed_rows` 仍写入失败运行的 `duration_ms`/token，直接汇总会把失败路径的耗时/Token 混进延迟/成本 | 失败题越多，延迟/成本聚合越失真，且与「失败题不计入」矛盾（AC-10） | 报告组装先 `_successful_rows` 过滤再汇总；逐题 `_side_entry` 对 failed 行六项统一置 N/A（失败原因仍展示） |
+| 15 | 单侧未完成时 `result_file_path` 为空或 CSV 读不到 → 原先直接 400；若改为静默只展示单侧，又会让用户在半个数据集上判优劣 | 运行中的对比组点进来只有笼统报错；单侧展示则产出不可信的「对比」结论 | `_ensure_group_ready` 在读取 CSV 前返回 **409** + `{code, reason, evaluation_id, version}`；前端列表禁用入口、报告页按 reason 分文案提示（2026-10-20 用户拍板「两版都有数据才出报告」） |
+| 16 | 评测执行是 **API 进程内的 FastAPI BackgroundTask**，进程重启/依赖抖动会把它变成孤儿；失败分支写库时若 MySQL 同时不可用，连 `failed` 都写不进去 → 行永久停在 `running`。**只看"启动时扫描"不够**：本次故障的进程一直活着（4 小时），根本没重启 | 列表永远 "进行中 0%"、对比入口永远置灰，且无法自愈 | 执行器在 Redis 进度键上维护 **30 分钟租约**（开跑即写、每题续期）；API 启动 + 每 10 分钟巡检：`update_time` 超 30 分钟 **且租约已消失**才置 failed。租约检查时 Redis 不可用则**不动任何行**，避免把长任务误判为孤儿（题目再多，只要单题在租约期内完成就不会被扫掉） |
 
 ---
 
@@ -281,7 +292,8 @@
 | 契约 | 形式 | 谁在用 |
 |---|---|---|
 | `GET /api/v1/evaluation/compare/{group_id}/report` | HTTP API | platform 报告页 |
-| `GET /api/v1/evaluation/compare/{group_id}/report/export` | HTTP API | platform 报告页导出 |
+| 报告就绪契约：两版均 `success` 才返回报告，否则 **409** `{code: "compare_not_ready", reason, evaluation_id, version}` | HTTP 错误契约 | platform 列表入口 / 报告页（据此展示具体原因） |
+| `GET /api/v1/evaluation/compare/{group_id}/report/export` | HTTP API | platform 报告页导出（页面用 pdf / docx） |
 | 裁判模板第 4 桶（幻觉指令固定拼接） | 行为契约 | 评测执行链；影响幻觉率可得性 |
 
 ### 6.2 我依赖别人的（Incoming）
@@ -301,14 +313,15 @@
 ## 7. 测试与可观测
 
 - **单元**（pytest，`test/evaluation/`；新测试放 `test/<module>/`）：
-  - **reader**：含总行的 CSV → 题数/成功数正确（**不**把总行当题）；旧 CSV（无 `exec_status`）→ 成功率 N/A 不报错；失败题 → 各指标 N/A 且不进聚合。
+  - **reader**：含总行的 CSV → 题数/成功数正确（**不**把总行当题）；旧 CSV（无 `exec_status`）→ 成功率 / 成功数 / 失败数均 N/A 不报错；失败题 → 六项指标 N/A 且不进聚合（含延迟 / Token）；失败题仍出现在逐题明细并带原因。
+  - **就绪校验**：任一版 running / failed → 409 + `compare_not_ready`（reason 可区分），且不读取结果文件；两版 success → 正常组装。
   - **结论引擎**：方向归一（幻觉率/成本/延迟越低越好）；分类容差；高优先级打平 → 下探；四项全平 → `unable`；非最高优先级决定 → 「下探」情形在 `analysis` 里写明。
   - **幻觉率**：Σ/Σ（非均值）；`contradicted ⊆ FP` 不重复计数；无第 4 键（旧裁判输出）→ N/A。
   - **对比对象条**：仅模型变 / 仅提示词变 / 都变（多变量）三情形；`model_id`→名解析。
-  - **导出**：xlsx 两 sheet 可被 `pandas.read_excel` 回读；含**全 6 指标逐题值**；导出结果**不随**界面临时所选指标变化。
+  - **导出**：xlsx 两 sheet 可被 `pandas.read_excel` 回读；html / docx / pdf 生成不报错；含**全 6 指标逐题值**；导出结果**不随**界面临时所选指标变化。
   - **多租户/回归**：跨租户/非属主 → 404/不可访问（AC-15）；单版本评测行为不变（AC-16）。
-- **e2e**：真实跑一次工作流双版本对比评测 → 打开报告页（图表渲染、切指标翻转、下钻）→ 导出 xlsx 打开正常（`/e2e-test`）。
-- **手动验证**：本地起前后端——后端 `cd src/backend && export config=config.yaml && uv run uvicorn bisheng.main:app --port 7860`，前端 platform `cd src/frontend/platform && pnpm dev`（:3001）；登录后在 `/evaluation` 点某对比组「对比」→ 报告页；导出按钮下载 xlsx。**跑通再推分支**（记忆 `feedback_local_verify_before_push`）。
+- **e2e**：真实跑一次工作流双版本对比评测 → 打开报告页（图表渲染、切指标翻转、下钻）→ 导出 PDF / Word 打开正常（`/e2e-test`）。
+- **手动验证**：本地起前后端——后端 `cd src/backend && export config=config.yaml && uv run uvicorn bisheng.main:app --port 7860`，前端 platform `cd src/frontend/platform && pnpm dev`（:3001）；登录后在 `/evaluation` 点某对比组「对比」→ 报告页；导出按钮下载 PDF / Word；再挑一个运行中 / 失败的对比组确认入口置灰与报本文案。**跑通再推分支**（记忆 `feedback_local_verify_before_push`）。
 - **可观测**：CSV 读取 / 报告生成失败记 `logger.exception`；模型名解析失败降级显示 `model_id` 原值并 `logger.warning`。
 
 ---
@@ -317,7 +330,7 @@
 
 - N 路(>2)对比（把"固定 2 条"放开即可，计算逻辑可复用）。
 - 按场景/题型拆分（数据集无"场景"列）。
-- PDF / HTML 导出（分期）；导出引擎与 F066 是否合并（待与伟华协商）。
+- 导出引擎与 F066 是否合并（待与伟华协商）；页面是否需要恢复 Excel / HTML 入口。
 - faithfulness 型幻觉率（挂检索上下文）。
 - 雷达 / 箱线图。
 - 修复老抽屉 `CompareSheet` 的 v1/v2 错位 bug（不在本 feature）。
@@ -330,3 +343,5 @@
 |---|---|
 | 2026-10-16 | 初稿（spec 同期创建）；复用边界按晓晨澄清更正为"不改文件、重合能力可复用" |
 | 2026-10-16 | /sdd-review 后补：决策 10（逐题幻觉数落结果 CSV 列）+ 坑 13；导出 xlsx 复用口径澄清（build_report_bytes 是单评测结构）；对比分析（analysis）生成口径 |
+| 2026-10-20 | 审计修复落档：①历史 CSV 成功率 / 成功数 / 失败数改为 N/A（坑 3）；②失败题六项指标 N/A 且不进聚合（坑 14）；③两版都成功才出报告，单侧未完成返回 409 `compare_not_ready` 并区分 running/failed（坑 15）；④导出形态按 2026-10-19 调整同步为页面 PDF / Word、xlsx / HTML 保留 API 兼容（决策 7 / §4.3.2 / §8） |
+| 2026-10-21 | 本地故障复盘加固（评测 98/99 卡 4 小时）：执行器增加 Redis 租约（30min，开跑即写、每题续期）；API 启动 + 每 10min 巡检把「超 30min 未更新且租约消失」的 running 评测置 failed（坑 16） |

@@ -11,7 +11,7 @@
 | spec | ✅ 2026-10-20 用户确认 |
 | design | ✅ 2026-10-20 用户确认（新增 §12 微调链路研究结论） |
 | tasks | ✅ 2026-10-20 用户确认 |
-| 实现 | ✅ 代码完成：后端 34 项单测通过；前端 ESLint / check-i18n 通过；真实数据导出 47 条格式正确 |
+| 实现 | ✅ 代码完成：后端 36 项单测通过；前端 ESLint / check-i18n 通过；真实数据导出 47 条格式正确 |
 
 > 说明：实现先于 spec/design ★ 确认完成；口径已确认，按 design §10 决策表执行。
 
@@ -27,9 +27,9 @@
 
 ### T02 问答配对与样本构建单元测试
 - **文件**：`src/backend/test/telemetry_search/test_agent_transactions.py`
-- **内容**：文本解包（问题 5 种 / 答案 6 种）；当轮优先、缺失回退、忽略下一轮；反馈三模式；去重；不完整样本跳过；超限拒绝。
+- **内容**：文本解包（问题 5 种 / 答案 6 种）；当轮优先、缺失回退、忽略下一轮（含答案 slack 窗口内）；反馈三模式；去重；不完整样本跳过；超限拒绝（含额外命中不可映射）。
 - **覆盖 AC**: AC-03, AC-04, AC-05, AC-11, AC-12, AC-13
-- **状态**: ✅（34 passed）
+- **状态**: ✅（36 passed）
 
 ### T03 后端导出服务
 - **文件**：`src/backend/bisheng/telemetry_search/domain/services/agent_transactions.py`
@@ -75,7 +75,7 @@
 
 ### T08 后端测试
 - `uv run pytest test/telemetry_search/test_agent_transactions.py -q`
-- **状态**: ✅ 34 passed
+- **状态**: ✅ 36 passed
 
 ### T09 前端门禁
 - `cd src/frontend && pnpm typecheck`
@@ -93,4 +93,4 @@
 
 ### T11 提交
 - 后端 + 前端 + feature 文档同一分支提交；用户确认后再推送。
-- **状态**: ⏳
+- **状态**: ✅ 2026-10-20 已提交 `0aa3a1b44` 并推送 `feat/2.7.0/beijing-ns-llm-guardrail`；评审后修复（下一轮答案截止 / 超限按原始命中计数）另随 F090 审计修复一并提交

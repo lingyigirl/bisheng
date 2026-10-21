@@ -5,12 +5,14 @@ import math
 import os
 import time
 from collections import defaultdict
+from datetime import datetime, timedelta
 from io import BytesIO
 
 import pandas as pd
 from fastapi import HTTPException, UploadFile
 from fastapi.encoders import jsonable_encoder
 from loguru import logger
+from redis.exceptions import RedisError
 
 from bisheng.api.services.assistant_agent import AssistantAgent
 from bisheng.api.v1.schema.workflow import WorkflowEventType
@@ -19,6 +21,7 @@ from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.core.cache import InMemoryCache
 from bisheng.core.cache.redis_manager import get_redis_client_sync
 from bisheng.core.cache.utils import convert_encoding_cchardet
+from bisheng.core.context.tenant import bypass_tenant_filter
 from bisheng.core.logger import trace_id_var
 from bisheng.core.storage.minio.minio_manager import get_minio_storage_sync
 from bisheng.database.models.assistant import AssistantDao
@@ -514,6 +517,9 @@ async def add_evaluation_task(evaluation_id: int):
 
     redis_key = EvaluationService.get_redis_key(evaluation_id)
     redis_client = get_redis_client_sync()
+    # Runner lease: written before the first question and refreshed after each
+    # one, so the stale sweep can tell a live long run from an orphan.
+    redis_client.set(redis_key, 0, expiration=EVALUATION_PROGRESS_TTL_SECONDS)
     try:
         csv_data = EvaluationService.read_dataset_csv(evaluation.file_path)
         progress_increment = 80 / len(csv_data)
@@ -546,7 +552,7 @@ async def add_evaluation_task(evaluation_id: int):
                 one["exec_status"] = "success"
                 await _attach_token_metrics(one, eval_trace_id)
                 current_progress += progress_increment
-                redis_client.set(redis_key, round(current_progress))
+                redis_client.set(redis_key, round(current_progress), expiration=EVALUATION_PROGRESS_TTL_SECONDS)
         elif evaluation.exec_type == ExecType.WORKFLOW.value:
             workflow_info = FlowVersionDao.get_version_by_id(version_id=evaluation.version)
             if not workflow_info or workflow_info.flow_id != evaluation.unique_id:
@@ -582,7 +588,7 @@ async def add_evaluation_task(evaluation_id: int):
                 # stayed at 0% until the whole task finished. Count failed questions
                 # too — they complete just as well and the bar must keep moving.
                 current_progress += progress_increment
-                redis_client.set(redis_key, round(current_progress))
+                redis_client.set(redis_key, round(current_progress), expiration=EVALUATION_PROGRESS_TTL_SECONDS)
             if not valid_rows:
                 raise Exception(f"所有题目执行失败, 共 {len(failed_rows)} 题, 无有效答案可评分")
             csv_data = valid_rows
@@ -655,6 +661,47 @@ async def add_evaluation_task(evaluation_id: int):
         evaluation.description = str(e)[-500:]  # Limit the length of the error description to avoid being too long
         EvaluationRepository.update_evaluation(evaluation=evaluation)
         redis_client.delete(redis_key)
+
+
+# F090 audit: a runner that dies mid-flight (API restart, or Redis/MySQL going
+# away while the failure status is written) leaves the row at "running" forever
+# — the list sits at 0% and the compare report can never be generated. Each live
+# runner keeps a TTL'd lease on its progress key, refreshed after every question,
+# so the sweep can tell a long legitimate run (many questions) from an orphan
+# without guessing from elapsed time alone.
+STALE_RUNNING_SECONDS = 30 * 60
+STALE_RUNNING_SWEEP_INTERVAL_SECONDS = 10 * 60
+EVALUATION_PROGRESS_TTL_SECONDS = 30 * 60
+STALE_RUNNING_DESCRIPTION = "评测任务已中断(服务重启或依赖服务异常), 请重新发起评测"
+
+
+def sweep_stale_running_evaluations(now: datetime | None = None) -> int:
+    """Fail evaluations orphaned at ``running``; returns how many were repaired.
+
+    A row is orphaned only when it has been untouched for
+    ``STALE_RUNNING_SECONDS`` **and** its per-run progress key (the runner's
+    lease) is gone. If Redis is unavailable the sweep does nothing — without
+    the lease check a live long run cannot be distinguished from a corpse.
+    """
+    cutoff = (now or datetime.now()) - timedelta(seconds=STALE_RUNNING_SECONDS)
+    with bypass_tenant_filter():
+        candidates = EvaluationRepository.get_running_updated_before(cutoff)
+    if not candidates:
+        return 0
+    try:
+        redis_client = get_redis_client_sync()
+        stale_ids = [
+            evaluation.id
+            for evaluation in candidates
+            if not redis_client.exists(EvaluationService.get_redis_key(evaluation.id))
+        ]
+    except RedisError:
+        logger.warning("stale evaluation sweep skipped: Redis unavailable, cannot verify runner leases")
+        return 0
+    if not stale_ids:
+        return 0
+    with bypass_tenant_filter():
+        return EvaluationRepository.fail_evaluations(stale_ids, STALE_RUNNING_DESCRIPTION)
 
 
 # ---------------------------------------------------------------------------

@@ -664,19 +664,25 @@ def _row_hallucination(row: dict[str, Any]) -> float | None:
 
 
 def _side_entry(row: dict[str, Any] | None) -> dict[str, Any] | None:
-    """One question's six-metric cell for one version (``None`` if unpaired)."""
+    """One question's six-metric cell for one version (``None`` if unpaired).
+
+    A failed execution has no usable result: its measured duration/token describe
+    the failure path, not a comparison datapoint, so all six metrics are masked to
+    N/A (spec AC-10). The reason is still surfaced next to the row.
+    """
     if row is None:
         return None
+    failed = row.get("exec_status") == "failed"
     entry: dict[str, Any] = {
-        "precision": row.get("precision"),
-        "f1": row.get("F1"),
-        "recall": row.get("recall"),
-        "hallucination": _row_hallucination(row),
-        "token": _row_token(row),
-        "latency": row.get("duration_ms"),
+        "precision": None if failed else row.get("precision"),
+        "f1": None if failed else row.get("F1"),
+        "recall": None if failed else row.get("recall"),
+        "hallucination": None if failed else _row_hallucination(row),
+        "token": None if failed else _row_token(row),
+        "latency": None if failed else row.get("duration_ms"),
         "exec_status": row.get("exec_status"),
     }
-    if entry["exec_status"] == "failed":
+    if failed:
         entry["fail_reason"] = row.get("answer")
     return entry
 
@@ -721,10 +727,20 @@ def build_per_question(v1_rows: list[dict[str, Any]], v2_rows: list[dict[str, An
     return result
 
 
-def _evaluation_meta(side: dict[str, Any], perf: dict[str, Any]) -> dict[str, Any]:
-    """The两版元信息 block: identity + the title statistics (spec AC-09/AC-10)."""
-    question_count = perf.get("question_count") or 0
-    success_count = perf.get("success_count") or 0
+def _evaluation_meta(side: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The 两版元信息 block: identity + the title statistics (spec AC-09/AC-10).
+
+    The success/failure counts are ``None`` (N/A) for a legacy result CSV that has
+    no ``exec_status`` column at all: the run statuses are simply unknown, and
+    reporting ``0 / all failed`` would be a fabricated failure statistic.
+    """
+    question_count = len(rows)
+    success_rate = compute_success_rate(rows)
+    if success_rate is None:
+        success_count = failed_count = None
+    else:
+        success_count = sum(1 for r in rows if r.get("exec_status") == "success")
+        failed_count = question_count - success_count
     return {
         "id": side.get("id"),
         "version": side.get("version"),
@@ -734,9 +750,18 @@ def _evaluation_meta(side: dict[str, Any], perf: dict[str, Any]) -> dict[str, An
         "description": side.get("description"),
         "question_count": question_count,
         "success_count": success_count,
-        "failed_count": question_count - success_count,
-        "success_rate": perf.get("success_rate"),
+        "failed_count": failed_count,
+        "success_rate": success_rate,
     }
+
+
+def _successful_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rows eligible for metric aggregation: a failed run contributes nothing.
+
+    A legacy row without ``exec_status`` is kept — its status is unknown, not
+    failed, and its measured metrics are still real.
+    """
+    return [r for r in rows if r.get("exec_status") != "failed"]
 
 
 def build_report_data(
@@ -750,13 +775,19 @@ def build_report_data(
     is the single data source both the report page and the export consume
     (design 决策 2).
     """
-    rows1, rows2 = side1.get("rows") or [], side2.get("rows") or []
+    all_rows1, all_rows2 = side1.get("rows") or [], side2.get("rows") or []
+    # Failed executions must not drag down the aggregates: their measured
+    # duration/token describe the failure path (spec AC-10). The title statistics
+    # still count them, so they keep the full row list.
+    rows1, rows2 = _successful_rows(all_rows1), _successful_rows(all_rows2)
     perf1, perf2 = summarize_performance(rows1), summarize_performance(rows2)
     metrics1, metrics2 = aggregate_metrics(rows1, perf1), aggregate_metrics(rows2, perf2)
 
     # Per-question pairing is needed first: a metric whose two aggregates have no
     # question in common must not decide the conclusion (see decide_conclusion).
-    per_question = build_per_question(rows1, rows2)
+    # This uses the full row list: a failed question still appears in the detail
+    # table as N/A with its reason, it just contributes no metric values.
+    per_question = build_per_question(all_rows1, all_rows2)
     decision = decide_conclusion(metrics1, metrics2, _disjoint_metric_keys(per_question))
 
     object_bar = build_object_bar(side1.get("flow_data"), side2.get("flow_data"), model_names)
@@ -782,7 +813,7 @@ def build_report_data(
     labels = (_side_label(side1), _side_label(side2))
 
     return {
-        "evaluations": [_evaluation_meta(side1, perf1), _evaluation_meta(side2, perf2)],
+        "evaluations": [_evaluation_meta(side1, all_rows1), _evaluation_meta(side2, all_rows2)],
         "object_bar": object_bar,
         "conclusion": decision["conclusion"],
         "analysis": build_analysis(decision, metrics, per_question, labels),
@@ -859,11 +890,36 @@ def _collect_model_names(flow_datas: list[dict | None]) -> dict[int, str]:
     return {m.id: m.name for m in models}
 
 
+def _ensure_group_ready(evaluations: list[Any]) -> None:
+    """Both versions must have finished successfully before a report exists.
+
+    A comparison needs two complete datasets; showing one side alone would invite
+    a verdict on half the evidence. 409 with a structured detail lets the page
+    say which version is still running / failed instead of a generic error.
+    """
+    from bisheng.evaluation.domain.models.evaluation import EvaluationTaskStatus
+
+    for evaluation in evaluations:
+        if evaluation.status == EvaluationTaskStatus.success.value:
+            continue
+        reason = "running" if evaluation.status == EvaluationTaskStatus.running.value else "failed"
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "compare_not_ready",
+                "reason": reason,
+                "evaluation_id": evaluation.id,
+                "version": evaluation.version,
+            },
+        )
+
+
 def build_compare_report(group_id: str, user_id: int) -> dict[str, Any]:
     """Load an owner-scoped compare group and assemble its report data.
 
-    Raises HTTPException 404 when the group is not the user's (or absent) and 400
-    when its two members are not the same agent (spec AC-15).
+    Raises HTTPException 404 when the group is not the user's (or absent), 400
+    when its two members are not the same agent (spec AC-15), and 409 when either
+    member has not finished successfully (a comparison needs both datasets).
     """
     from bisheng.evaluation.domain.repositories.evaluation_repository import EvaluationRepository
 
@@ -874,6 +930,7 @@ def build_compare_report(group_id: str, user_id: int) -> dict[str, Any]:
     v1, v2 = evaluations
     if str(v1.unique_id) != str(v2.unique_id):
         raise HTTPException(status_code=400, detail="compare group agents mismatch")
+    _ensure_group_ready(evaluations)
 
     side1, side2 = load_compare_side(v1), load_compare_side(v2)
     model_names = _collect_model_names([side1.get("flow_data"), side2.get("flow_data")])
@@ -883,8 +940,9 @@ def build_compare_report(group_id: str, user_id: int) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# F090: 两版对比导出（xlsx）— reuses F066's openpyxl sheet/cell approach and N/A
-# convention; the two-version layout is this feature's own (design 决策 7). The
+# F090: 两版对比导出（页面用 PDF / Word，xlsx / HTML 保留 API 兼容）— reuses F066's
+# openpyxl sheet/cell approach and N/A convention; the two-version layout is this
+# feature's own (design 决策 7). The
 # workbook is generated from the same report data as the page, so it is always
 # full (all six metrics per question) — never a function of a selected metric.
 # ---------------------------------------------------------------------------
@@ -906,6 +964,12 @@ _METRIC_UNITS = {key: unit for key, _label, unit, _hib in METRIC_DEFS}
 
 def _version_label(meta: dict[str, Any]) -> str:
     return meta.get("version_name") or (f"v{meta.get('version')}" if meta.get("version") is not None else "v?")
+
+
+def _fmt_failed_count(evaluation: dict[str, Any]) -> str:
+    """Failure count for the export cards; N/A when the CSV records no statuses."""
+    failed = evaluation.get("failed_count")
+    return _NA if not _is_number(failed) else str(int(failed))
 
 
 def _export_cell(key: str, value: Any) -> str:
@@ -1246,7 +1310,7 @@ def build_export_html(data: dict[str, Any]) -> str:
             '<div class="version-card">'
             f'<div class="version-name">{_esc(label)}</div>'
             f'<div class="small">题目数 {evaluation.get("question_count") or 0} · 成功率 {rate} · '
-            f"失败 {evaluation.get('failed_count') or 0}</div>"
+            f"失败 {_fmt_failed_count(evaluation)}</div>"
             f"<div>模型：{_esc(models)}</div>"
             f"<div>提示词节点：{_esc(prompt_nodes)}</div>"
             "</div>"
@@ -1484,7 +1548,7 @@ def build_export_docx(data: dict[str, Any]) -> bytes:
                 rate = _NA if not _is_number(success_rate) else f"{float(success_rate) * 100:.0f}%"
                 values.append(
                     f"题目数 {evaluation.get('question_count') or 0} · 成功率 {rate} · "
-                    f"失败 {evaluation.get('failed_count') or 0}"
+                    f"失败 {_fmt_failed_count(evaluation)}"
                 )
         else:
             values = [

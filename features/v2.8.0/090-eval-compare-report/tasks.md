@@ -2,7 +2,7 @@
 
 **关联**: [spec.md](./spec.md) · [design.md](./design.md)
 **版本**: v2.8.0
-**最后更新**: 2026-10-16
+**最后更新**: 2026-10-20
 
 ## 状态
 
@@ -11,7 +11,7 @@
 | spec | ✅ 已评审 |
 | design | ✅ 已评审 |
 | tasks | ✅ 已拆解 |
-| 实现 | ✅ T01–T18 完成：后端 124 passed；platform lint 基线不变 / typecheck 全绿；本地真实环境两接口已跑通（报告 JSON + 导出 xlsx） |
+| 实现 | ✅ T01–T18 完成：后端 124 passed；platform lint 基线不变 / typecheck 全绿；本地真实环境两接口已跑通（报告 JSON + 导出）。2026-10-20 审计修复 4 项（见实际偏差记录），后端 19 passed（本文件） |
 
 ## 开发模式
 
@@ -173,6 +173,13 @@
 - T17（本地验证后按用户要求增强，纯 F090）：`build_analysis` 由一句话扩为四段——结论依据（优先级链/决定指标/容差）、6 项指标逐项方向、数据完整性（逐题点名 N/A 原因：执行失败附原因 / 判分不完整缺哪几项 / 单侧缺失）、跨题提示（指标由不同题目聚合时告警）；前端分析文本加 `whitespace-pre-line`。仍为模板拼句、不调大模型。
 - T17 补充（本地真实数据发现）：当某指标的 v0/v1 聚合值来自**完全不同的题目**（两侧题目集合无交集）时，结论引擎直接判 `unable`——即使 token/延迟等低优先级指标有差异，也不允许据此定输赢；分析文案点名不可比的指标并说明「不同题目、不可直接比较」，跨题提示保留。实现：`_disjoint_metric_keys` + `decide_conclusion(..., unusable_metrics)`；三语 `reportConclusionUnable` 文案扩展为「容差内或数据不可比」。
 - **T14/T17 导出形态调整（2026-10-19，用户要求）**：导出应是可直接转发的**完整报告**；普通用户只需要 **PDF 与 Word(.docx)**，Excel 不再作为面向用户的导出形态。实现：`build_export_html`（自包含 HTML：内联 CSS + SVG 图表）、`build_export_pdf`（项目既有 Playwright/Chromium，A4）、`build_export_docx`（python-docx + matplotlib 图表）；`EXPORT_CONTENT_TYPES` 支持 `xlsx|html|pdf|docx`，接口默认仍 `xlsx` 以兼容旧调用；前端导出下拉只展示 PDF / Word。**未新增 Python 依赖**（playwright / python-docx / matplotlib 均已在 pyproject）。PDF 运行前提：`playwright install chromium` + 系统库；本机 WSL 缺 `libnspr4/libnss3/libasound2`，已非 root 解包到 `.local-pw-libs/`（gitignore）并在 API 启动时注入 `LD_LIBRARY_PATH`，部署镜像需同样具备。**命名优化（同日）**：下载文件名由 `evaluation_compare_<groupId>` 改为「智能体名 + 评测报告 + 版本对比」，如 `流水分析智能体评测报告_v2-json-extraction_vs_v3.pdf`；非法字符替换为 `_`、截断 120 字符；前端下拉项文案统一为「PDF 文档（.pdf）」「Word 文档（.docx）」，仅 PDF/Word 两项。**分析去重（同日，用户要求）**：对比分析不再逐项重复六个指标的数值/变化量（下方指标卡已展示），改为「一行方向汇总（各版本更优几项、持平几项、缺数据/不可比几项）+ 一行参与结论判定说明」；`结论依据` 仍保留决定指标的数值与容差，`数据完整性`/`跨题提示` 不变。导出 PDF/Word 的分析文本同步精简，指标表仍完整保留。
+
+- **审计修复（2026-10-20，用户拍板）**：
+  1. **历史 CSV 状态统计**：`_evaluation_meta` 改用 `compute_success_rate`，无任何 `exec_status` 记录时 `success_count` / `failed_count` 同步为 `null`（前端与 HTML/DOCX 导出显示 N/A），不再由 `summarize_performance` 的 0 默认值伪造成 0% / 全部失败。
+  2. **失败题指标**：`_side_entry` 对 `exec_status == failed` 的六项指标统一置 N/A；`build_report_data` 先用 `_successful_rows` 过滤再汇总，失败运行的耗时 / Token 不再进入均值（AC-10）。逐题明细仍保留失败行与原因（配对用全量行）。
+  3. **两版就绪门槛（Option B）**：新增 `_ensure_group_ready`，任一版非 `success` 时返回 409 `{code: "compare_not_ready", reason: "running"|"failed", evaluation_id, version}`；前端列表仅在相邻两条均 `success` 时启用「对比」，报告页请求改 `silent` 并按 reason 展示三语文案（`reportNotReadyRunning` / `reportNotReadyFailed`）。原 spec 边界「单侧展示」按用户口径改为「两版都有数据才出报告」。
+  4. **文档同步**：spec AC-14 / 范围边界 / 边界情况、design 决策 7 / §4.1–§4.3 / 坑 3·14·15 / §7–§8 与导出接口 `format` 说明同步为 PDF / Word（xlsx / HTML 保留 API 兼容）。
+  5. **卡死评测自愈（2026-10-21 本地故障复盘，用户要求）**：评测 98/99 因 09:48 共享 Redis/MySQL 同时抖动——Redis 断开导致第 1 题失败，随后写 `failed` 状态时 MySQL 也不可用，状态永久停在 `running`；且 FastAPI BackgroundTask 串行，98 抛异常后 99 根本没启动。修复：`add_evaluation_task` 在 Redis 进度键上维护 **30 分钟租约**（开跑即写、每题续期）；新增 `sweep_stale_running_evaluations`，在 API 启动 + 每 10 分钟巡检，把「`update_time` 超 30 分钟**且租约已消失**」的 running 评测置 failed（`STALE_RUNNING_DESCRIPTION` 提示重新发起），租约检查时 Redis 不可用则不改任何行。单测覆盖：只扫孤儿、长任务有租约不误杀、恰好卡在阈值不扫、Redis 不可用不动数据、仓储按状态/时间/删除标记筛选。
 
 ## 备注：分支
 

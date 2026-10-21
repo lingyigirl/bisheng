@@ -313,6 +313,20 @@ def test_pick_qa_ignores_next_turn():
     assert answer is None
 
 
+def test_pick_qa_ignores_next_turn_inside_answer_slack():
+    rows = [
+        _msg("question", "本问", 1000),
+        _msg("answer", "本轮答案", 1990),
+        # A short next run finishing within the 60s slack must not overwrite
+        # this run's answer.
+        _msg("question", "下一问", 2040),
+        _msg("answer", "下一轮答案", 2050),
+    ]
+    question, answer = _pick_qa(rows, 1000, 2000)
+    assert question["message"] == "本问"
+    assert answer["message"] == "本轮答案"
+
+
 def test_passes_feedback_modes():
     assert _passes_feedback(0, "all")
     assert _passes_feedback(2, "all")
@@ -394,3 +408,16 @@ def test_export_query_allows_at_limit(monkeypatch):
     )
     query = AgentTransactionExportQuery(start_time=1000, end_time=2000, limit=2)
     assert len(_query_export_transactions(query, tenant_id=1)) == 2
+
+
+def test_export_query_rejects_over_limit_when_extra_hit_unmappable(monkeypatch):
+    unmappable = _export_hit(2)
+    unmappable["_source"]["event_data"].pop("application_process_chat_id")
+    monkeypatch.setattr(
+        service_module,
+        "get_es_connection_sync",
+        lambda: _FakeES([_export_hit(0), _export_hit(1), unmappable]),
+    )
+    query = AgentTransactionExportQuery(start_time=1000, end_time=2000, limit=2)
+    with pytest.raises(HTTPException):
+        _query_export_transactions(query, tenant_id=1)

@@ -158,8 +158,9 @@ export type CompareReportEvaluation = {
     result_score: Evaluation["result_score"] | null;
     description: string;
     question_count: number;
-    success_count: number;
-    failed_count: number;
+    /** null for a legacy result CSV that records no execution statuses (N/A) */
+    success_count: number | null;
+    failed_count: number | null;
     success_rate: number | null;
 };
 
@@ -182,10 +183,17 @@ export type CompareReportResp = {
 
 /**
  * 可视化对比报告数据（两版模型/提示词对比 + 结论 + 6 指标 + 逐题全指标）
+ * silent：两版未跑完时后端返回 409 + detail，页面要自己区分"运行中/失败"并给出文案。
  * @param groupId 对比组 id
  */
 export const getEvaluationCompareReportApi = async (groupId: string): Promise<CompareReportResp> => {
-    return await axios.get(`/api/v1/evaluation/compare/${groupId}/report`);
+    // `silent` is read by the request interceptor but is not part of the axios
+    // config type; declare both keys so the object stays assignable, no `any`.
+    const config = { silent: true, responseType: "json" } as {
+        silent: boolean;
+        responseType: "json";
+    };
+    return await axios.get(`/api/v1/evaluation/compare/${groupId}/report`, config);
 };
 
 export type CompareReportExportFormat = "pdf" | "docx" | "xlsx" | "html";

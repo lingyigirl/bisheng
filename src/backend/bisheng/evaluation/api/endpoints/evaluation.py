@@ -133,10 +133,13 @@ def get_evaluation_compare_report(*, group_id: str, login_user: UserPayload = De
 def export_evaluation_compare_report(
     *,
     group_id: str,
-    format: str = Query(default="xlsx", description="Export format: xlsx | html | pdf"),
+    format: str = Query(default="xlsx", description="Export format: pdf | docx | xlsx | html"),
     login_user: UserPayload = Depends(UserPayload.get_login_user),
 ):
-    """F090: 生成两版对比报告（xlsx / 完整 HTML / PDF）并返回预签名下载链接。"""
+    """F090: 生成两版对比报告（PDF / Word / xlsx / 完整 HTML）并返回预签名下载链接。
+
+    页面只暴露 PDF / Word；xlsx / html 保留为 API 兼容能力。
+    """
     if format not in EXPORT_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="unsupported export format")
     return resp_200(build_compare_export(group_id, login_user.user_id, format))

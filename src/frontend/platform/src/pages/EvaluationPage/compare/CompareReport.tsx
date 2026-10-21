@@ -41,6 +41,23 @@ const DIFF_TOP_N = 10;
 
 type Verdict = "better" | "worse" | "same" | "na";
 
+/** Why the report is unavailable: one version is still running / failed, or another error. */
+type BlockReason = "running" | "failed" | "other";
+
+type CompareReportError = {
+    response?: { data?: { detail?: { code?: string; reason?: string } } };
+};
+
+// The report request is silent so the 409 detail can be read here; any other
+// failure is re-thrown for the global error handler.
+function parseBlockReason(error: unknown): BlockReason {
+    const detail = (error as CompareReportError)?.response?.data?.detail;
+    if (detail?.code === "compare_not_ready") {
+        return detail.reason === "running" ? "running" : "failed";
+    }
+    return "other";
+}
+
 function fmtValue(value: number | null, unit: string): string {
     if (value === null || value === undefined) return "N/A";
     return unit === "%" ? `${(value * 100).toFixed(2)}%` : `${value}`;
@@ -102,16 +119,23 @@ export default function CompareReport() {
     const [exporting, setExporting] = useState(false);
     const [metricKey, setMetricKey] = useState<string>("precision");
     const [showAll, setShowAll] = useState(false);
+    const [blocked, setBlocked] = useState<BlockReason | null>(null);
 
     useEffect(() => {
         if (!groupId) return;
         setLoading(true);
         setData(null);
         setShowAll(false);
+        setBlocked(null);
         captureAndAlertRequestErrorHoc(
             getEvaluationCompareReportApi(groupId)
                 .then(setData)
-                .catch(() => setData(null))
+                .catch((error) => {
+                    const reason = parseBlockReason(error);
+                    setData(null);
+                    setBlocked(reason);
+                    if (reason === "other") throw error; // let the global handler toast it
+                })
         ).finally(() => setLoading(false));
     }, [groupId]);
 
@@ -219,7 +243,11 @@ export default function CompareReport() {
 
             {!loading && !data && (
                 <div className="rounded-md border border-gray-200 p-6 text-sm text-gray-500 dark:border-zinc-700">
-                    {t("evaluation.reportNotReady")}
+                    {blocked === "running"
+                        ? t("evaluation.reportNotReadyRunning")
+                        : blocked === "failed"
+                          ? t("evaluation.reportNotReadyFailed")
+                          : t("evaluation.reportNotReady")}
                 </div>
             )}
 
@@ -335,7 +363,7 @@ export default function CompareReport() {
                                         {t("evaluation.reportStats", {
                                             count: ev.question_count,
                                             rate: ev.success_rate === null ? "N/A" : `${(ev.success_rate * 100).toFixed(0)}%`,
-                                            failed: ev.failed_count,
+                                            failed: ev.failed_count === null ? "N/A" : ev.failed_count,
                                         })}
                                     </span>
                                 ))}

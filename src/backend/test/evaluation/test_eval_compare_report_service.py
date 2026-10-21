@@ -210,6 +210,41 @@ class TestBuildReportData:
         assert failed["failed"] is True
         assert "boom" in (failed["fail_reason"] or "")
 
+    def test_legacy_csv_without_status_reports_na_counts(self):
+        # A CSV predating F066 has no exec_status at all; unknown is not "0%".
+        rows = [
+            _row("q1", precision=0.5, f1=0.5, recall=0.5, duration=1000, status=None),
+            _row("q2", precision=0.5, f1=0.5, recall=0.5, duration=1000, status=None),
+        ]
+        data = report.build_report_data(_side(1, "v1", rows), _side(2, "v2", rows))
+        meta = data["evaluations"][0]
+        assert meta["question_count"] == 2
+        assert meta["success_count"] is None
+        assert meta["failed_count"] is None
+        assert meta["success_rate"] is None
+
+    def test_failed_question_metrics_are_masked_and_excluded_from_aggregates(self):
+        rows1 = [
+            _row("q1", precision=0.5, f1=0.5, recall=0.5, duration=1000, in_tok=10, out_tok=10),
+            _row("q2", status="failed", answer="[执行失败] boom", duration=99999, in_tok=5000, out_tok=5000),
+        ]
+        rows2 = [
+            _row("q1", precision=0.5, f1=0.5, recall=0.5, duration=2000, in_tok=20, out_tok=20),
+            _row("q2", status="failed", answer="[执行失败] boom", duration=99999, in_tok=5000, out_tok=5000),
+        ]
+        data = report.build_report_data(_side(1, "v1", rows1), _side(2, "v2", rows2))
+        failed = next(e for e in data["per_question"] if e["question"] == "q2")
+        for side_key in ("v1", "v2"):
+            for key in ("precision", "f1", "recall", "hallucination", "token", "latency"):
+                assert failed[side_key][key] is None
+        latency = next(m for m in data["metrics"] if m["key"] == "latency")
+        token = next(m for m in data["metrics"] if m["key"] == "token")
+        # the 99.999s failed run must not inflate either aggregate
+        assert latency["v1"] == 1000
+        assert latency["v2"] == 2000
+        assert token["v1"] == 20
+        assert token["v2"] == 40
+
     def test_object_bar_includes_app_and_dataset(self):
         data = report.build_report_data(
             _side(1, "v1", _ROWS_V1, flow_data=_flow(model_id=5)),
@@ -229,14 +264,14 @@ class TestBuildReportData:
 
 
 class TestBuildCompareReportAccess:
-    def _eval(self, *, id, version, unique_id):
+    def _eval(self, *, id, version, unique_id, status=3):
         return SimpleNamespace(
             id=id,
             version=version,
             unique_id=unique_id,
             result_file_path="p",
             file_name="ds.csv",
-            status=3,
+            status=status,
             result_score=None,
             description="",
         )
@@ -259,6 +294,29 @@ class TestBuildCompareReportAccess:
         with pytest.raises(HTTPException) as exc:
             report.build_compare_report("g1", 1)
         assert exc.value.status_code == 400
+
+    @pytest.mark.parametrize("status,reason", [(1, "running"), (2, "failed")])
+    def test_unfinished_group_is_409_with_structured_detail(self, monkeypatch, status, reason):
+        # A comparison needs both datasets; one unfinished side blocks the report
+        # with a machine-readable reason so the page can name the cause.
+        evals = [
+            self._eval(id=1, version=1, unique_id="app"),
+            self._eval(id=2, version=2, unique_id="app", status=status),
+        ]
+        monkeypatch.setattr(
+            "bisheng.evaluation.domain.repositories.evaluation_repository.EvaluationRepository.get_compare_group",
+            classmethod(lambda cls, gid, uid: evals),
+        )
+        monkeypatch.setattr(report, "load_compare_side", lambda e: pytest.fail("must not load an unfinished side"))
+        with pytest.raises(HTTPException) as exc:
+            report.build_compare_report("g1", 1)
+        assert exc.value.status_code == 409
+        assert exc.value.detail == {
+            "code": "compare_not_ready",
+            "reason": reason,
+            "evaluation_id": 2,
+            "version": 2,
+        }
 
     def test_orders_members_by_version_and_sets_group_id(self, monkeypatch):
         # repository returns the newer version first; the report must order v1=old, v2=new

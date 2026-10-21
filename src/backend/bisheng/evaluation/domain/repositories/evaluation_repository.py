@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import and_, func
 from sqlmodel import select
 
@@ -42,9 +44,7 @@ class EvaluationRepository:
         """F053: the (up to two) evaluations of one compare group, scoped to its owner."""
         with get_sync_db_session() as session:
             statement = select(Evaluation).where(
-                and_(Evaluation.compare_group_id == group_id,
-                     Evaluation.is_delete == 0,
-                     Evaluation.user_id == user_id)
+                and_(Evaluation.compare_group_id == group_id, Evaluation.is_delete == 0, Evaluation.user_id == user_id)
             )
             return list(session.exec(statement).all())
 
@@ -65,9 +65,7 @@ class EvaluationRepository:
             ]
             if version:
                 conditions.append(Evaluation.version == int(version))
-            statement = (
-                select(Evaluation).where(and_(*conditions)).order_by(Evaluation.update_time.desc()).limit(1)
-            )
+            statement = select(Evaluation).where(and_(*conditions)).order_by(Evaluation.update_time.desc()).limit(1)
             return session.exec(statement).first()
 
     @classmethod
@@ -77,3 +75,36 @@ class EvaluationRepository:
             session.commit()
             session.refresh(evaluation)
             return evaluation
+
+    @classmethod
+    def get_running_updated_before(cls, cutoff: datetime) -> list[Evaluation]:
+        """F090 audit: ``running`` evaluations untouched since ``cutoff``.
+
+        Candidate rows for the stale sweep. The caller must also require the
+        per-run Redis lease to be gone before failing them — elapsed time alone
+        cannot distinguish a dead runner from a long legitimate run. Must run
+        under ``bypass_tenant_filter()``: the sweep is cross-tenant system
+        maintenance invoked without a request tenant context.
+        """
+        with get_sync_db_session() as session:
+            statement = select(Evaluation).where(
+                Evaluation.status == EvaluationTaskStatus.running.value,
+                Evaluation.is_delete == 0,
+                Evaluation.update_time < cutoff,
+            )
+            return list(session.exec(statement).all())
+
+    @classmethod
+    def fail_evaluations(cls, evaluation_ids: list[int], description: str) -> int:
+        """Mark the given evaluations failed with a shared reason (stale sweep)."""
+        if not evaluation_ids:
+            return 0
+        with get_sync_db_session() as session:
+            statement = select(Evaluation).where(Evaluation.id.in_(evaluation_ids))
+            rows = list(session.exec(statement).all())
+            for evaluation in rows:
+                evaluation.status = EvaluationTaskStatus.failed.value
+                evaluation.description = description
+                session.add(evaluation)
+            session.commit()
+            return len(rows)

@@ -74,6 +74,7 @@
 1. **问题**：在 `[start - 300s, end]` 内取**最新**一条 `question`；若没有，回退到 `end` 之前最近的一条 `question`。
    - 问题一定先于答案写入，因此**不接受 `end` 之后的问题**，避免把下一轮问题配给本轮答案。
 2. **答案**：在 `[start, end + 60s]` 内取**最新**一条答案类记录。
+   - 若窗口内出现 `end` 之后的 `question`（下一轮已开始），只接受该问题之前的答案，避免短流程下一轮答案落进 slack 被误配。
    - `stream` 分片不落库（`ChatHistory.add_message` 只保存 `type != 'stream'`），所以每条答案记录都是完整文本。
    - 工作流多个输出节点会产生多条答案记录，取最后一条作为最终答案（与评测执行侧"取输出事件"的口径一致）。
 3. 问题或答案缺失 → 跳过该运行。
@@ -195,7 +196,7 @@ Header：`Content-Disposition: attachment; filename="agent_finetune_<start>_<end
 ## 11. 风险与坑
 
 1. **时区**：ES `start_time/end_time` 是 epoch 秒；`chatmessage.create_time` 是数据库本地时间的 naive datetime。配对统一用进程本地时间 `datetime.timestamp()` / `fromtimestamp()`；要求应用进程 TZ 与数据库一致（部署默认如此）。
-2. **下一轮误配**：问题严格限制在 `end` 之前；答案只给 60 秒后向 slack，避免把下一轮答案算进来。
+2. **下一轮误配**：问题严格限制在 `end` 之前；答案除 60 秒后向 slack 外，还会在下一轮问题出现后截止，避免把下一轮答案算进来。
 3. **工作流多输出节点**：取时间窗内最后一条答案；若业务要求拼接所有输出，可在 `build_finetune_samples` 扩展（当前与评测口径一致）。
 4. **超长会话**：`chatmessage` 查询按全局时间窗 + `IN` 分块（500），避免一次拉取整段会话或触发占位符上限。
 5. **ES collapse 计数**：`size = limit + 1` 用返回条数判断超限，不依赖 `hits.total`（collapse 下 total 语义易误解）。

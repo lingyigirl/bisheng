@@ -144,6 +144,13 @@ export default function EvaluationPage() {
                     const isGroupStart =
                       el.compare_group_id && (!prev || prev.compare_group_id !== el.compare_group_id);
                     const nextRow = isGroupStart ? datalist[idx + 1] : null;
+                    // A comparison needs two completed datasets; the report endpoint
+                    // rejects unfinished groups (409), so don't offer the entry.
+                    // nextRow may be missing only because the group straddles a page
+                    // boundary — in that case let the report page's 409 speak.
+                    const groupReady =
+                      el.status === EvaluationStatusEnum.success &&
+                      (!nextRow || nextRow.status === EvaluationStatusEnum.success);
                     return (
                     <Fragment key={el.id}>
                       {isGroupStart && (
@@ -155,13 +162,21 @@ export default function EvaluationPage() {
                                 {" vs "}
                                 {t("evaluation.compareVersion")} {nextRow?.version}
                               </span>
-                              <Button
-                                variant="outline"
-                                className="h-7 px-3 text-xs"
-                                onClick={() => navigate(`/evaluation/compare/${el.compare_group_id}`)}
-                              >
-                                {t("evaluation.compareButton")}
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                {!groupReady && (
+                                  <span className="text-xs text-gray-400">
+                                    {t("evaluation.compareNotReady")}
+                                  </span>
+                                )}
+                                <Button
+                                  variant="outline"
+                                  className="h-7 px-3 text-xs"
+                                  disabled={!groupReady}
+                                  onClick={() => navigate(`/evaluation/compare/${el.compare_group_id}`)}
+                                >
+                                  {t("evaluation.compareButton")}
+                                </Button>
+                              </div>
                             </div>
                           </TableCell>
                         </TableRow>

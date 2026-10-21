@@ -310,6 +310,16 @@ def _pick_qa(rows: list[Any], start: float, end: float) -> tuple[Any | None, Any
     # A question always precedes its answer, so never accept one after the run
     # end — that would pair the next turn's prompt with this run's answer.
     answer_end = end + _EXPORT_ANSWER_SLACK_SECONDS
+    # Answers inside the +slack window still belong to the next turn when that
+    # turn's prompt has already been persisted: a short next run can finish
+    # within 60s, so an answer after the next prompt must not be picked here.
+    next_question_ts = None
+    for row in rows:
+        if (_get(row, "category") or "").lower() != "question":
+            continue
+        ts = _row_epoch(row)
+        if ts is not None and ts > end and (next_question_ts is None or ts < next_question_ts):
+            next_question_ts = ts
     question = answer = fallback_question = None
     for row in rows:
         ts = _row_epoch(row)
@@ -322,7 +332,11 @@ def _pick_qa(rows: list[Any], start: float, end: float) -> tuple[Any | None, Any
             if question_start <= ts <= end and (question is None or ts >= _row_epoch(question)):
                 question = row
         elif category in _EXPORT_ANSWER_CATEGORY_SET:
-            if start <= ts <= answer_end and (answer is None or ts >= _row_epoch(answer)):
+            if (
+                start <= ts <= answer_end
+                and (next_question_ts is None or ts < next_question_ts)
+                and (answer is None or ts >= _row_epoch(answer))
+            ):
                 answer = row
     return question or fallback_question, answer
 
@@ -417,13 +431,14 @@ def _query_export_transactions(query: AgentTransactionExportQuery, tenant_id: in
         },
     )
     hits = response.get("hits", {}).get("hits", [])
-    traces = [trace for hit in hits if (trace := _map_export_trace(hit))]
-    if len(traces) > query.limit:
+    # Count raw hits: an unmappable extra hit (missing chat_id) must not hide
+    # the fact that more runs matched than ``limit``.
+    if len(hits) > query.limit:
         raise HTTPException(
             status_code=400,
             detail=f"export exceeds {query.limit} runs; narrow the time range",
         )
-    return traces
+    return [trace for hit in hits if (trace := _map_export_trace(hit))]
 
 
 async def _check_log_permission(login_user: UserPayload) -> None:

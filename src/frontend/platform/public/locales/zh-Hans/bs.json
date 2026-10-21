@@ -851,6 +851,8 @@
     "reportExportHtml": "HTML 完整报告（网页查看）",
     "reportExportXlsx": "Excel 数据表",
     "reportNotReady": "报告尚未生成，请确认两个版本的评测均已完成",
+    "reportNotReadyRunning": "对比报告需要两版评测都执行完成，当前仍有版本在运行中，请稍后再试",
+    "reportNotReadyFailed": "对比报告需要两版评测都执行成功，当前有版本执行失败，请重跑该版本后再对比",
     "reportApp": "应用",
     "reportDataset": "测试集",
     "reportChangeKind": "变更类型",

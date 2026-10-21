@@ -846,6 +846,8 @@
     "reportExportHtml": "HTML レポート（ブラウザで表示）",
     "reportExportXlsx": "Excel データ表",
     "reportNotReady": "レポートはまだ生成されていません。両バージョンの評価が完了しているか確認してください。",
+    "reportNotReadyRunning": "比較レポートには両バージョンの評価完了が必要です。実行中のバージョンがあります。しばらくしてから再度お試しください。",
+    "reportNotReadyFailed": "比較レポートには両バージョンの評価成功が必要です。失敗したバージョンがあります。再実行してから比較してください。",
     "reportApp": "アプリ",
     "reportDataset": "テストセット",
     "reportChangeKind": "変更内容",

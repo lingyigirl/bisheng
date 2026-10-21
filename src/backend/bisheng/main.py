@@ -1,5 +1,6 @@
+import asyncio
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -120,6 +121,29 @@ _EXCEPTION_HANDLERS = {
 }
 
 
+async def _evaluation_stale_sweep_loop() -> None:
+    """Periodically repair evaluations orphaned at "running" (F090 audit).
+
+    Startup alone is not enough: the incident that motivated this had the API
+    process stay up for hours with a dead in-process runner. The sweep is
+    lease-checked, so a long legitimate run (many questions) is never touched.
+    """
+    from bisheng.evaluation.domain.services.evaluation_service import (
+        STALE_RUNNING_SWEEP_INTERVAL_SECONDS,
+        sweep_stale_running_evaluations,
+    )
+
+    while True:
+        try:
+            swept = await asyncio.to_thread(sweep_stale_running_evaluations)
+            if swept:
+                logger.warning("marked {} orphaned evaluation(s) as failed", swept)
+        except Exception:
+            # Maintenance loop: one bad tick (DB/Redis outage) must not stop it.
+            logger.exception("stale evaluation sweep failed; retrying next tick")
+        await asyncio.sleep(STALE_RUNNING_SWEEP_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await initialize_app_context(config=settings)
@@ -166,9 +190,15 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("linsight default-model backfill failed; continuing startup")
     # LangfuseInstance.update()
-    yield
-    thread_pool.tear_down()
-    await close_app_context()
+    stale_sweep_task = asyncio.create_task(_evaluation_stale_sweep_loop())
+    try:
+        yield
+    finally:
+        stale_sweep_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await stale_sweep_task
+        thread_pool.tear_down()
+        await close_app_context()
 
 
 def _mount_local_storage(app: FastAPI) -> None:
