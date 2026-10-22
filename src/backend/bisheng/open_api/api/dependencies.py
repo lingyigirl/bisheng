@@ -39,6 +39,7 @@ from bisheng.core.context.tenant import (
     set_current_tenant_id,
     set_visible_tenant_ids,
 )
+from bisheng.open_api.domain.agent_scope import parse_allowed_apps
 from bisheng.open_api.domain.context import (
     OpenApiPrincipal,
     reset_open_api_principal,
@@ -233,6 +234,7 @@ async def _resolve_principal(
         scopes=tuple(credential.scopes or ()),
         expires_at=credential.expires_at,
         owner_payload=owner,
+        allowed_apps=parse_allowed_apps(credential.allowed_apps),
     )
 
 

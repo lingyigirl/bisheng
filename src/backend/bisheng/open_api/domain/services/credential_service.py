@@ -12,12 +12,16 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from datetime import datetime
 
+from cryptography.fernet import InvalidToken
 from loguru import logger
 
+from bisheng.common.errcode.open_api import OpenApiKeyNotRevealableError
 from bisheng.common.services.config_service import settings
+from bisheng.core.config.settings import decrypt_token, encrypt_token
 from bisheng.open_api.domain.models.api_credential import (
     KEY_SECRET_LENGTH,
     REVOKE_REASON_BATCH,
@@ -28,10 +32,12 @@ from bisheng.open_api.domain.models.api_credential import (
 from bisheng.open_api.domain.models.dao import ApiCredentialDao
 
 #: 缓存键前缀;键尾是明文摘要(不是明文本身)。
-CACHE_KEY_PREFIX = "oapi:cred:"
+#: v2 (2026-10-22): payload 新增 allowed_apps;旧条目缺少该字段会被当作"不限制",
+#: 因此升版前缀,避免部署后 ≤TTL 的窗口内出现权限放大。
+CACHE_KEY_PREFIX = "oapi:cred:v2:"
 
-#: 管理面允许被编辑的字段白名单(spec AC-13)。
-EDITABLE_FIELDS = frozenset({"name", "scopes", "expires_at"})
+#: 管理面允许被编辑的字段白名单(spec AC-13 / AC-43)。
+EDITABLE_FIELDS = frozenset({"name", "scopes", "expires_at", "allowed_apps"})
 
 
 def hash_token(plaintext: str) -> str:
@@ -77,6 +83,8 @@ def to_cache_payload(row: ApiCredential) -> dict:
         "last4": row.last4,
         "token_hash": row.token_hash,
         "scopes": list(row.scopes or []),
+        # Keep None vs [] intact: None = unrestricted, [] = deny all agents.
+        "allowed_apps": list(row.allowed_apps) if row.allowed_apps is not None else None,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
         "revoke_reason": row.revoke_reason,
@@ -98,6 +106,8 @@ def from_cache_payload(payload: dict) -> ApiCredential:
         last4=payload.get("last4", ""),
         token_hash=payload["token_hash"],
         scopes=payload.get("scopes") or [],
+        # Do NOT use `or None`: an explicit [] must survive the cache round-trip.
+        allowed_apps=payload.get("allowed_apps"),
         expires_at=_dt(payload.get("expires_at")),
         revoked_at=_dt(payload.get("revoked_at")),
         revoke_reason=payload.get("revoke_reason"),
@@ -151,13 +161,16 @@ async def issue_credential(
     service_account_id: int,
     name: str | None = None,
     scopes: list[str] | None = None,
+    allowed_apps: list[dict] | None = None,
     expires_at: datetime | None = None,
     created_by: int | None = None,
 ) -> tuple[ApiCredential, str]:
     """签发一把密钥,返回 `(行, 明文)`。
 
-    **调用方必须把明文放进"仅此一次"的签发响应里**,不得写入日志/审计/缓存。
+    明文同时写入不可逆摘要(校验用)与 Fernet 密文(管理员查看用)。调用方可以
+    在签发响应里返回明文,但不得把它写入日志/审计/缓存。
     到期语义:`expires_at=None` 表示不过期(对齐上游口径,签发表单给预设)。
+    `allowed_apps`: None = 不限制;[] = 全拒绝;非空 = 白名单。
     """
     plaintext = _generate_plaintext()
     row = ApiCredential(
@@ -167,7 +180,9 @@ async def issue_credential(
         key_prefix=SERVICE_ACCOUNT_KEY_PREFIX,
         last4=plaintext[-4:],
         token_hash=hash_token(plaintext),
+        token_ciphertext=encrypt_token(plaintext).decode(),
         scopes=list(scopes or []),
+        allowed_apps=list(allowed_apps) if allowed_apps is not None else None,
         expires_at=expires_at,
         created_by=created_by,
     )
@@ -175,8 +190,30 @@ async def issue_credential(
     return created, plaintext
 
 
+def reveal_credential(row: ApiCredential) -> str:
+    """Decrypt a key for the explicit admin reveal action (spec AC-44).
+
+    Raises 11823 when the row predates the reveal feature (no ciphertext) or the
+    ciphertext cannot be decrypted (secret rotated / corrupted). The decrypted
+    value is verified against the stored hash before it is returned, so a
+    mismatched ciphertext can never surface as a working key.
+    """
+    if not row.token_ciphertext:
+        raise OpenApiKeyNotRevealableError()
+    try:
+        plaintext = decrypt_token(row.token_ciphertext)
+    except (InvalidToken, TypeError, ValueError):
+        # Never log the ciphertext or the plaintext; the credential id is enough.
+        logger.opt(exception=True).warning("open_api: credential {} ciphertext cannot be decrypted", row.id)
+        raise OpenApiKeyNotRevealableError()
+    if not hmac.compare_digest(hash_token(plaintext), row.token_hash):
+        logger.error("open_api: credential {} ciphertext does not match its hash", row.id)
+        raise OpenApiKeyNotRevealableError()
+    return plaintext
+
+
 async def update_credential(credential_id: int, fields: dict, *, tenant_id: int) -> bool:
-    """编辑名称 / 权限位 / 有效期(spec AC-13:立即生效,无需重新签发)。
+    """编辑名称 / 权限位 / 智能体白名单 / 有效期(spec AC-13 / AC-43:立即生效,无需重新签发)。
 
     只接受白名单字段;生效靠"改库 + 清缓存",下一请求即按新值校验。
     """

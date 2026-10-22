@@ -3,6 +3,7 @@
 // resolve to the envelope `data` payload directly (see @/controllers/request).
 import axios from "@/controllers/request"
 import {
+    AssignableAgentPage,
     OpenApiBaseUrl,
     OpenApiScopePage,
     ResourceGrantItemInput,
@@ -15,6 +16,7 @@ import {
     ServiceAccountKeyIssue,
     ServiceAccountKeyIssued,
     ServiceAccountKeyPage,
+    ServiceAccountKeyRevealed,
     ServiceAccountKeyUpdate,
     ServiceAccountPage,
     ServiceAccountUpdate,
@@ -69,6 +71,17 @@ export async function revokeServiceAccountKeyApi(
     return await axios.post(`/api/v1/service-accounts/${accountId}/keys/${keyId}/revoke`)
 }
 
+/**
+ * Explicit admin reveal. Every call writes an audit row; the response must not
+ * be cached or persisted anywhere outside the dialog that shows it.
+ */
+export async function revealServiceAccountKeyApi(
+    accountId: number,
+    keyId: number,
+): Promise<ServiceAccountKeyRevealed> {
+    return await axios.post(`/api/v1/service-accounts/${accountId}/keys/${keyId}/reveal`)
+}
+
 export async function revokeAllServiceAccountKeysApi(
     accountId: number,
 ): Promise<{ account_id: number; revoked: number }> {
@@ -86,6 +99,11 @@ export async function listOpenApiScopesApi(): Promise<OpenApiScopePage> {
  */
 export async function listResourceGrantsApi(accountId: number): Promise<ResourceGrantPage> {
     return await axios.get(`/api/v1/service-accounts/${accountId}/resource-grants`)
+}
+
+/** Agents the account may be restricted to; the key dialog's picker source. */
+export async function listAssignableAgentsApi(accountId: number): Promise<AssignableAgentPage> {
+    return await axios.get(`/api/v1/service-accounts/${accountId}/assignable-agents`)
 }
 
 /**

@@ -139,6 +139,20 @@ function ResourceGrantDialog({ open, accountId, onClose, onGranted }: ResourceGr
         setSelected((prev) => (prev.includes(id) ? prev.filter((one) => one !== id) : [...prev, id]))
     }
 
+    // Select-all is scoped to the current search result (the picker loads at most
+    // PICKER_PAGE_SIZE items and has no load-more). Selections hidden by a later
+    // search are preserved: deselect-all only removes the currently visible ids.
+    const visibleIds = options.map((option) => option.id)
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.includes(id))
+    const handleToggleAll = () => {
+        if (!visibleIds.length) return
+        setSelected((prev) =>
+            allVisibleSelected
+                ? prev.filter((id) => !visibleIds.includes(id))
+                : [...prev, ...visibleIds.filter((id) => !prev.includes(id))],
+        )
+    }
+
     const handleConfirm = () => {
         if (!selected.length) {
             message({ title: t("prompt"), description: t("grants.selectRequired"), variant: "warning" })
@@ -227,26 +241,54 @@ function ResourceGrantDialog({ open, accountId, onClose, onGranted }: ResourceGr
                                 if (e.key === "Enter") void search(resourceType, keyword)
                             }}
                         />
-                        <div className="max-h-[260px] min-h-[120px] overflow-y-auto rounded-md border p-2">
-                            {loading ? (
-                                <p className="p-3 text-center text-sm text-muted-foreground">{t("loading")}</p>
-                            ) : options.length === 0 ? (
-                                <p className="p-3 text-center text-sm text-muted-foreground">{t("grants.dialog.empty")}</p>
-                            ) : (
-                                options.map((option) => (
-                                    <label
-                                        key={option.id}
-                                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
-                                    >
-                                        <Checkbox
-                                            checked={selected.includes(option.id)}
-                                            onCheckedChange={() => handleToggle(option.id)}
-                                        />
-                                        <span className="min-w-0 flex-1 truncate">{option.name}</span>
-                                        <code className="shrink-0 text-xs text-muted-foreground">{option.id}</code>
-                                    </label>
-                                ))
-                            )}
+                        <div className="rounded-md border">
+                            <div className="flex items-center gap-2 border-b px-2 py-1.5">
+                                <Checkbox
+                                    checked={allVisibleSelected}
+                                    disabled={loading || options.length === 0}
+                                    aria-label={
+                                        allVisibleSelected
+                                            ? t("grants.dialog.deselectAll")
+                                            : t("grants.dialog.selectAll")
+                                    }
+                                    onCheckedChange={handleToggleAll}
+                                />
+                                <span className="text-sm">
+                                    {allVisibleSelected
+                                        ? t("grants.dialog.deselectAll")
+                                        : t("grants.dialog.selectAll")}
+                                </span>
+                                {options.length >= PICKER_PAGE_SIZE && (
+                                    <span className="ml-auto text-xs text-muted-foreground">
+                                        {t("grants.dialog.selectAllHint")}
+                                    </span>
+                                )}
+                            </div>
+                            <div className="max-h-[260px] min-h-[120px] overflow-y-auto p-2">
+                                {loading ? (
+                                    <p className="p-3 text-center text-sm text-muted-foreground">{t("loading")}</p>
+                                ) : options.length === 0 ? (
+                                    <p className="p-3 text-center text-sm text-muted-foreground">
+                                        {t("grants.dialog.empty")}
+                                    </p>
+                                ) : (
+                                    options.map((option) => (
+                                        <label
+                                            key={option.id}
+                                            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
+                                        >
+                                            <Checkbox
+                                                checked={selected.includes(option.id)}
+                                                onCheckedChange={() => handleToggle(option.id)}
+                                            />
+                                            <span className="min-w-0 flex-1 truncate">{option.name}</span>
+                                            <code className="shrink-0 text-xs text-muted-foreground">
+                                                {option.id}
+                                            </code>
+                                        </label>
+                                    ))
+                                )}
+                            </div>
                         </div>
                         <p className="text-xs text-muted-foreground">
                             {t("grants.dialog.selected", { count: selected.length })}

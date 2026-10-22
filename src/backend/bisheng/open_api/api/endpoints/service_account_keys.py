@@ -1,8 +1,12 @@
 """F076 T-21:密钥管理 API + 可签发权限位目录(design §4.2 / §6.1)。
 
-**明文只出现一次**:`POST /{account_id}/keys` 的响应里带 `plaintext`,此后任何
-接口/界面只回 `key_mask`(前缀 + 末八位填充 + 末四位)。库里只存 SHA-256 摘要
-(INV-23 条款 1),这一点在 T-05 已由单测锁死。
+**明文存储**:签发响应带 `plaintext`;列表/调用接口只回 `key_mask`。库内同时
+保存 SHA-256 摘要(校验)与 Fernet 密文(管理员显式查看),明文不进日志/审计/
+列表/缓存(INV-23 条款 1,2026-10-22 修订)。
+
+**每 Key 智能体白名单**:签发/编辑接受 `allowed_apps`;`NULL` = 不限制,
+`[]` = 全拒绝。写入期只校验"资源对账号可见"(11822),调用档位由运行期判定
+(INV-27,spec AC-42/AC-43)。
 
 **权限**:与 T-20 同款 —— 全局超管或当前租户管理员;跨租户一律 404/11809。
 
@@ -16,14 +20,16 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.open_api import (
     OpenApiAccountDisabledError,
+    OpenApiAgentNotAssignableError,
     OpenApiNotFoundError,
     OpenApiUnknownScopeError,
 )
@@ -37,7 +43,7 @@ from bisheng.open_api.domain.models.api_credential import (
 )
 from bisheng.open_api.domain.models.dao import ApiCredentialDao
 from bisheng.open_api.domain.scopes import ISSUABLE_OPEN_API_SCOPE_CODES, OPEN_API_SCOPES
-from bisheng.open_api.domain.services import call_audit_service
+from bisheng.open_api.domain.services import agent_scope_service, call_audit_service, identity_service
 from bisheng.open_api.domain.services import credential_service as cred_service
 from bisheng.open_api.domain.services import service_account_service as svc
 from bisheng.utils import get_request_ip
@@ -47,15 +53,28 @@ router = APIRouter(prefix="/service-accounts", tags=["OpenApiManagement"])
 scopes_router = APIRouter(prefix="/open-api", tags=["OpenApiManagement"])
 
 
+class AgentRef(BaseModel):
+    """One entry of the per-key agent allowlist (spec AC-42)."""
+
+    type: Literal["assistant", "workflow", "managed_agent"]
+    id: str = Field(min_length=1, max_length=64)
+
+
 class KeyIssueReq(BaseModel):
     name: str | None = Field(default=None, max_length=128, description="密钥名,便于轮换与对账")
     scopes: list[str] = Field(default_factory=list, description="权限位(取自目录端点)")
+    allowed_apps: list[AgentRef] | None = Field(
+        default=None,
+        description="智能体白名单;不传=不限制,[]=全拒绝,非空=只允许列表内对象",
+    )
     expires_at: datetime | None = Field(default=None, description="有效期;不传 = 不过期")
 
 
 class KeyUpdateReq(BaseModel):
     name: str | None = Field(default=None, max_length=128)
     scopes: list[str] | None = Field(default=None)
+    # Omitted = unchanged; explicit null = unrestricted; [] = deny all agents.
+    allowed_apps: list[AgentRef] | None = Field(default=None)
     expires_at: datetime | None = Field(default=None)
 
 
@@ -70,13 +89,35 @@ def _validate_scopes(scopes: list[str]) -> None:
 
 
 def _key_snapshot(row) -> dict:
-    """审计用快照:掩码 / 名称 / 权限位 / 有效期——**绝不含明文与 token_hash**。"""
+    """审计用快照:掩码 / 名称 / 权限位 / 白名单 / 有效期——**绝不含明文、密文与 token_hash**。"""
     return {
         "key_mask": row.key_mask,
         "name": row.name,
         "scopes": list(row.scopes or []),
+        "allowed_apps": list(row.allowed_apps) if row.allowed_apps is not None else None,
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
     }
+
+
+async def _validate_allowed_apps(account, allowed_apps: list[dict] | None, tenant_id: int, *, existing=None) -> None:
+    """Validate the write-time allowlist; see agent_scope_service for the rules.
+
+    ``existing`` is the current ``(type, id)`` set on PATCH: unchanged entries
+    are skipped so a revoked grant cannot make a rename fail forever.
+    """
+    # None = unrestricted; [] = deny all. Neither carries an entry to validate,
+    # so don't make a rename depend on the owner being loadable.
+    if not allowed_apps:
+        return
+    owner = await identity_service.load_owner_payload(
+        owner_user_id=account.resource_owner_user_id,
+        tenant_id=tenant_id,
+    )
+    if owner is None:
+        # Management-side 400, not 11805/401: platform treats every 401 as an
+        # expired session and would kick the admin out (design §5 pitfall 13).
+        raise OpenApiAgentNotAssignableError(exception="the service account identity is unavailable")
+    await agent_scope_service.assert_assignable(owner, allowed_apps, existing=existing)
 
 
 def _audit_key_action(
@@ -123,6 +164,8 @@ def _serialize_key(row, now: datetime) -> dict:
         "name": row.name,
         "key_mask": row.key_mask,
         "scopes": list(row.scopes or []),
+        "allowed_apps": list(row.allowed_apps) if row.allowed_apps is not None else None,
+        "revealable": bool(row.token_ciphertext),
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
         "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
@@ -157,28 +200,31 @@ async def issue_key(
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
     request: Request = None,  # FastAPI 按注解注入;默认值让测试可直接调用
 ):
-    """签发密钥——**明文仅在本响应出现一次**,调用方须当场保存。"""
+    """签发密钥。明文在本响应返回,管理员此后可经 reveal 动作再次查看。"""
     tenant_id = _acting_tenant(login_user)
     account = await _require_account(account_id, tenant_id)
     if not account.is_enabled:
         raise OpenApiAccountDisabledError()
     _validate_scopes(req.scopes)
+    allowed_apps = agent_scope_service.normalize_refs(req.allowed_apps)
+    await _validate_allowed_apps(account, allowed_apps, tenant_id)
 
     row, plaintext = await cred_service.issue_credential(
         tenant_id=tenant_id,
         service_account_id=account_id,
         name=req.name,
         scopes=req.scopes,
+        allowed_apps=allowed_apps,
         expires_at=req.expires_at,
         created_by=login_user.user_id,
     )
     logger.info(
-        "open_api: key issued account={} credential={} by user={} (plaintext shown once)",
+        "open_api: key issued account={} credential={} by user={}",
         account_id,
         row.id,
         login_user.user_id,
     )
-    # 审计只记掩码与元数据:明文与 token_hash 一律不得入审计(AC-09 / INV-23)。
+    # 审计只记掩码与元数据:明文、密文与 token_hash 一律不得入审计(AC-09 / INV-23)。
     _audit_key_action(
         login_user,
         tenant_id,
@@ -194,6 +240,7 @@ async def issue_key(
             "key_mask": row.key_mask,
             "plaintext": plaintext,
             "scopes": list(row.scopes or []),
+            "allowed_apps": list(row.allowed_apps) if row.allowed_apps is not None else None,
             "expires_at": row.expires_at.isoformat() if row.expires_at else None,
             "create_time": row.create_time.isoformat() if row.create_time else None,
         }
@@ -208,9 +255,9 @@ async def update_key(
     login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
     request: Request = None,
 ):
-    """改名称 / 权限位 / 有效期 —— 立即生效,无需重新签发(spec AC-13)。"""
+    """改名称 / 权限位 / 智能体白名单 / 有效期 —— 立即生效(spec AC-13 / AC-43)。"""
     tenant_id = _acting_tenant(login_user)
-    await _require_account(account_id, tenant_id)
+    account = await _require_account(account_id, tenant_id)
 
     fields = req.model_dump(exclude_unset=True)
     if "scopes" in fields and fields["scopes"] is not None:
@@ -219,6 +266,17 @@ async def update_key(
     row = await ApiCredentialDao.aget_by_id(key_id, tenant_id=tenant_id)
     if row is None or row.service_account_id != account_id:
         raise OpenApiNotFoundError()
+
+    if "allowed_apps" in fields:
+        fields["allowed_apps"] = agent_scope_service.normalize_refs(fields["allowed_apps"])
+        # Only newly added entries are validated: a revoked grant must not make
+        # a plain rename of an existing allowlist impossible.
+        await _validate_allowed_apps(
+            account,
+            fields["allowed_apps"],
+            tenant_id,
+            existing=agent_scope_service.existing_ref_keys(row.allowed_apps),
+        )
 
     if not fields:
         return resp_200(data=_serialize_key(row, datetime.now()))
@@ -240,6 +298,58 @@ async def update_key(
         after={key: after_full[key] for key in fields if key in after_full},
     )
     return resp_200(data=_serialize_key(refreshed, datetime.now()))
+
+
+@router.post("/{account_id}/keys/{key_id}/reveal")
+async def reveal_key(
+    account_id: int,
+    key_id: int,
+    response: Response = None,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,
+):
+    """管理员显式查看密钥明文(spec AC-44)。
+
+    存量密钥没有查看密文 → 400/11823,只能重新签发。响应禁止缓存;审计只记
+    掩码与标识,绝不含明文。已吊销/已过期的密钥也允许查看(吊销 ≠ 删除,
+    便于取证与对账)。
+    """
+    tenant_id = _acting_tenant(login_user)
+    await _require_account(account_id, tenant_id)
+    row = await ApiCredentialDao.aget_by_id(key_id, tenant_id=tenant_id)
+    if row is None or row.service_account_id != account_id:
+        raise OpenApiNotFoundError()
+
+    plaintext = cred_service.reveal_credential(row)
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    logger.info(
+        "open_api: key {} of account {} revealed by user {}",
+        key_id,
+        account_id,
+        login_user.user_id,
+    )
+    _audit_key_action(
+        login_user,
+        tenant_id,
+        request,
+        OpenApiAuditAction.API_KEY_REVEAL,
+        account_id,
+        key_id,
+        after={"revealed": True},
+        extra={"key_mask": row.key_mask},
+    )
+    return resp_200(
+        data={
+            "id": row.id,
+            "key_mask": row.key_mask,
+            "plaintext": plaintext,
+            "scopes": list(row.scopes or []),
+            "allowed_apps": list(row.allowed_apps) if row.allowed_apps is not None else None,
+            "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        }
+    )
 
 
 @router.post("/{account_id}/keys/revoke-all")

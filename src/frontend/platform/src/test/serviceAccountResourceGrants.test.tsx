@@ -7,7 +7,7 @@
  * lock it for both the agent and the app loaders.
  */
 import { ResourceGrantsTab } from "@/pages/SystemPage/components/ServiceAccount/ResourceGrantsTab"
-import { render, screen, waitFor } from "@/test/test-utils"
+import { fireEvent, render, screen, waitFor, within } from "@/test/test-utils"
 import { ServiceAccount } from "@/types/api/serviceAccount"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -137,5 +137,44 @@ describe("ResourceGrantsTab name lookup page size (F076)", () => {
 
         expect(await screen.findByText("7")).toBeTruthy()
         await waitFor(() => expect(listManagedAgentsMock).toHaveBeenCalledTimes(1))
+    })
+
+    it("selects all resources in the current search result", async () => {
+        listGrantsMock.mockResolvedValue({ data: [], total: 0 })
+        // knowledge_library loads document bases (type 0) and QA bases (type 1)
+        // in parallel; return two document bases and no QA bases so ids are unique.
+        readFileLibMock.mockImplementation(({ type }: { type?: number }) =>
+            Promise.resolve(
+                type === 0
+                    ? {
+                          data: [
+                              { id: "kb-1", name: "KB One" },
+                              { id: "kb-2", name: "KB Two" },
+                          ],
+                          page_size: 100,
+                          has_more: false,
+                          next_cursor: null,
+                      }
+                    : { data: [], page_size: 100, has_more: false, next_cursor: null },
+            ),
+        )
+
+        render(<ResourceGrantsTab account={account} onGrantsChanged={vi.fn()} />)
+        fireEvent.click(await screen.findByText("grants.add"))
+        const dialog = await screen.findByRole("dialog")
+        expect(await within(dialog).findByText("KB One")).toBeTruthy()
+
+        fireEvent.click(within(dialog).getByRole("checkbox", { name: "grants.dialog.selectAll" }))
+        await waitFor(() => {
+            const boxes = within(dialog).getAllByRole("checkbox").slice(1)
+            expect(boxes).toHaveLength(2)
+            expect(boxes.every((box) => box.getAttribute("data-state") === "checked")).toBe(true)
+        })
+
+        fireEvent.click(within(dialog).getByRole("checkbox", { name: "grants.dialog.deselectAll" }))
+        await waitFor(() => {
+            const boxes = within(dialog).getAllByRole("checkbox").slice(1)
+            expect(boxes.every((box) => box.getAttribute("data-state") === "unchecked")).toBe(true)
+        })
     })
 })

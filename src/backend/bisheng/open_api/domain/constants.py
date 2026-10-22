@@ -30,5 +30,7 @@ class OpenApiAuditAction(StrEnum):
     API_KEY_UPDATE = "open_api.api_key.update"
     API_KEY_REVOKE = "open_api.api_key.revoke"
     API_KEY_REVOKE_ALL = "open_api.api_key.revoke_all"
+    #: 管理员显式查看密钥明文(2026-10-22 增量)。只记掩码/账号/操作者,绝不含明文。
+    API_KEY_REVEAL = "open_api.api_key.reveal"
     #: 租户强制开关变更(AC-37 的"租户开关变更")。
     SETTINGS_UPDATE = "open_api.settings.update"

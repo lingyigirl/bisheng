@@ -17,6 +17,7 @@ from bisheng.common.errcode.managed_agent import ManagedAgentInvokePayloadInvali
 from bisheng.common.errcode.open_api import OpenApiKeyMissingError
 from bisheng.common.schemas.api import resp_200
 from bisheng.managed_agent.domain.services import invoke_service
+from bisheng.open_api.domain.agent_scope import assert_open_api_agent_allowed
 from bisheng.open_api.domain.context import get_open_api_principal
 from bisheng.open_api.domain.scopes import open_api_scope
 
@@ -45,6 +46,10 @@ async def invoke_managed_agent(request: Request, payload: dict = Body(...)):
     session_id = payload.get("session_id")
     if session_id is not None and not isinstance(session_id, str):
         raise ManagedAgentInvokePayloadInvalidError(msg="session_id must be a string")
+
+    # F076 增量(2026-10-22):每 Key 智能体白名单。未命中 → 404/11809,与资源
+    # 不可见不可区分(防枚举);不替代 invoke_service 内的 editor 档位校验。
+    assert_open_api_agent_allowed("managed_agent", str(agent_id))
 
     result = await invoke_service.invoke(
         principal.owner_payload,

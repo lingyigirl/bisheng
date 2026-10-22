@@ -87,15 +87,44 @@ export interface OpenApiScopePage {
     total: number
 }
 
+/** Agent object types a per-key allowlist may contain. */
+export type AgentType = "assistant" | "workflow" | "managed_agent"
+
+/** One entry of a key's agent allowlist (backend `allowed_apps`). */
+export interface AgentRef {
+    type: AgentType
+    id: string
+}
+
+/**
+ * The account's granted agents, used by the key dialog picker.
+ * `invocable` is advisory: false means the current grant level allows reading
+ * but not invoking (e.g. a viewer-level workflow).
+ */
+export interface AssignableAgent extends AgentRef {
+    name: string
+    level: ResourceGrantLevel | null
+    invocable: boolean
+}
+
+export interface AssignableAgentPage {
+    data: AssignableAgent[]
+    total: number
+}
+
 /** Derived by the backend at read time; `expires_at` wins only when not revoked. */
 export type ServiceAccountKeyStatus = "active" | "revoked" | "expired"
 
 export interface ServiceAccountKey {
     id: number
     name: string | null
-    /** Always `bs-sak-********XXXX` -- the plaintext is never retrievable again. */
+    /** Mask only (`bs-sak-********XXXX`); use the reveal endpoint for plaintext. */
     key_mask: string
     scopes: string[]
+    /** null = unrestricted; [] = no agent may be called. */
+    allowed_apps: AgentRef[] | null
+    /** False for keys issued before the reveal feature existed. */
+    revealable: boolean
     /** null = never expires. */
     expires_at: string | null
     revoked_at: string | null
@@ -112,21 +141,31 @@ export interface ServiceAccountKeyIssue {
     name?: string | null
     /** Must come from the scope catalog endpoint. */
     scopes: string[]
+    /** null/omitted = unrestricted; [] = no agent may be called. */
+    allowed_apps?: AgentRef[] | null
     /** Naive local ISO string; omit or null = never expires. */
     expires_at?: string | null
 }
 
-/**
- * Issue response. `plaintext` exists only here: it is never stored, logged or
- * returned by any other endpoint, so the console must reveal it once and drop it.
- */
+/** Issue response. `plaintext` is also retrievable later via the reveal action. */
 export interface ServiceAccountKeyIssued {
     id: number
     key_mask: string
     plaintext: string
     scopes: string[]
+    allowed_apps: AgentRef[] | null
     expires_at: string | null
     create_time: string | null
+}
+
+/** Explicit admin reveal; the backend writes an audit row for every call. */
+export interface ServiceAccountKeyRevealed {
+    id: number
+    key_mask: string
+    plaintext: string
+    scopes: string[]
+    allowed_apps: AgentRef[] | null
+    expires_at: string | null
 }
 
 /** PATCH semantics: send only the fields that actually changed. */
@@ -134,6 +173,8 @@ export interface ServiceAccountKeyUpdate {
     name?: string | null
     /** Never send null -- the column is NOT NULL. */
     scopes?: string[]
+    /** Explicit null = unrestricted (legacy behaviour). */
+    allowed_apps?: AgentRef[] | null
     /** Explicit null clears the expiry (= never expires). */
     expires_at?: string | null
 }

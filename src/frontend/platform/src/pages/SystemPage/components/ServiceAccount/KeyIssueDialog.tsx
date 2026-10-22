@@ -1,5 +1,6 @@
 import { Button } from "@/components/bs-ui/button"
 import { DatePicker } from "@/components/bs-ui/calendar/datePicker"
+import { Checkbox } from "@/components/bs-ui/checkBox"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/bs-ui/dialog"
 import { Input } from "@/components/bs-ui/input"
 import { Label } from "@/components/bs-ui/label"
@@ -13,13 +14,15 @@ import {
 } from "@/controllers/API/serviceAccount"
 import { captureAndAlertRequestErrorHoc } from "@/controllers/request"
 import {
+    AgentRef,
+    AssignableAgent,
     OpenApiScope,
     ServiceAccountKey,
     ServiceAccountKeyIssue,
     ServiceAccountKeyIssued,
     ServiceAccountKeyUpdate,
 } from "@/types/api/serviceAccount"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 /**
@@ -29,6 +32,26 @@ import { useTranslation } from "react-i18next"
  */
 export function scopeLocaleKey(code: string): string {
     return `scope.${code.replace(/:/g, "_")}`
+}
+
+/** The picker encodes an agent as `${type}:${id}` to keep one flat multi-select. */
+function agentOptionValue(ref: AgentRef): string {
+    return `${ref.type}:${ref.id}`
+}
+
+function parseAgentOption(value: string): AgentRef | null {
+    const separator = value.indexOf(":")
+    if (separator <= 0) return null
+    const type = value.slice(0, separator)
+    const id = value.slice(separator + 1)
+    if (!id || (type !== "assistant" && type !== "workflow" && type !== "managed_agent")) return null
+    return { type, id }
+}
+
+function sameAgentSet(left: AgentRef[], right: AgentRef[]): boolean {
+    if (left.length !== right.length) return false
+    const keys = new Set(left.map(agentOptionValue))
+    return right.every((ref) => keys.has(agentOptionValue(ref)))
 }
 
 /** Expiry presets offered on top of "never" and a custom datetime. */
@@ -61,10 +84,12 @@ interface KeyIssueDialogProps {
     accountId: number
     /** Catalog from the backend; a key may only carry registered scopes. */
     scopes: OpenApiScope[]
+    /** Agents the account may be restricted to (backend `assignable-agents`). */
+    assignableAgents: AssignableAgent[]
     /** Set = edit mode. PATCH only carries the fields that actually changed. */
     editing?: ServiceAccountKey | null
     onClose: (open: boolean) => void
-    /** Creating only: the response carries the one-time plaintext. */
+    /** Creating only: the response carries the plaintext for the issue dialog. */
     onIssued: (issued: ServiceAccountKeyIssued, name: string) => void
     onUpdated: () => void
 }
@@ -73,6 +98,7 @@ export function KeyIssueDialog({
     open,
     accountId,
     scopes,
+    assignableAgents,
     editing = null,
     onClose,
     onIssued,
@@ -81,6 +107,10 @@ export function KeyIssueDialog({
     const { t } = useTranslation("serviceAccount")
     const [name, setName] = useState("")
     const [selected, setSelected] = useState<string[]>([])
+    // New keys start restricted (least privilege); edit mode mirrors the saved
+    // null-vs-list state so an unrestricted legacy key stays unrestricted.
+    const [restrictAgents, setRestrictAgents] = useState(true)
+    const [selectedAgents, setSelectedAgents] = useState<string[]>([])
     const [expiryMode, setExpiryMode] = useState("never")
     const [customExpiry, setCustomExpiry] = useState<Date | null>(null)
     const [submitting, setSubmitting] = useState(false)
@@ -90,9 +120,47 @@ export function KeyIssueDialog({
         if (!open) return
         setName(editing?.name ?? "")
         setSelected(editing ? [...editing.scopes] : [])
+        if (editing) {
+            setRestrictAgents(editing.allowed_apps !== null)
+            setSelectedAgents((editing.allowed_apps ?? []).map(agentOptionValue))
+        } else {
+            setRestrictAgents(true)
+            setSelectedAgents([])
+        }
         setExpiryMode(editing?.expires_at ? "custom" : "never")
         setCustomExpiry(editing?.expires_at ? new Date(editing.expires_at) : null)
     }, [open, editing])
+
+    /**
+     * Picker options = currently granted agents + any saved entry that is no
+     * longer assignable (grant revoked). The latter must stay visible so a save
+     * never silently drops a restriction the admin cannot see.
+     */
+    const agentOptions = useMemo(() => {
+        const options = assignableAgents.map((agent) => ({
+            value: agentOptionValue(agent),
+            label: `${t(`keys.agents.type.${agent.type}`)} · ${agent.name}${
+                agent.invocable ? "" : ` (${t("keys.agents.readOnly")})`
+            }`,
+        }))
+        if (!editing?.allowed_apps) return options
+        const known = new Set(options.map((option) => option.value))
+        for (const ref of editing.allowed_apps) {
+            const value = agentOptionValue(ref)
+            if (known.has(value)) continue
+            options.push({
+                value,
+                label: `${t(`keys.agents.type.${ref.type}`)} · ${ref.id} (${t("keys.agents.stale")})`,
+            })
+        }
+        return options
+    }, [assignableAgents, editing, t])
+
+    /** null = unrestricted; [] = no agent; otherwise the selected refs. */
+    const buildAllowedApps = (): AgentRef[] | null => {
+        if (!restrictAgents) return null
+        return selectedAgents.map(parseAgentOption).filter((ref): ref is AgentRef => ref !== null)
+    }
 
     /**
      * Resolve the expiry to send. `baseline` is the key's current expiry when
@@ -135,6 +203,13 @@ export function KeyIssueDialog({
             message({ title: t("prompt"), description: expiry.error, variant: "warning" })
             return
         }
+        // Warn, but allow: a knowledge-only key legitimately has no agents.
+        const agentScopesSelected = selected.some((code) =>
+            ["assistant:invoke", "workflow:invoke", "managed_agent:invoke"].includes(code),
+        )
+        if (restrictAgents && selectedAgents.length === 0 && agentScopesSelected) {
+            message({ title: t("prompt"), description: t("keys.form.agentsEmptyWarning"), variant: "warning" })
+        }
 
         setSubmitting(true)
         if (editing) {
@@ -143,6 +218,12 @@ export function KeyIssueDialog({
             // Never send null: `scopes` maps to a NOT NULL column the endpoint
             // would write through unchecked.
             if (!sameScopes(selected, editing.scopes)) payload.scopes = selected
+            const allowedApps = buildAllowedApps()
+            const unchangedAgents =
+                editing.allowed_apps === null
+                    ? allowedApps === null
+                    : allowedApps !== null && sameAgentSet(allowedApps, editing.allowed_apps)
+            if (!unchangedAgents) payload.allowed_apps = allowedApps
             if (!sameExpiry(expiry.value, editing.expires_at)) payload.expires_at = expiry.value
             if (!Object.keys(payload).length) {
                 setSubmitting(false)
@@ -178,7 +259,12 @@ export function KeyIssueDialog({
                 onUpdated()
                 return
             }
-            const payload: ServiceAccountKeyIssue = { name: trimmed, scopes: selected, expires_at: expiry.value }
+            const payload: ServiceAccountKeyIssue = {
+                name: trimmed,
+                scopes: selected,
+                allowed_apps: buildAllowedApps(),
+                expires_at: expiry.value,
+            }
             captureAndAlertRequestErrorHoc(issueServiceAccountKeyApi(accountId, payload))
                 .then((res) => {
                     if (!res) return
@@ -230,6 +316,34 @@ export function KeyIssueDialog({
                             placeholder={t("keys.form.scopesPlaceholder")}
                             searchPlaceholder={t("keys.form.scopesSearch")}
                         />
+                    </div>
+                    <div>
+                        <label className="flex items-center gap-2 text-sm">
+                            <Checkbox
+                                checked={restrictAgents}
+                                onCheckedChange={(value) => setRestrictAgents(!!value)}
+                            />
+                            {t("keys.form.restrictAgents")}
+                        </label>
+                        <p className="mt-1 text-xs text-muted-foreground">{t("keys.form.restrictAgentsHint")}</p>
+                        {restrictAgents && (
+                            <div className="mt-2">
+                                <MultiSelect
+                                    multiple
+                                    options={agentOptions}
+                                    value={selectedAgents}
+                                    onChange={(values) => setSelectedAgents(values as string[])}
+                                    placeholder={t("keys.form.agentsPlaceholder")}
+                                    searchPlaceholder={t("keys.form.agentsSearch")}
+                                />
+                                {selectedAgents.length === 0 && (
+                                    <p className="mt-1 text-xs text-amber-600">{t("keys.form.agentsEmptyWarning")}</p>
+                                )}
+                                {assignableAgents.length === 0 && (
+                                    <p className="mt-1 text-xs text-muted-foreground">{t("keys.form.agentsNoOptions")}</p>
+                                )}
+                            </div>
+                        )}
                     </div>
                     <div>
                         <Label className="bisheng-label">{t("keys.form.expires")}</Label>

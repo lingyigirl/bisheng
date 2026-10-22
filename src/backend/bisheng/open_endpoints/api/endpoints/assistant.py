@@ -18,6 +18,7 @@ from bisheng.api.v1.schemas import OpenAIChatCompletionReq, OpenAIChatCompletion
 from bisheng.common.chat.types import WorkType
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum, StatusEnum
 from bisheng.common.errcode import BaseErrorCode
+from bisheng.common.errcode.open_api import OpenApiNotFoundError
 from bisheng.common.errcode.sensitive_word import SensitiveWordInputBlockedError
 from bisheng.common.schemas.api import PageData, resp_200
 from bisheng.common.schemas.telemetry.event_data_schema import ApplicationAliveEventData, ApplicationProcessEventData
@@ -26,9 +27,17 @@ from bisheng.common.services.config_service import settings
 from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.core.logger import trace_id_var
 from bisheng.llm.domain.utils import extract_reasoning_content
+from bisheng.open_api.domain.agent_scope import (
+    assert_open_api_agent_allowed,
+    assistant_ids_in_allowlist,
+)
 from bisheng.open_api.domain.context import get_open_api_principal
 from bisheng.open_api.domain.scopes import open_api_scope
-from bisheng.open_endpoints.domain.utils import get_default_operator
+from bisheng.open_endpoints.domain.utils import (
+    _is_key_authenticated_call,
+    assert_open_api_app_visible,
+    get_default_operator,
+)
 from bisheng.utils import generate_uuid, get_request_ip
 
 router = APIRouter(prefix="/assistant", tags=["OpenAPI", "Assistant"])
@@ -48,6 +57,9 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
     4. stream=False Or return to the original logic?JSON
     """
     assistant_id = UUID(req_data.model).hex
+    # F076 增量(2026-10-22):每 Key 智能体白名单。必须在下面 get_assistant_info 的
+    # try/except Exception→500 之前抛出,否则 11809 会被吞成 500。
+    assert_open_api_agent_allowed("assistant", assistant_id)
     logger.info(
         f"act=assistant_chat_completions assistant_id={req_data.model}, stream={req_data.stream}, ip={get_request_ip(request)}"
     )
@@ -56,6 +68,14 @@ async def assistant_chat_completions(request: Request, req_data: OpenAIChatCompl
         login_user = get_default_operator()
     except Exception as e:
         return JSONResponse(status_code=500, content=str(e), media_type="application/json")
+
+    # F076 增量(2026-10-22):密钥调用时助手对话要求 use_app(与工作流口径一致);
+    # 详情/列表读取仍走 get_assistant_info 的 view_app|use_app,不在此收紧。
+    # 该判定必须在下面的 try/except 之外,否则 11809 会被兜底成 500。
+    await assert_open_api_app_visible(
+        assistant_id, login_user, permission_ids=("use_app",), object_types=("assistant",)
+    )
+
     # Find Assistant Information
     try:
         assistant_info = await AssistantService.get_assistant_info(assistant_id, login_user)
@@ -338,6 +358,8 @@ async def get_assistant_info(request: Request, assistant_id: UUID):
     Getting Helper Information, Use the system configuration indefault_operator.userUser information to verify permissions
     """
     assistant_id = assistant_id.hex
+    # F076 增量(2026-10-22):每 Key 智能体白名单(非密钥调用 no-op)。
+    assert_open_api_agent_allowed("assistant", assistant_id)
     logger.info(f"act=get_default_operator assistant_id={assistant_id}, ip={get_request_ip(request)}")
     # Determine if the configuration under is turned on
     # F076(T-14):免登录开关只拦匿名访问;带密钥的服务账号调用不受它影响。
@@ -368,7 +390,11 @@ def get_assistant_list(
     if get_open_api_principal() is None and not settings.get_from_db("default_operator").get("enable_guest_access"):
         raise HTTPException(status_code=403, detail="No permission to access")
     login_user = get_default_operator()
-    data, total = AssistantService.get_assistant(login_user, name, status, tag_id, page, limit)
+    # F076 增量(2026-10-22):每 Key 智能体白名单。None = 不限制;空集合 = 全拒绝
+    # (服务层必须把 [] 提前返回,因为 DAO 把空 assistant_ids 当作"不过滤")。
+    data, total = AssistantService.get_assistant(
+        login_user, name, status, tag_id, page, limit, allowed_ids=assistant_ids_in_allowlist()
+    )
     return resp_200(PageData(data=data, total=total))
 
 
@@ -379,7 +405,24 @@ async def chat(*, websocket: WebSocket, assistant_id: str, chat_id: str | None =
     Assistant'swsLogin-Free Interface
     """
     logger.info(f"act=assistant_chat_ws assistant_id={assistant_id}, ip={get_request_ip(websocket)}")
+    # F076 增量(2026-10-22):WS 没有 HTTP 状态,按 v1 先例 close 1008 并在 reason
+    # 里回业务码;禁止在 WS 内 raise HTTPException(全局 handler 访问 req.method 会 500)。
+    try:
+        assert_open_api_agent_allowed("assistant", assistant_id)
+    except OpenApiNotFoundError:
+        await websocket.close(code=http_status.WS_1008_POLICY_VIOLATION, reason=str(OpenApiNotFoundError.Code))
+        return
     login_user = get_default_operator()
+    # F076 增量(2026-10-22):与 HTTP 对齐,密钥调用建连即校验 use_app(原先只靠
+    # 逐条消息检查,viewer-only Key 也能先建连)。非密钥调用直接放行。
+    if _is_key_authenticated_call():
+        try:
+            await assert_open_api_app_visible(
+                assistant_id, login_user, permission_ids=("use_app",), object_types=("assistant",)
+            )
+        except OpenApiNotFoundError:
+            await websocket.close(code=http_status.WS_1008_POLICY_VIOLATION, reason=str(OpenApiNotFoundError.Code))
+            return
     try:
         request = websocket
         await chat_manager.dispatch_client(

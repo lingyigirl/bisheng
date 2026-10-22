@@ -195,7 +195,7 @@ async def _finish(gen):
         await gen.__anext__()
 
 
-async def _seed_account_and_key(tenant_id=TENANT_ID, *, enabled=True, scopes=None):
+async def _seed_account_and_key(tenant_id=TENANT_ID, *, enabled=True, scopes=None, allowed_apps=None):
     # 账号行直接经(已打补丁的)会话工厂插入:ServiceAccountDao 目前只有
     # aget_by_id(T-06 所需),管理面写入方法随 T-17/T-20 落地。
     from bisheng.open_api.domain.models import dao as dao_mod
@@ -214,6 +214,7 @@ async def _seed_account_and_key(tenant_id=TENANT_ID, *, enabled=True, scopes=Non
         tenant_id=tenant_id,
         service_account_id=account.id,
         scopes=scopes if scopes is not None else ["workflow:invoke"],
+        allowed_apps=allowed_apps,
     )
     return account, plaintext
 
@@ -488,3 +489,19 @@ async def test_non_guest_endpoint_ignores_guest_switch(patched_db, fake_redis, m
 
     with pytest.raises(OpenApiKeyMissingError):
         await _enter(_http())  # _marked_endpoint 无 guest 标记
+
+
+async def test_principal_carries_the_agent_allowlist(patched_db, fake_redis, monkeypatch):
+    """白名单随凭据进入 principal,后续端点 helper 才能据此判定(AC-42/INV-27)。"""
+    _enable_deployment(monkeypatch, True)
+    _stub_owner(monkeypatch, _StubPayload())
+    workflow_id = "a" * 32
+    _account, plaintext = await _seed_account_and_key(allowed_apps=[{"type": "workflow", "id": workflow_id}])
+
+    gen = await _enter(_http(f"Bearer {plaintext}"))
+    try:
+        principal = get_open_api_principal()
+        assert principal is not None
+        assert principal.allowed_apps == frozenset({("workflow", workflow_id)})
+    finally:
+        await _finish(gen)

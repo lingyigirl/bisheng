@@ -8,26 +8,34 @@ import { Check, Clipboard } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 
+type KeyRevealMode = "issued" | "viewed"
+
 interface KeyRevealDialogProps {
     open: boolean
     keyName: string | null
-    /** The one-time plaintext. Held by the caller only while this dialog is open. */
+    /** Plaintext fetched for this dialog; the caller drops it on close. */
     plaintext: string
-    /** Only ever called once the operator confirmed the key was saved (AC-39). */
+    /**
+     * `issued` = right after creation (must confirm it was saved, AC-39).
+     * `viewed` = an explicit admin reveal (audited, can be closed freely).
+     */
+    mode?: KeyRevealMode
     onClose: () => void
 }
 
 /**
- * One-time plaintext reveal (F076 AC-39).
+ * Plaintext reveal (F076 AC-39 / AC-44).
  *
- * The plaintext exists in exactly one API response and is never retrievable
- * again, so this dialog is deliberately not dismissible by the X button, the
- * overlay or Esc: closing must go through the "I saved it" confirmation.
+ * In `issued` mode the dialog is deliberately not dismissible by the X button,
+ * the overlay or Esc: closing must go through the "I saved it" confirmation.
+ * In `viewed` mode the admin explicitly requested the value and the backend has
+ * already written an audit row, so normal dismissal is allowed.
  */
-export function KeyRevealDialog({ open, keyName, plaintext, onClose }: KeyRevealDialogProps) {
+export function KeyRevealDialog({ open, keyName, plaintext, mode = "issued", onClose }: KeyRevealDialogProps) {
     const { t } = useTranslation("serviceAccount")
     const [confirmed, setConfirmed] = useState(false)
     const [copied, setCopied] = useState(false)
+    const issued = mode === "issued"
 
     useEffect(() => {
         if (open) {
@@ -54,19 +62,25 @@ export function KeyRevealDialog({ open, keyName, plaintext, onClose }: KeyReveal
         <Dialog
             open={open}
             onOpenChange={(next) => {
-                // Radix reports overlay clicks / Esc here; refuse until confirmed.
-                if (next || !confirmed) return
+                if (next) return
+                // Issued mode: refuse overlay/Esc until confirmed. Viewed mode:
+                // the value was explicitly requested, so normal dismissal is fine.
+                if (issued && !confirmed) return
                 onClose()
             }}
         >
-            <DialogContent className="sm:max-w-[560px]" close={false}>
+            <DialogContent className="sm:max-w-[560px]" close={!issued}>
                 <DialogHeader>
-                    <DialogTitle>{t("keys.reveal.title")}</DialogTitle>
+                    <DialogTitle>{issued ? t("keys.reveal.title") : t("keys.reveal.viewTitle")}</DialogTitle>
                 </DialogHeader>
 
-                <Alert variant="destructive">
-                    <AlertTitle>{t("keys.reveal.warningTitle")}</AlertTitle>
-                    <AlertDescription>{t("keys.reveal.warningDesc")}</AlertDescription>
+                <Alert variant={issued ? "destructive" : "default"}>
+                    <AlertTitle>
+                        {issued ? t("keys.reveal.warningTitle") : t("keys.reveal.viewWarningTitle")}
+                    </AlertTitle>
+                    <AlertDescription>
+                        {issued ? t("keys.reveal.warningDesc") : t("keys.reveal.viewWarningDesc")}
+                    </AlertDescription>
                 </Alert>
 
                 {keyName && <p className="text-sm text-muted-foreground">{t("keys.reveal.keyName", { name: keyName })}</p>}
@@ -81,14 +95,16 @@ export function KeyRevealDialog({ open, keyName, plaintext, onClose }: KeyReveal
                     </Button>
                 </div>
 
-                <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={confirmed} onCheckedChange={(value) => setConfirmed(!!value)} />
-                    {t("keys.reveal.confirmSaved")}
-                </label>
+                {issued && (
+                    <label className="flex items-center gap-2 text-sm">
+                        <Checkbox checked={confirmed} onCheckedChange={(value) => setConfirmed(!!value)} />
+                        {t("keys.reveal.confirmSaved")}
+                    </label>
+                )}
 
                 <DialogFooter className="mt-2">
-                    <Button className="h-10 w-[120px] px-16" disabled={!confirmed} onClick={onClose}>
-                        {t("keys.reveal.done")}
+                    <Button className="h-10 w-[120px] px-16" disabled={issued && !confirmed} onClick={onClose}>
+                        {issued ? t("keys.reveal.done") : t("keys.reveal.close")}
                     </Button>
                 </DialogFooter>
             </DialogContent>

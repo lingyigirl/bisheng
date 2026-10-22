@@ -466,6 +466,8 @@
   "11819": "Unknown scope code",
   "11820": "Unsupported resource type or permission level",
   "11821": "This user is a service account's dedicated identity; manage it under System -> Service accounts",
+  "11822": "The selected agent is unavailable or not granted to this service account",
+  "11823": "This API key cannot be revealed: it predates the reveal feature or its ciphertext is corrupted; please issue a new key",
   "11902": "Invalid scheduled task configuration — check required fields, app type and preset inputs",
   "11903": "Invalid schedule expression — only 5-field cron (minute granularity) is supported",
   "11904": "This app already has the maximum number of scheduled tasks",

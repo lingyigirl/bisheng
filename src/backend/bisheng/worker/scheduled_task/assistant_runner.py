@@ -7,7 +7,8 @@
         → init_assistant() → run(question)
 
 三条边界（都不是可选项）：
-1. **不持密钥、不走 HTTP** —— F076 的密钥不可回读（INV-23①），进程内直调服务层；
+1. **不持密钥、不走 HTTP** —— F076 的密钥属高敏凭据（INV-23），调度器不应落盘/持有
+   密钥，进程内直调服务层；
 2. **不落会话/消息**（``chat_id=""``）——定时运行没有会话落点（AC-48）；
 3. **补一条 APPLICATION_PROCESS 遥测** —— 工作流侧由共享执行链自动上报，助手侧
    原本只有 v2 端点自己写（``open_endpoints/api/endpoints/assistant.py:274-305``），

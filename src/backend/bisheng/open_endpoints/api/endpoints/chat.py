@@ -33,7 +33,9 @@ async def gen_title_v2(conversationId: str = Body(..., embed=True)):
     messages = await MessageSessionDao.async_get_one(conversationId)
     # F076 T-29(AC-23):密钥调用时,会话所属应用要在可见范围内(否则 404/11809)。
     if messages is not None:
-        await assert_open_api_app_visible(messages.flow_id, get_default_operator())
+        await assert_open_api_app_visible(
+            messages.flow_id, get_default_operator(), object_types=("workflow", "assistant")
+        )
     return resp_200(data={"title": messages.name if messages else "New Chat"})
 
 
@@ -42,7 +44,7 @@ async def gen_title_v2(conversationId: str = Body(..., embed=True)):
 async def get_chat_history_v2(*, chat_id: str, flow_id: str, id: str | None = None, page_size: int | None = 20):
     """Get chat history without authentication (v2 open endpoint)."""
     # F076 T-29(AC-23):密钥调用时校验会话所属应用的可见性。
-    await assert_open_api_app_visible(flow_id, get_default_operator())
+    await assert_open_api_app_visible(flow_id, get_default_operator(), object_types=("workflow", "assistant"))
     history = await ChatSessionService.get_chat_history(chat_id, flow_id, id, page_size)
     return resp_200(history)
 
@@ -62,7 +64,9 @@ def like_response(*, data: dict):
         message = session.get(ChatMessage, message_id)
         # F076 T-29(AC-23):消息所属应用要在可见范围内(不可见与不存在同码 11809)。
         if message is not None:
-            assert_open_api_app_visible_sync(message.flow_id, get_default_operator())
+            assert_open_api_app_visible_sync(
+                message.flow_id, get_default_operator(), object_types=("workflow", "assistant")
+            )
         message.liked = liked
         session.add(message)
         session.commit()
@@ -77,7 +81,9 @@ def solve_response(*, data: dict):
     with get_sync_db_session() as session:
         messages = session.query(ChatMessage).where(ChatMessage.chat_id == chat_id).all()
         if messages:
-            assert_open_api_app_visible_sync(messages[0].flow_id, get_default_operator())
+            assert_open_api_app_visible_sync(
+                messages[0].flow_id, get_default_operator(), object_types=("workflow", "assistant")
+            )
     for message in messages:
         message.solved = solved
     with get_sync_db_session() as session:
@@ -92,7 +98,9 @@ def comment(*, data: ChatInput):
     with get_sync_db_session() as session:
         message = session.get(ChatMessage, data.message_id)
         if message is not None:
-            assert_open_api_app_visible_sync(message.flow_id, get_default_operator())
+            assert_open_api_app_visible_sync(
+                message.flow_id, get_default_operator(), object_types=("workflow", "assistant")
+            )
     comment_answer(data.message_id, data.comment)
     return resp_200()
 
@@ -110,7 +118,7 @@ def sync_message(
     # F076 T-29:密钥调用时按可见性收口,且身份必须取自调用方身份(principal),
     # 不再回落到 default_operator —— 否则密钥调用会把消息记在默认操作员名下。
     login_user = get_default_operator()
-    assert_open_api_app_visible_sync(flow_id, login_user)
+    assert_open_api_app_visible_sync(flow_id, login_user, object_types=("workflow", "assistant"))
     user_id = user_id if user_id else login_user.user_id
 
     batch_message = [

@@ -58,8 +58,25 @@ async def test_whoami_echoes_self_description(principal_installed):
     assert data["account_name"] == "信贷系统"
     assert data["key_mask"] == "bs-sak-********AbCd"
     assert data["scopes"] == ["workflow:invoke", "knowledge:read"]
+    assert data["allowed_apps"] is None
     assert data["expires_at"] == "2030-01-01T00:00:00"
     assert data["tenant_id"] == 9
+
+
+async def test_whoami_echoes_the_agent_allowlist(principal_installed):
+    """白名单随 self-check 回显(frozenset → 稳定排序的 JSON)。"""
+    from dataclasses import replace
+
+    allowed = frozenset({("workflow", "d" * 32), ("assistant", "a" * 32)})
+    token = set_open_api_principal(replace(principal_installed, allowed_apps=allowed))
+    try:
+        response = await whoami()
+        assert response.data["allowed_apps"] == [
+            {"type": "assistant", "id": "a" * 32},
+            {"type": "workflow", "id": "d" * 32},
+        ]
+    finally:
+        reset_open_api_principal(token)
 
 
 async def test_whoami_without_expiry_reports_null(principal_installed):

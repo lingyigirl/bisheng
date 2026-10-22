@@ -5,6 +5,7 @@ from loguru import logger
 
 from bisheng.api.services.flow import FlowService
 from bisheng.common.services.config_service import settings
+from bisheng.open_api.domain.agent_scope import assert_open_api_agent_allowed
 from bisheng.open_api.domain.context import get_open_api_principal
 from bisheng.open_api.domain.scopes import open_api_scope
 from bisheng.open_endpoints.api.endpoints.assistant import get_default_operator
@@ -19,6 +20,8 @@ async def get_flow(request: Request, flow_id: UUID):
     Exposed interfaces for obtaining skill information
     """
     flow_id = flow_id.hex
+    # F076 增量(2026-10-22):每 Key 智能体白名单(非密钥调用 no-op)。
+    assert_open_api_agent_allowed("workflow", flow_id)
     logger.info(f"public_get_flow  ip: {request.client.host} flow_id:{flow_id}")
     # Determine if the configuration under is turned on
     # F076(T-14):免登录开关只拦匿名访问;带密钥的服务账号调用不受它影响。
