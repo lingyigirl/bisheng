@@ -17,6 +17,9 @@ vi.mock("@/controllers/API/serviceAccount", () => ({
     deleteServiceAccountApi: vi.fn(),
     enableServiceAccountApi: vi.fn(),
     disableServiceAccountApi: vi.fn(),
+    // AccessGuideTab requests this on mount; without it the guide tab throws and
+    // the whole panel unmounts, so the switch test can never pass.
+    getOpenApiBaseUrlApi: vi.fn().mockResolvedValue({ configured: "", detected: null }),
 }))
 
 vi.mock("@/controllers/request", () => ({

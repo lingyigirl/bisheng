@@ -80,8 +80,13 @@ const RESOURCE_LOADERS: Record<ResourceGrantType, (keyword: string, pageSize: nu
         })),
 }
 const PICKER_PAGE_SIZE = 50
-/** Ids whose names are resolved eagerly for the table; beyond this they show as raw ids. */
-const NAME_LOOKUP_PAGE_SIZE = 200
+/**
+ * Ids whose names are resolved eagerly for the table; beyond this they show as raw ids.
+ * Capped at 100 because `/api/v1/managed-agents` declares `page_size le=100` — a larger
+ * value 422s and surfaces "Input should be less than or equal to 100" as a toast. The
+ * other four loaders are unbounded, so one shared ceiling keeps every type legal.
+ */
+const NAME_LOOKUP_PAGE_SIZE = 100
 
 interface ResourceGrantDialogProps {
     open: boolean
