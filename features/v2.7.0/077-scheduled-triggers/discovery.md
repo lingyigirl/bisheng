@@ -104,7 +104,7 @@
 - 目标对象抽象＝`(app_id, app_type)`：助手是独立 `assistant` 表（`database/models/assistant.py:105-106`），「应用」列表是 Flow∪Assistant 并集（`database/models/flow.py:747-790`）；引用形状先例 `workstation/domain/models/user_app_favorite.py:19-22`。
 - 结果落会话链路：worker 懒创建 `MessageSession`（`user_id`＝运行身份，`redis_callback.py:656-669`）；`chat_id=""` 完全不落库（`:581-595`）。应用会话列表按 `(flow_id, 当前登录用户)` 过滤（`workstation/api/endpoints/apps.py:199-207`）。
 - 开放 API 编程调用面：工作流 v2 `session_id` 可传（`open_endpoints/api/endpoints/workflow.py:52,67-73,85`）；助手 v2 HTTP **无状态**（不落 session/消息，`assistant.py:105-115`）。
-- F076 边界：INV-23（`release-contract.md:97`）——密钥不可回读 ⇒ **不能"调度器存密钥自调 /api/v2"**，身份装载走进程内 `load_owner_payload`；运行期防提权 `open_api/api/dependencies.py:159-172`。
+- F076 边界：INV-23（`release-contract.md:97`）——密钥属高敏凭据，调度器**不持有密钥、不自调 `/api/v2`**（避免密钥落盘与自调链路），身份装载走进程内 `load_owner_payload`；运行期防提权 `open_api/api/dependencies.py:159-172`。
 - **事件触发面现状=零**：`webhook` 全后端仅命中出站机器人工具；`/api/v2` 新端点必须逐条登记 scope（`open_api/domain/scopes.py:40-133`，无通配，漏标 500/11811）；密钥是**裸 bearer、无请求签名**（`credential_validator.py:50-85`），防重放**无现成设施**；F076 明确不做限流/配额/幂等（`release-contract.md:194`）。
 
 **需新建 / 待裁定**：任务表的目标解析与可见性校验；**触发期预检三要素**（应用存在/未删 + 运行身份可装载 + `use_app` 仍在，复用 F076 的 11805/11816 语义）；事件触发端点（若做）的载荷白名单、响应契约与触发放大护栏（★D1 影响面）；结果落点与失败通知的最终口径（★D8）。
@@ -267,7 +267,7 @@
 6. **工作流执行模型**：整段占 Celery 线程（`workflow/graph/workflow.py:68-84` 同步 `while RUNNING`）；INPUT 态运行对象驻留 worker 内存（`tasks.py:22-24`），续跑必须同节点，worker 重启即丢（`tasks.py:134-136`）；**无 acks_late**（任务丢失不重投）。
 7. **会话落点语义**：`chat_id=""` 不落会话（`redis_callback.py:581-595`）；非空时懒创建 `MessageSession`（`user_id`＝运行时用户）。
 8. **助手 v2 HTTP 无状态**（`assistant.py:105-115`）→ 助手定时运行无会话落点（与 D8=A 自洽）。
-9. **F076 密钥不可回读**（INV-23①）→ 调度器**不能**"存密钥自调 /api/v2"；身份装载走进程内 `load_owner_payload` + `owner_is_privileged`。
+9. **F076 密钥属高敏凭据**（INV-23）→ 调度器**不持有密钥、不自调 /api/v2**（避免密钥落盘与自调链路）；身份装载走进程内 `load_owner_payload` + `owner_is_privileged`。
 10. **租户硬约束**：新表登记 `_TENANT_AWARE_MODEL_MODULES`；租户自动过滤**只拦 SELECT**，bulk update/delete 与 `text()` SQL 须手写租户条件（`src/backend/AGENTS.md` §Known Pitfalls）。
 11. **审计系统触发约定**：`operator_id=0 → 'system'`（`audit_log.py:407-408`）；系统触发的 `operator_tenant_id` 约定 = ROOT_TENANT_ID（`:390-396`）。
 12. **入站面零设施 + scope 逐条登记**：`/api/v2` 新端点无通配、漏标 500/11811、缺位 403/11807；密钥裸 bearer 无签名 → 防重放自建。
