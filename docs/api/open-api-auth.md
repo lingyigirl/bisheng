@@ -3,7 +3,7 @@
 > 面向：**对接方开发**（携带密钥调用 `/api/v2`）与**平台运维**（签发/吊销/排障）
 > 适用范围：`/api/v2` 的全部端点（HTTP 与 WebSocket）
 > 平台内查看与导出：控制台「系统 → 服务账号 → 接入指南」提供对接方直接可用的接入说明（接入地址按环境实时替换、curl 示例、权限位与错误码全表），可复制全文或导出 Markdown。两份文档同步维护，均覆盖 118xx / 119xx / 121xx
-> 配套：[`开放API密钥鉴权迁移指引.md`](../开放API密钥鉴权迁移指引.md)（存量调用方切换与回退）、[`filelib-retrieve.md`](filelib-retrieve.md)（纯检索接口参考）、[`知识库接口文档.md`](知识库接口文档.md)（知识空间/知识库接口）、[`scheduled-task-trigger.md`](scheduled-task-trigger.md)（事件触发端点）、[`managed-agents.md`](managed-agents.md)（纳管智能体调用）
+> 配套：[`filelib-retrieve.md`](filelib-retrieve.md)（纯检索接口参考）、[`知识库接口文档.md`](知识库接口文档.md)（知识空间/知识库接口）、[`scheduled-task-trigger.md`](scheduled-task-trigger.md)（事件触发端点）、[`managed-agents.md`](managed-agents.md)（纳管智能体调用）；存量切换与回退按交付现场提供的迁移指引执行（本地材料，不入库）
 
 ---
 

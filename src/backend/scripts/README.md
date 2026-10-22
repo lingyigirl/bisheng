@@ -42,7 +42,7 @@ python scripts/migrate_skill_bundles.py --tenant-id 1 --legacy-root /old/skills 
 
 ### `f076_acceptance_probe.py`
 
-F076 开放 API 鉴权**验收探针**：把《docs/开放API条款验收表.md》的 B-J 行逐条跑一遍并输出预填的
+F076 开放 API 鉴权**验收探针**：把《开放API条款验收表》（本地交付材料，不入库）的 B-J 行逐条跑一遍并输出预填的
 markdown 表（通过 / 需现场人工 / 不通过）。自建一次性服务账号（前缀 `f076-probe-`，结束即删），
 只读探测为主；`--enable-tenant-switch` 允许在测试环境临时打开默认租户开关（跑完还原）。
 

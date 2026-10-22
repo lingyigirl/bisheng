@@ -28,7 +28,7 @@
 - 档位：文档知识库（type=0）另需 `use_kb`（系统默认 `viewer` 档同时含 `view_kb` + `use_kb`）；知识空间（type=3）沿用视图权限，不适用 `use_kb`。
 
 > 部署前置条件：管理员已建服务账号、签发带 `knowledge:read` 的密钥，并把目标知识库授予该账号（服务账号页「资源授权」，或 `POST /api/v1/service-accounts/{id}/resource-grants:mutate`）。
-> 完整契约（密钥获取、权限位目录、错误码全表、WebSocket 携带方式）见 [`open-api-auth.md`](open-api-auth.md)；存量切换与回退见 [`../开放API密钥鉴权迁移指引.md`](../开放API密钥鉴权迁移指引.md)。
+> 完整契约（密钥获取、权限位目录、错误码全表、WebSocket 携带方式）见 [`open-api-auth.md`](open-api-auth.md)；存量切换与回退按交付现场提供的迁移指引执行（本地材料，不入库）。
 
 ---
 
