@@ -14,7 +14,7 @@ describe("KeyRevealDialog", () => {
     it("issued mode requires the saved confirmation", () => {
         const onClose = vi.fn()
         render(
-            <KeyRevealDialog open keyName="生产密钥" plaintext="bs-sak-test" mode="issued" onClose={onClose} />,
+            <KeyRevealDialog open keyName="key" plaintext="bs-sak-test" mode="issued" onClose={onClose} />,
         )
 
         const done = screen.getByText("keys.reveal.done").closest("button") as HTMLButtonElement
@@ -30,7 +30,7 @@ describe("KeyRevealDialog", () => {
     it("viewed mode can close without confirmation and shows the audit warning", () => {
         const onClose = vi.fn()
         render(
-            <KeyRevealDialog open keyName="生产密钥" plaintext="bs-sak-test" mode="viewed" onClose={onClose} />,
+            <KeyRevealDialog open keyName="key" plaintext="bs-sak-test" mode="viewed" onClose={onClose} />,
         )
 
         expect(screen.getByText("keys.reveal.viewWarningTitle")).toBeTruthy()

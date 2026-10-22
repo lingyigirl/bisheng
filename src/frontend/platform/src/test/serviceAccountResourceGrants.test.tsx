@@ -12,6 +12,7 @@ import { ServiceAccount } from "@/types/api/serviceAccount"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const listGrantsMock = vi.hoisted(() => vi.fn())
+const mutateGrantsMock = vi.hoisted(() => vi.fn())
 const listManagedAgentsMock = vi.hoisted(() => vi.fn())
 const getAppsMock = vi.hoisted(() => vi.fn())
 const readFileLibMock = vi.hoisted(() => vi.fn())
@@ -28,7 +29,7 @@ vi.mock("@/controllers/request", () => ({
 
 vi.mock("@/controllers/API/serviceAccount", () => ({
     listResourceGrantsApi: listGrantsMock,
-    mutateResourceGrantsApi: vi.fn(),
+    mutateResourceGrantsApi: mutateGrantsMock,
 }))
 
 vi.mock("@/controllers/API/managedAgent", () => ({
@@ -176,5 +177,102 @@ describe("ResourceGrantsTab name lookup page size (F076)", () => {
             const boxes = within(dialog).getAllByRole("checkbox").slice(1)
             expect(boxes.every((box) => box.getAttribute("data-state") === "unchecked")).toBe(true)
         })
+    })
+
+    function mockAppNames() {
+        getAppsMock.mockImplementation(({ type }: { type?: string }) =>
+            Promise.resolve({
+                data:
+                    type === "assistant"
+                        ? [{ id: 11, name: "Assistant Eleven" }]
+                        : [{ id: 22, name: "Workflow Two" }],
+                page_size: 100,
+                has_more: false,
+                next_cursor: null,
+            }),
+        )
+    }
+
+    const twoAppRows = [
+        { resource_type: "assistant", resource_id: "11", level: "viewer", source: "direct" },
+        { resource_type: "workflow", resource_id: "22", level: "editor", source: "direct" },
+    ]
+
+    it("filters grants by the displayed name", async () => {
+        mockAppNames()
+        listGrantsMock.mockResolvedValue({ data: twoAppRows, total: 2 })
+
+        render(<ResourceGrantsTab account={account} onGrantsChanged={vi.fn()} />)
+        expect(await screen.findByText("Assistant Eleven")).toBeTruthy()
+
+        fireEvent.change(screen.getByPlaceholderText("grants.searchPlaceholder"), { target: { value: "Two" } })
+        await waitFor(() => expect(screen.queryByText("Assistant Eleven")).toBeNull())
+        expect(screen.getByText("Workflow Two")).toBeTruthy()
+    })
+
+    it("still matches rows whose names could not be resolved", async () => {
+        listGrantsMock.mockResolvedValue({
+            data: [{ resource_type: "managed_agent", resource_id: "7", level: "editor", source: "direct" }],
+            total: 1,
+        })
+        listManagedAgentsMock.mockResolvedValue({ data: [], total: 0 })
+
+        render(<ResourceGrantsTab account={account} onGrantsChanged={vi.fn()} />)
+        expect(await screen.findByText("7")).toBeTruthy()
+
+        fireEvent.change(screen.getByPlaceholderText("grants.searchPlaceholder"), { target: { value: "7" } })
+        expect(screen.getByText("7")).toBeTruthy()
+    })
+
+    it("sorts by resource name in both directions", async () => {
+        mockAppNames()
+        listGrantsMock.mockResolvedValue({ data: twoAppRows, total: 2 })
+
+        render(<ResourceGrantsTab account={account} onGrantsChanged={vi.fn()} />)
+        await screen.findByText("Assistant Eleven")
+
+        fireEvent.click(screen.getByRole("button", { name: /grants.columns.name/ }))
+        await waitFor(() => {
+            const rows = screen.getAllByRole("row").slice(1)
+            expect(within(rows[0]).getByText("Assistant Eleven")).toBeTruthy()
+        })
+
+        fireEvent.click(screen.getByRole("button", { name: /grants.columns.name/ }))
+        await waitFor(() => {
+            const rows = screen.getAllByRole("row").slice(1)
+            expect(within(rows[0]).getByText("Workflow Two")).toBeTruthy()
+        })
+    })
+
+    it("edits a direct grant level without revoking", async () => {
+        mockAppNames()
+        listGrantsMock.mockResolvedValue({ data: [twoAppRows[0]], total: 1 })
+        mutateGrantsMock.mockResolvedValue({ account_id: 53, granted: 1, revoked: 0 })
+
+        render(<ResourceGrantsTab account={account} onGrantsChanged={vi.fn()} />)
+        await screen.findByText("Assistant Eleven")
+
+        fireEvent.click(screen.getByText("grants.edit"))
+        expect(await screen.findByText("grants.levelDialog.title")).toBeTruthy()
+        fireEvent.click(screen.getByText("grants.levelDialog.save"))
+
+        await waitFor(() =>
+            expect(mutateGrantsMock).toHaveBeenCalledWith(53, {
+                grants: [{ resource_type: "assistant", resource_id: "11", level: "viewer" }],
+            }),
+        )
+        expect(mutateGrantsMock.mock.calls[0][1]).not.toHaveProperty("revokes")
+    })
+
+    it("does not offer level editing for inherited grants", async () => {
+        listGrantsMock.mockResolvedValue({
+            data: [{ resource_type: "managed_agent", resource_id: "7", level: "viewer", source: "inherited" }],
+            total: 1,
+        })
+        listManagedAgentsMock.mockResolvedValue({ data: [], total: 0 })
+
+        render(<ResourceGrantsTab account={account} onGrantsChanged={vi.fn()} />)
+        expect(await screen.findByText("grants.inheritedHint")).toBeTruthy()
+        expect(screen.queryByText("grants.edit")).toBeNull()
     })
 })
