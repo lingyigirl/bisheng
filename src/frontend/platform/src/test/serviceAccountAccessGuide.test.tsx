@@ -9,11 +9,19 @@
  * together with `accessGuide.md`, and this test goes red if they drift.
  */
 import { AccessGuideTab } from "@/pages/SystemPage/components/ServiceAccount/AccessGuideTab"
+import { getOpenApiBaseUrlApi } from "@/controllers/API/serviceAccount"
 import { copyText } from "@/utils"
 import { fireEvent, render, screen, waitFor } from "@/test/test-utils"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/utils", () => ({ copyText: vi.fn() }))
+
+// Address provenance is fetched once on mount; the default mock keeps the
+// console-origin behaviour the rest of these tests were written against.
+vi.mock("@/controllers/API/serviceAccount", () => ({
+    getOpenApiBaseUrlApi: vi.fn(async () => ({ configured: "", detected: null })),
+}))
+const getOpenApiBaseUrlMock = vi.mocked(getOpenApiBaseUrlApi)
 
 const toastMock = vi.fn()
 vi.mock("@/components/bs-ui/toast/use-toast", () => ({
@@ -40,6 +48,9 @@ function readBlob(blob: Blob): Promise<string> {
 
 const baseUrlInput = () => screen.getByLabelText("guide.baseUrlLabel") as HTMLInputElement
 const bodyText = () => document.body.textContent ?? ""
+// The i18n mock returns keys verbatim, so the rendered label cannot distinguish
+// provenance — assert the machine-readable attribute the badge carries instead.
+const sourceBadge = () => document.querySelector("[data-source]") as HTMLElement | null
 
 function setAddress(value: string) {
     const input = baseUrlInput()
@@ -52,6 +63,7 @@ describe("AccessGuideTab (F076)", () => {
         vi.clearAllMocks()
         window.localStorage.clear()
         copyTextMock.mockResolvedValue(undefined as never)
+        getOpenApiBaseUrlMock.mockResolvedValue({ configured: "", detected: null })
         clickedAnchor = null
         Object.defineProperty(URL, "createObjectURL", { value: createObjectURLMock, writable: true, configurable: true })
         Object.defineProperty(URL, "revokeObjectURL", { value: revokeObjectURLMock, writable: true, configurable: true })
@@ -139,22 +151,69 @@ describe("AccessGuideTab (F076)", () => {
         await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ description: "guide.copyFailed" })))
     })
 
-    it("keeps the document in step with the backend contract (21 codes, 8 scopes)", () => {
+    it("keeps the document in step with the backend contract (33 codes, 10 scopes)", () => {
         render(<AccessGuideTab />)
         const text = bodyText()
-        const codes = new Set(text.match(/118\d\d/g) ?? [])
-        expect(codes.size).toBe(21)
+        expect(new Set(text.match(/118\d\d/g) ?? []).size).toBe(21)
+        expect([...new Set(text.match(/119\d\d/g) ?? [])].sort()).toEqual([
+            "11907",
+            "11910",
+            "11911",
+            "11912",
+            "11916",
+        ])
+        expect([...new Set(text.match(/121\d\d/g) ?? [])].sort()).toEqual([
+            "12105",
+            "12106",
+            "12107",
+            "12111",
+            "12112",
+            "12113",
+            "12114",
+        ])
         for (const scope of [
             "workflow:invoke",
             "workflow:read",
             "assistant:invoke",
             "assistant:read",
             "chat:invoke",
+            "schedule:trigger",
+            "managed_agent:invoke",
             "knowledge:read",
             "knowledge:write",
             "delegate",
         ]) {
             expect(text).toContain(scope)
         }
+    })
+
+    it("shows the ops-configured address instead of the console default", async () => {
+        getOpenApiBaseUrlMock.mockResolvedValue({ configured: "https://gw.example.com", detected: null })
+        window.localStorage.setItem(STORAGE_KEY, "https://stored.example.com")
+
+        render(<AccessGuideTab />)
+
+        // Ops config outranks a stale per-browser override.
+        await waitFor(() => expect(baseUrlInput().value).toBe("https://gw.example.com"))
+        expect(sourceBadge()?.dataset.source).toBe("configured")
+    })
+
+    it("falls back to the backend-detected address on the dev server", async () => {
+        getOpenApiBaseUrlMock.mockResolvedValue({ configured: "", detected: "http://10.0.0.5:7860" })
+
+        render(<AccessGuideTab />)
+
+        await waitFor(() => expect(baseUrlInput().value).toBe("http://10.0.0.5:7860"))
+        expect(sourceBadge()?.dataset.source).toBe("detected")
+    })
+
+    it("keeps the console default when the address lookup fails", async () => {
+        getOpenApiBaseUrlMock.mockRejectedValue(new Error("older backend"))
+
+        render(<AccessGuideTab />)
+
+        await waitFor(() => expect(getOpenApiBaseUrlMock).toHaveBeenCalled())
+        expect(baseUrlInput().value).toBe(window.location.origin)
+        expect(sourceBadge()?.dataset.source).toBe("console")
     })
 })

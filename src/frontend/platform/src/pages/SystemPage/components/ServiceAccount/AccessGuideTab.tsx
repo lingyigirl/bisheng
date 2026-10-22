@@ -8,34 +8,91 @@ import { MarkdownDoc } from "@/components/bs-comp/markdown/MarkdownDoc"
 import { Button } from "@/components/bs-ui/button"
 import { Input } from "@/components/bs-ui/input"
 import { toast } from "@/components/bs-ui/toast/use-toast"
+import { getOpenApiBaseUrlApi } from "@/controllers/API/serviceAccount"
 import { copyText } from "@/utils"
 import { formatDate, formatIsoDateTime } from "@/util/utils"
 import { Check, Download } from "lucide-react"
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import GUIDE_MD from "./accessGuide.md?raw"
 import {
     applyGuidePlaceholders,
     buildGuideText,
-    defaultGuideBaseUrl,
+    clearStoredGuideBaseUrl,
+    GuideBaseUrlSource,
+    isDevServer,
     normalizeAccessBaseUrl,
     readStoredGuideBaseUrl,
+    resolveGuideBaseUrl,
     storeGuideBaseUrl,
 } from "./accessGuide"
 
 const COPIED_RESET_MS = 2000
 
+/** i18n key for each provenance label shown next to the address input. */
+const SOURCE_LABEL_KEYS: Record<GuideBaseUrlSource, string> = {
+    configured: "guide.baseUrlSourceConfigured",
+    stored: "guide.baseUrlSourceStored",
+    detected: "guide.baseUrlSourceDetected",
+    console: "guide.baseUrlSourceConsole",
+}
+
 export function AccessGuideTab() {
     const { t } = useTranslation("serviceAccount")
+    // Resolve once at mount: the backend lookup below refines this default; it
+    // must not re-read localStorage, where an address saved after mount (by an
+    // edit) would masquerade as a pre-existing override.
+    const [initial] = useState(() =>
+        resolveGuideBaseUrl({ stored: readStoredGuideBaseUrl(), isDev: isDevServer() }),
+    )
+    const storedAtMount = initial.source === "stored" ? initial.url : null
     // Committed address (drives both the rendered body and the export) vs. the
     // draft the admin is typing: an invalid draft only shows the inline error
     // and never replaces the committed value, so the document can't go bad
     // halfway through an edit.
-    const [baseUrl, setBaseUrl] = useState(() => readStoredGuideBaseUrl() ?? defaultGuideBaseUrl())
-    const [draft, setDraft] = useState(baseUrl)
+    const [baseUrl, setBaseUrl] = useState(initial.url)
+    const [draft, setDraft] = useState(initial.url)
+    const [source, setSource] = useState<GuideBaseUrlSource>(initial.source)
     const [invalid, setInvalid] = useState(false)
     const [copied, setCopied] = useState(false)
     const copiedTimer = useRef<number | undefined>(undefined)
+    // Once the admin edits or resets, the late-arriving backend answer must not
+    // overwrite their choice — it only fills in a default nobody has touched.
+    const edited = useRef(false)
+    const candidates = useRef<{ configured?: string | null; detected?: string | null }>({})
+    // Mirror of the committed pair; lets the async effect skip re-rendering when
+    // the backend confirms the default already on screen.
+    const committed = useRef({ url: initial.url, source: initial.source })
+
+    useEffect(() => {
+        let cancelled = false
+        // Best effort: an older backend (404) or a transient error must leave the
+        // synchronous console-origin default in place rather than break the tab.
+        getOpenApiBaseUrlApi()
+            .then((sources) => {
+                if (cancelled) return
+                candidates.current = sources
+                if (edited.current) return
+                const next = resolveGuideBaseUrl({
+                    ...sources,
+                    stored: storedAtMount,
+                    isDev: isDevServer(),
+                })
+                if (committed.current.url === next.url && committed.current.source === next.source) return
+                committed.current = { url: next.url, source: next.source }
+                setBaseUrl(next.url)
+                setDraft(next.url)
+                setSource(next.source)
+            })
+            .catch(() => {
+                // No address sources available — the console-origin default stands.
+            })
+        return () => {
+            cancelled = true
+        }
+        // `storedAtMount` is derived once from mount state, so this stays a
+        // single lookup per mount.
+    }, [storedAtMount])
 
     const rendered = useMemo(() => applyGuidePlaceholders(GUIDE_MD, baseUrl), [baseUrl])
 
@@ -60,18 +117,28 @@ export function AccessGuideTab() {
             setInvalid(true)
             return
         }
+        edited.current = true
         setInvalid(false)
         setDraft(next)
         setBaseUrl(next)
+        setSource("stored")
+        committed.current = { url: next, source: "stored" }
         storeGuideBaseUrl(next)
     }
 
     const handleReset = () => {
-        const next = defaultGuideBaseUrl()
+        // Back to the deployment default, which may be the ops config or the
+        // backend-detected address rather than this console's origin.
+        const next = resolveGuideBaseUrl({ ...candidates.current, isDev: isDevServer() })
+        // If the source lookup has not returned yet, let it land afterwards — it
+        // resolves to the same default the admin just asked for.
+        edited.current = candidates.current.configured !== undefined
         setInvalid(false)
-        setDraft(next)
-        setBaseUrl(next)
-        storeGuideBaseUrl(next)
+        setDraft(next.url)
+        setBaseUrl(next.url)
+        setSource(next.source)
+        committed.current = { url: next.url, source: next.source }
+        clearStoredGuideBaseUrl()
     }
 
     const handleCopy = () => {
@@ -113,9 +180,17 @@ export function AccessGuideTab() {
 
             <div className="flex shrink-0 flex-wrap items-end gap-3">
                 <div className="w-[420px] max-w-full">
-                    <label className="bisheng-label mb-2 block" htmlFor="open-api-guide-base-url">
-                        {t("guide.baseUrlLabel")}
-                    </label>
+                    <div className="mb-2 flex items-center gap-2">
+                        <label className="bisheng-label" htmlFor="open-api-guide-base-url">
+                            {t("guide.baseUrlLabel")}
+                        </label>
+                        <span
+                            data-source={source}
+                            className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                        >
+                            {t("guide.baseUrlSourceLabel", { source: t(SOURCE_LABEL_KEYS[source]) })}
+                        </span>
+                    </div>
                     <Input
                         id="open-api-guide-base-url"
                         value={draft}

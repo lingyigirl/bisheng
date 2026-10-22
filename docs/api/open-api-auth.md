@@ -2,8 +2,8 @@
 
 > 面向：**对接方开发**（携带密钥调用 `/api/v2`）与**平台运维**（签发/吊销/排障）
 > 适用范围：`/api/v2` 的全部端点（HTTP 与 WebSocket）
-> 平台内查看与导出：控制台「系统 → 服务账号 → 接入指南」提供对接方直接可用的接入说明（接入地址按环境实时替换、curl 示例、权限位与错误码全表），可复制全文或导出 Markdown，内容与本文同源
-> 配套：[`开放API密钥鉴权迁移指引.md`](../开放API密钥鉴权迁移指引.md)（存量调用方切换与回退）、[`filelib-retrieve.md`](filelib-retrieve.md)（纯检索接口参考）、[`知识库接口文档.md`](知识库接口文档.md)（知识空间/知识库接口）
+> 平台内查看与导出：控制台「系统 → 服务账号 → 接入指南」提供对接方直接可用的接入说明（接入地址按环境实时替换、curl 示例、权限位与错误码全表），可复制全文或导出 Markdown。两份文档同步维护，均覆盖 118xx / 119xx / 121xx
+> 配套：[`开放API密钥鉴权迁移指引.md`](../开放API密钥鉴权迁移指引.md)（存量调用方切换与回退）、[`filelib-retrieve.md`](filelib-retrieve.md)（纯检索接口参考）、[`知识库接口文档.md`](知识库接口文档.md)（知识空间/知识库接口）、[`scheduled-task-trigger.md`](scheduled-task-trigger.md)（事件触发端点）、[`managed-agents.md`](managed-agents.md)（纳管智能体调用）
 
 ---
 
@@ -63,9 +63,15 @@ Authorization: Bearer bs-sak-<43 字符>
 
 ## 5. 资源可见范围
 
-- 可见范围 = **该专用身份在平台权限体系中的资源授权**（应用、工作流、知识库等）。默认**为空**。
-- 管理员在服务账号详情页的「资源授权」里代管这些授权（也可用 `POST /api/v1/service-accounts/{id}/resource-grants:mutate`）；授权有档位：`viewer` / `editor` / `manager`。
-- **对接方应把 `403` 与 `404` 都当作"未授权/不可见"处理**：资源不在授权范围、或本就不可见，都按"不能访问"实现降级（不要据此区分资源存在性）。
+- 可见范围 = **该专用身份在平台权限体系中的资源授权**。默认**为空**。
+- 可授权的资源类型：`knowledge_library`（知识库）、`knowledge_space`（知识空间）、`assistant`（助手）、`workflow`（工作流）、`managed_agent`（纳管智能体）。
+- 管理员在服务账号详情页的「资源授权」里代管这些授权（也可用 `POST /api/v1/service-accounts/{id}/resource-grants:mutate`）；授权有档位：`viewer` / `editor` / `manager`（不含 `owner`）。
+- 调用类端点的档位要求：
+  - 工作流调用/停止、`/api/v2/chat/*`、`schedule/trigger`：需要 `use_app`，即 **editor 及以上**；
+  - 助手对话 `POST /api/v2/assistant/chat/completions`：`view_app` **或** `use_app` 任一即可，**viewer 也够**；
+  - `managed-agent/invoke`：需要 **editor**；
+  - 只读的列表与详情：viewer 即可。
+- **对接方应把 `403` 与 `404` 都当作"未授权/不可见"处理**：资源不在授权范围、或本就不可见，都按"不能访问"实现降级（不要据此区分资源存在性）。档位不足是 `403 / 11808`（资源可见），不可见是 `404 / 11809`。
 
 ## 6. 错误码与 HTTP 状态
 
@@ -75,6 +81,11 @@ Authorization: Bearer bs-sak-<43 字符>
 {"status_code": 11807, "status_message": "Missing the scope required by this endpoint",
  "data": {"exception": "...", "required": "knowledge:read"}}
 ```
+
+- **两个例外，不要按 HTTP 状态判断**：请求参数缺失/类型错误返回 HTTP **200** + `status_code: 422`；工作流内部错误（如续跑缺 `message_id`）返回 HTTP **200** + `status_code: 500`。
+- `managed_agent.enabled=false` 时 `POST /api/v2/managed-agent/invoke` 路由不存在，返回**普通 404**（无统一信封）。
+
+### 6.1 鉴权与授权（118xx）
 
 | 码 | HTTP | 含义 | 对接方动作 |
 |---|---|---|---|
@@ -99,6 +110,36 @@ Authorization: Bearer bs-sak-<43 字符>
 | 11819 | 400 | 签发/编辑密钥时指定了未登记的权限位 | 从目录端点取合法 code |
 | 11820 | 400 | 授权代管时资源类型/档位不在白名单 | 见第 5 节 |
 | 11821 | 400 | 该用户是服务账号专用身份，不允许在用户侧人工管理 | 到「服务账号」页操作 |
+
+### 6.2 事件触发（119xx）
+
+仅 `POST /api/v2/schedule/trigger` 产生；完整说明见 [`scheduled-task-trigger.md`](scheduled-task-trigger.md)。
+
+| 码 | HTTP | 含义 | 对接方动作 |
+|---|---|---|---|
+| 11907 | 409 | 目标应用不可用（下线/不可调度） | 联系管理员恢复应用 |
+| 11910 | 409 | 该任务已有运行在进行 | 等本次运行结束后再触发 |
+| 11911 | 429 | 任务级触发频控（默认 10 次/分钟/任务） | 降低频率后重试；响应**不带** `Retry-After` |
+| 11912 | 400 | 时间戳超窗/缺失，或 nonce 重放 | 校准系统时钟，每次使用新的 nonce |
+| 11916 | 400 | 触发载荷含多余字段 | 只传 `task_id` 与 `inputs` |
+
+> 事件触发同样会返回 `11801`（缺密钥）、`11807`（缺权限位）、`11809`（任务不可见/不存在）、`11812`（Redis 不可用，防重放 fail-closed）、`11817`（裸 `user_id`），按 6.1 处理。
+
+### 6.3 纳管智能体调用（121xx）
+
+仅 `POST /api/v2/managed-agent/invoke` 产生；完整说明见 [`managed-agents.md`](managed-agents.md)。
+
+| 码 | HTTP | 含义 | 对接方动作 |
+|---|---|---|---|
+| 12105 | 400 | 智能体未上线（草稿/下线/停用） | 联系管理员上线 |
+| 12106 | 502 | 上游调用失败或超时 | 稍后重试；持续失败联系管理员 |
+| 12107 | 502 | 上游凭据缺失/无效/无法解密 | 联系管理员检查凭据 |
+| 12111 | 403 | 出站地址被 SSRF / allowlist 拒绝 | 联系管理员调整出站白名单 |
+| 12112 | 429 | 调用频控（默认 60 次/分钟） | 按响应头 `Retry-After` 退避重试 |
+| 12113 | 502 | 上游响应非法或超限 | 联系管理员核对上游协议 |
+| 12114 | 400 | 调用载荷含非法字段或类型错误 | 见 [`managed-agents.md`](managed-agents.md) |
+
+> 纳管调用同样会返回 `11801`、`11807`、`11809`、`11812`、`11817`，按 6.1 处理。
 
 三语文案（中/英/日）由平台统一维护，错误码含义与文案同源。
 
@@ -130,3 +171,39 @@ Authorization: Bearer bs-sak-<43 字符>
 | 404 / 11809 | 资源未授权给该账号：在服务账号页「资源授权」里授予，或核对资源 ID |
 | 401 / 11805 | 服务账号被停用；确认后在服务账号页启用（密钥需重新签发） |
 | 同一个密钥昨天能用今天不行 | 检查有效期（列表可见"有效期至"）与是否被 `revoke-all` |
+| 409 / 11910、429 / 11911、400 / 11912 | 事件触发：任务运行未结束、触发频控、时间戳超窗或 nonce 重放（11911 **不带** `Retry-After`） |
+| 400 / 12105、502 / 12106 / 12107 / 12113、403 / 12111、429 / 12112 | 纳管调用：智能体未上线、上游失败/凭据/响应非法、出站被拒、频控 |
+| HTTP 200 但 `status_code` 是 422 | 缺必填参数或类型错误（平台统一在响应体里回业务码） |
+
+## 11. 事件触发端点（`POST /api/v2/schedule/trigger`）
+
+- **鉴权**：必须携带密钥（权限位 `schedule:trigger`）；即使部署总闸 `open_api.enforce_keys` 关闭，本端点**仍要求有效密钥**（否则 `401 / 11801`）。
+- **请求头**：`X-Bs-Timestamp`（epoch 秒，允许 ±300 秒）与 `X-Bs-Nonce`（一次性，窗口内重复即拒）。
+- **请求体**：`{"task_id": <int>, "inputs": {...}?}`；`inputs` **被接收但当前不生效**，运行时入参取自任务预设；多余字段 `400 / 11916`。
+- **资源要求**：密钥身份需对任务目标应用有 `use_app`；否则 `404 / 11809`（不区分不存在、停用与越权）。
+- **成功响应**：`{"status_code":200,"status_message":"SUCCESS","data":{"task_id":<id>,"run_trace_id":"..."}}`，受理即返回。
+- **错误**：见 6.2。
+
+```bash
+TS=$(date +%s); NONCE=$(uuidgen)
+curl -s -X POST "$BASE/api/v2/schedule/trigger" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -H "X-Bs-Timestamp: $TS" -H "X-Bs-Nonce: $NONCE" \
+  -d '{"task_id":123}'
+```
+
+## 12. 纳管智能体调用端点（`POST /api/v2/managed-agent/invoke`）
+
+- **鉴权**：必须携带密钥（权限位 `managed_agent:invoke`）；总闸关闭时同样要求有效密钥。
+- **请求体**：`{"agent_id": <int>, "input": <any>, "session_id": "<str>"?}`；多余字段或类型错误 `400 / 12114`。
+- **资源要求**：智能体须已上线，且密钥身份对其有 **editor** 授权；否则 `404 / 11809`，未上线 `400 / 12105`。
+- **成功响应**：`{"status_code":200,"status_message":"SUCCESS","data":{"run_id":"...","output":"...","usage":{...}}}`。
+- **频控**：60 次/分钟（租户+智能体），`429 / 12112` 带 `Retry-After`；健康检查不计入。
+- **功能开关**：`managed_agent.enabled=false` 时路由不挂载，返回**普通 404**。
+- **错误**：见 6.3。
+
+```bash
+curl -s -X POST "$BASE/api/v2/managed-agent/invoke" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"agent_id":29,"input":{"query":"你好"}}'
+```

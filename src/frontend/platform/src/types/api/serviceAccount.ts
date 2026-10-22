@@ -137,3 +137,14 @@ export interface ServiceAccountKeyUpdate {
     /** Explicit null clears the expiry (= never expires). */
     expires_at?: string | null
 }
+
+/**
+ * Address sources for the access guide. `configured` is the ops-set
+ * `open_api.public_base_url` (authoritative); `detected` is the backend's
+ * best-effort `http://<host-ip>:<listen-port>` and may be unreachable behind a
+ * gateway, so it never overrides `configured`.
+ */
+export interface OpenApiBaseUrl {
+    configured: string
+    detected: string | null
+}

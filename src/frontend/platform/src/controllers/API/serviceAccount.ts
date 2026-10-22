@@ -3,6 +3,7 @@
 // resolve to the envelope `data` payload directly (see @/controllers/request).
 import axios from "@/controllers/request"
 import {
+    OpenApiBaseUrl,
     OpenApiScopePage,
     ResourceGrantItemInput,
     ResourceGrantMutateResult,
@@ -119,4 +120,18 @@ export async function enableServiceAccountApi(accountId: number): Promise<Servic
 
 export async function disableServiceAccountApi(accountId: number): Promise<ServiceAccount> {
     return await axios.post(`/api/v1/service-accounts/${accountId}/disable`)
+}
+
+/**
+ * Where the access guide's default address should come from. `configured` is
+ * the ops-set public base URL; `detected` is the backend's guessed host:port and
+ * may be null when it cannot determine one.
+ *
+ * `silent: true`: during a rolling upgrade an older backend answers 404, which
+ * the global interceptor would turn into a full-page /404 redirect. The caller
+ * treats any failure as "no address sources" and keeps the console default.
+ */
+export async function getOpenApiBaseUrlApi(): Promise<OpenApiBaseUrl> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `silent` is a custom axios config flag (see request.ts)
+    return await axios.get(`/api/v1/open-api/base-url`, { silent: true } as any)
 }

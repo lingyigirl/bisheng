@@ -6,8 +6,9 @@
 // "what the integrator receives" can never drift apart.
 //
 // Sync note: the body quotes docs/api/open-api-auth.md for the permission
-// scopes and the 11801–11821 error-code table, and src/backend/bisheng/
-// open_api/domain/scopes.py is the runtime authority — change one, change all.
+// scopes and the 118xx/119xx/121xx error-code tables, while src/backend/bisheng/
+// open_api/domain/scopes.py and common/errcode/{open_api,scheduled_task,
+// managed_agent}.py are the runtime authority — change one, change all.
 
 declare const __APP_ENV__: { BASE_URL?: string } | undefined
 
@@ -44,13 +45,64 @@ export function deriveWsBaseUrl(baseUrl: string): string {
 }
 
 /**
- * Default address = the deployment this console is served from. The build-time
- * base path is part of the API path (under a reverse proxy the API lives at
- * origin + BASE_URL + /api/v2/...), so it must not be dropped.
+ * Vite's dev flag. Strict files do not get `vite/client` types here (the
+ * project has no ambient reference), so `import.meta.env` is read through a
+ * narrow cast instead of pulling the global Vite types into every module.
  */
-export function defaultGuideBaseUrl(): string {
-    const prefix = __APP_ENV__?.BASE_URL ?? ""
-    return normalizeAccessBaseUrl(`${window.location.origin}${prefix}`) ?? window.location.origin
+export function isDevServer(): boolean {
+    return Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV)
+}
+
+/** Where the address currently shown came from — surfaced next to the input. */
+export type GuideBaseUrlSource = "configured" | "stored" | "detected" | "console"
+
+export interface GuideBaseUrlCandidates {
+    /** Ops-configured `open_api.public_base_url`; authoritative when present. */
+    configured?: string | null
+    /** Backend-detected "http://<host-ip>:<listen-port>"; a guess, dev-only default. */
+    detected?: string | null
+    /** The admin's saved override for this browser. */
+    stored?: string | null
+    origin?: string
+    prefix?: string
+    /** True only on the Vite dev server — the one topology where the console origin is *not* the API entry. */
+    isDev?: boolean
+}
+
+export interface GuideBaseUrlResolution {
+    url: string
+    source: GuideBaseUrlSource
+}
+
+/**
+ * Pick the address shown by default, in priority order:
+ *
+ *   ops config > admin's saved value > (dev server ? detected : console origin)
+ *
+ * Ops config wins over the saved value on purpose: a stale per-browser override
+ * must not survive a deliberate correction on the deployment.
+ *
+ * The detected value is only a fallback because a process cannot see its own
+ * public address — behind a gateway or TLS terminator the guessed host:port may
+ * be unreachable. In production the console's own origin is the documented
+ * entry (nginx proxies /api), so it stays the default there.
+ */
+export function resolveGuideBaseUrl(candidates: GuideBaseUrlCandidates = {}): GuideBaseUrlResolution {
+    const prefix = candidates.prefix ?? __APP_ENV__?.BASE_URL ?? ""
+    const origin = candidates.origin ?? window.location.origin
+    const consoleUrl = normalizeAccessBaseUrl(`${origin}${prefix}`) ?? origin
+
+    const configured = candidates.configured ? normalizeAccessBaseUrl(candidates.configured) : null
+    if (configured) return { url: configured, source: "configured" }
+
+    const stored = candidates.stored ? normalizeAccessBaseUrl(candidates.stored) : null
+    if (stored) return { url: stored, source: "stored" }
+
+    // The detected host does not carry the reverse-proxy prefix, so append it.
+    const detected = candidates.detected ? normalizeAccessBaseUrl(`${candidates.detected}${prefix}`) : null
+    if (candidates.isDev && detected) return { url: detected, source: "detected" }
+
+    return { url: consoleUrl, source: "console" }
 }
 
 /** Stored address, or null when absent/invalid — a dirty value never wins over the default. */
@@ -69,6 +121,19 @@ export function storeGuideBaseUrl(baseUrl: string): void {
         window.localStorage.setItem(GUIDE_BASE_URL_STORAGE_KEY, baseUrl)
     } catch {
         // Storage unavailable (private mode / quota): the in-memory value is enough.
+    }
+}
+
+/**
+ * Drop the saved override so the next mount resolves from the deployment's own
+ * sources again. "Restore default" must not pin the resolved default as a
+ * saved override — otherwise the provenance label would read "saved" forever.
+ */
+export function clearStoredGuideBaseUrl(): void {
+    try {
+        window.localStorage.removeItem(GUIDE_BASE_URL_STORAGE_KEY)
+    } catch {
+        // Storage unavailable: nothing was persisted in the first place.
     }
 }
 
