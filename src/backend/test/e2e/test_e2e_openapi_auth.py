@@ -254,8 +254,11 @@ def test_bare_user_id_is_rejected_in_query_and_body(client, state):
     )
 
 
-def _pick_grantable_assistant(client, state) -> str:
-    """挑一个真实助手并授予该服务账号:没有授权时一切资源都是 404,工具校验根本走不到。"""
+def _pick_grantable_assistant(client, state, level: str = "viewer") -> str:
+    """挑一个真实助手并授予该服务账号:没有授权时一切资源都是 404,工具校验根本走不到。
+
+    2026-10-22:助手对话改为要求 use_app(editor),读取仍 viewer;调用类用例需传 level="editor"。
+    """
     listing = client.get(f"{API_BASE}/assistant", headers=_admin_headers(state), params={"page_size": 1})
     items = listing.json().get("data", {}).get("data") or []
     if not items:
@@ -264,7 +267,7 @@ def _pick_grantable_assistant(client, state) -> str:
     granted = client.post(
         f"{API_BASE}/service-accounts/{state.account_id}/resource-grants:mutate",
         headers=_admin_headers(state),
-        json={"grants": [{"resource_type": "assistant", "resource_id": assistant_id, "level": "viewer"}], "revokes": []},
+        json={"grants": [{"resource_type": "assistant", "resource_id": assistant_id, "level": level}], "revokes": []},
     )
     assert granted.status_code == 200, granted.text
     return assistant_id
@@ -279,6 +282,18 @@ def test_assistant_visibility_allow_and_deny(client, state):
 
     deny = client.get(f"{V2_BASE}/assistant/info/{uuid.uuid4().hex}", headers=_bearer(key))
     _expect(deny, 404, 11809)
+
+
+def test_assistant_chat_requires_editor(client, state):
+    """2026-10-22:助手对话与工作流一致——viewer 只够读详情/列表,调用返回 404/11809。"""
+    key = _issue_key(client, state, name="inv", scopes=["assistant:invoke"])
+    granted_id = _pick_grantable_assistant(client, state)  # 默认 viewer
+    resp = client.post(
+        f"{V2_BASE}/assistant/chat/completions",
+        headers=_bearer(key),
+        json={"model": granted_id, "messages": [{"role": "user", "content": "hi"}], "stream": False},
+    )
+    _expect(resp, 404, 11809)
 
 
 def test_filelib_retrieve_masks_ungranted_and_missing(client, state):
@@ -312,7 +327,7 @@ def test_filelib_retrieve_masks_ungranted_and_missing(client, state):
 def test_unknown_tool_is_rejected(client, state):
     """AC-31(工具白名单 deny):已授权助手上指定未绑定的 tool_key → 403/11815(不静默忽略)。"""
     key = _issue_key(client, state, name="tools", scopes=["assistant:invoke"])
-    granted_id = _pick_grantable_assistant(client, state)
+    granted_id = _pick_grantable_assistant(client, state, level="editor")
     resp = client.post(
         f"{V2_BASE}/assistant/chat/completions",
         headers=_bearer(key),

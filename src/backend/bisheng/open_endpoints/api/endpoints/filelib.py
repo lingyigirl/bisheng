@@ -47,6 +47,8 @@ from bisheng.open_endpoints.domain.schemas.filelib import (
     RetrieveResp,
 )
 from bisheng.open_endpoints.domain.utils import (
+    _is_key_authenticated_call,
+    assert_open_api_knowledge_usable,
     assert_open_api_knowledge_visible_sync,
     get_default_operator,
     get_default_operator_async,
@@ -698,6 +700,9 @@ async def retrieve_chunks(
     login_user = await resolve_operator(req.user_id)
     chat_svc = KnowledgeSpaceChatService(request=request, login_user=login_user)
     chat_svc.version_repo = version_repo
+    # F076 增量(2026-10-22):密钥调用时检索要求普通知识库的 use_kb(与工作站
+    # 对话口径一致);知识空间无 use_* 权限,helper 内跳过。非密钥调用 no-op。
+    await assert_open_api_knowledge_usable(req.knowledge_base_ids, login_user)
 
     kb_filters = None
     if req.filters and req.filters.knowledge_base_filters:
@@ -740,11 +745,29 @@ async def retrieve_chunks(
 def query_qa(QueryQAParam: QueryQAParam):
     """Deleteqa Question to Information"""
     # Seed the tenant ContextVar before the tenant-aware read.
-    get_default_operator()
+    login_user = get_default_operator()
     sources = [1, 2]  # 3 Yes apiInverted
     qa_list = QAKnoweldgeDao.query_by_condition_v1(
         source=sources, create_start=QueryQAParam.timeRange[0], create_end=QueryQAParam.timeRange[1]
     )
+
+    # F076 增量(2026-10-22):密钥调用只返回该身份有 view_kb 的知识库下的问答行。
+    # 非密钥调用完全不走权限服务,返回集与改动前一致。
+    if _is_key_authenticated_call() and qa_list:
+        from bisheng.knowledge.domain.services.knowledge_permission_service import (
+            KnowledgePermissionService,
+        )
+
+        verdict: dict[int, bool] = {}
+        visible = []
+        for q in qa_list:
+            kb_id = int(q.knowledge_id)
+            if kb_id not in verdict:
+                verdict[kb_id] = KnowledgePermissionService.check_permission_id_sync(login_user, kb_id, "view_kb")
+            if verdict[kb_id]:
+                visible.append(q)
+        qa_list = visible
+
     if qa_list:
         for q in qa_list:
             q.answers = json.loads(q.answers)
