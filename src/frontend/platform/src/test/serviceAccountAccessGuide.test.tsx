@@ -151,7 +151,7 @@ describe("AccessGuideTab (F076)", () => {
         await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ description: "guide.copyFailed" })))
     })
 
-    it("keeps the document in step with the backend contract (35 codes, 10 scopes)", () => {
+    it("keeps the document in step with the backend contract (35 codes, 12 scopes)", () => {
         render(<AccessGuideTab />)
         const text = bodyText()
         expect(new Set(text.match(/118\d\d/g) ?? []).size).toBe(23)
@@ -176,11 +176,13 @@ describe("AccessGuideTab (F076)", () => {
             "workflow:read",
             "assistant:invoke",
             "assistant:read",
+            "llm:workbench",
             "chat:invoke",
             "schedule:trigger",
             "managed_agent:invoke",
             "knowledge:read",
             "knowledge:write",
+            "diagnostics:read",
             "delegate",
         ]) {
             expect(text).toContain(scope)

@@ -57,6 +57,13 @@ function sameAgentSet(left: AgentRef[], right: AgentRef[]): boolean {
 /** Expiry presets offered on top of "never" and a custom datetime. */
 const PRESET_DAYS: Record<string, number> = { d90: 90, d180: 180, d365: 365 }
 
+/** Scope each agent type needs for the allowlist entry to be callable at all. */
+const AGENT_INVOKE_SCOPE: Record<AgentRef["type"], string> = {
+    assistant: "assistant:invoke",
+    workflow: "workflow:invoke",
+    managed_agent: "managed_agent:invoke",
+}
+
 /**
  * Naive local ISO string. The backend stores and compares naive local time
  * (its own serialiser emits no timezone), so `toISOString()` would shift the
@@ -89,6 +96,8 @@ interface KeyIssueDialogProps {
     /** Set = edit mode. PATCH only carries the fields that actually changed. */
     editing?: ServiceAccountKey | null
     onClose: (open: boolean) => void
+    /** Switches to the grants tab; closing this dialog first is the caller's job. */
+    onGoToGrants?: () => void
     /** Creating only: the response carries the plaintext for the issue dialog. */
     onIssued: (issued: ServiceAccountKeyIssued, name: string) => void
     onUpdated: () => void
@@ -101,6 +110,7 @@ export function KeyIssueDialog({
     assignableAgents,
     editing = null,
     onClose,
+    onGoToGrants,
     onIssued,
     onUpdated,
 }: KeyIssueDialogProps) {
@@ -156,6 +166,27 @@ export function KeyIssueDialog({
         return options
     }, [assignableAgents, editing, t])
 
+    /** Scopes implied by the selected agents but absent from the key. Advisory
+     *  only: a knowledge-only key is legitimate, so this never blocks submit. */
+    const missingAgentScopes = useMemo(() => {
+        if (!restrictAgents || selectedAgents.length === 0) return []
+        const needed = new Set<string>()
+        for (const value of selectedAgents) {
+            const ref = parseAgentOption(value)
+            if (ref) needed.add(AGENT_INVOKE_SCOPE[ref.type])
+        }
+        return [...needed].filter((code) => !selected.includes(code))
+    }, [restrictAgents, selectedAgents, selected])
+
+    /**
+     * True when saving would persist `allowed_apps: []` -- an allowlist that
+     * matches no agent, so the key can call nothing. Creating one is always a
+     * mistake; editing a legacy empty allowlist stays allowed so the key can
+     * still be renamed.
+     */
+    const wouldWriteEmptyAllowlist = () =>
+        restrictAgents && selectedAgents.length === 0 && (!editing || (editing.allowed_apps?.length ?? 0) > 0)
+
     /** null = unrestricted; [] = no agent; otherwise the selected refs. */
     const buildAllowedApps = (): AgentRef[] | null => {
         if (!restrictAgents) return null
@@ -203,12 +234,19 @@ export function KeyIssueDialog({
             message({ title: t("prompt"), description: expiry.error, variant: "warning" })
             return
         }
-        // Warn, but allow: a knowledge-only key legitimately has no agents.
-        const agentScopesSelected = selected.some((code) =>
-            ["assistant:invoke", "workflow:invoke", "managed_agent:invoke"].includes(code),
-        )
-        if (restrictAgents && selectedAgents.length === 0 && agentScopesSelected) {
-            message({ title: t("prompt"), description: t("keys.form.agentsEmptyWarning"), variant: "warning" })
+        // Restricted keys must name at least one agent; an empty allowlist used
+        // to be written without any guard (the old code only warned when an
+        // invoke scope happened to be selected).
+        if (wouldWriteEmptyAllowlist()) {
+            message({
+                title: t("prompt"),
+                description:
+                    assignableAgents.length === 0
+                        ? t("keys.form.agentsNeedGrant")
+                        : t("keys.form.agentsEmptyWarning"),
+                variant: "warning",
+            })
+            return
         }
 
         setSubmitting(true)
@@ -325,7 +363,9 @@ export function KeyIssueDialog({
                             />
                             {t("keys.form.restrictAgents")}
                         </label>
-                        <p className="mt-1 text-xs text-muted-foreground">{t("keys.form.restrictAgentsHint")}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                            {restrictAgents ? t("keys.form.restrictAgentsHint") : t("keys.form.agentsUnrestrictedHint")}
+                        </p>
                         {restrictAgents && (
                             <div className="mt-2">
                                 <MultiSelect
@@ -337,10 +377,33 @@ export function KeyIssueDialog({
                                     searchPlaceholder={t("keys.form.agentsSearch")}
                                 />
                                 {selectedAgents.length === 0 && (
-                                    <p className="mt-1 text-xs text-amber-600">{t("keys.form.agentsEmptyWarning")}</p>
+                                    <p className="mt-1 text-xs text-amber-600">
+                                        {assignableAgents.length === 0
+                                            ? t("keys.form.agentsNeedGrant")
+                                            : t("keys.form.agentsEmptyWarning")}
+                                    </p>
                                 )}
-                                {assignableAgents.length === 0 && (
-                                    <p className="mt-1 text-xs text-muted-foreground">{t("keys.form.agentsNoOptions")}</p>
+                                {assignableAgents.length === 0 && onGoToGrants && (
+                                    <Button
+                                        variant="link"
+                                        size="sm"
+                                        className="mt-1 h-auto p-0"
+                                        onClick={() => {
+                                            onClose(false)
+                                            onGoToGrants()
+                                        }}
+                                    >
+                                        {t("keys.form.goToGrants")}
+                                    </Button>
+                                )}
+                                {selectedAgents.length > 0 && missingAgentScopes.length > 0 && (
+                                    <p className="mt-1 text-xs text-amber-600">
+                                        {t("keys.form.agentsMissingScopes", {
+                                            scopes: missingAgentScopes
+                                                .map((code) => t(scopeLocaleKey(code), { defaultValue: code }))
+                                                .join(", "),
+                                        })}
+                                    </p>
                                 )}
                             </div>
                         )}

@@ -8,7 +8,9 @@ is either guarded, explicitly filter-only, or explicitly exempted:
 - ``GUARDED``: handler source must call ``assert_open_api_agent_allowed*`` or
   ``assert_open_api_app_visible*`` (the latter embeds the allowlist check).
 - ``FILTER_ONLY``: ``/assistant/list`` filters by ``assistant_ids_in_allowlist``.
-- ``NON_AGENT_EXEMPT``: ASR/TTS share ``assistant:invoke`` but address no app.
+
+ASR/TTS live under the separate ``llm:workbench`` scope and address no agent, so
+they are outside the app-scope route set entirely (2026-10-22 security split).
 """
 
 import inspect
@@ -51,12 +53,6 @@ GUARDED = frozenset(
     }
 )
 FILTER_ONLY = frozenset({("GET", "/api/v2/assistant/list")})
-NON_AGENT_EXEMPT = frozenset(
-    {
-        ("POST", "/api/v2/llm/workbench/asr"),
-        ("POST", "/api/v2/llm/workbench/tts"),
-    }
-)
 
 _HELPER_NAMES = (
     "assert_open_api_agent_allowed",
@@ -97,7 +93,7 @@ def _app_scope_routes() -> set[tuple[str, str]]:
 def test_every_agent_addressed_route_is_classified():
     routes = _route_index()
     actual = _app_scope_routes() & set(routes)
-    expected = set(GUARDED) | set(FILTER_ONLY) | set(NON_AGENT_EXEMPT)
+    expected = set(GUARDED) | set(FILTER_ONLY)
 
     # The managed-agent face is mounted only when its feature flag is on.
     managed_pair = ("POST", "/api/v2/managed-agent/invoke")

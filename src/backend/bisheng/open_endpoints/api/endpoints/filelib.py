@@ -527,18 +527,28 @@ async def post_string_chunks(request: Request, document: ChunkInput):
     return resp_200(data=res)
 
 
-@open_api_scope("knowledge:read")
+#: 诊断日志根目录。用 realpath + commonpath 判定,inode 层解析后再比较,
+#: 既拒绝 `/app/database/...` 这类字符串前缀绕过,也允许指向根目录内的轮转软链。
+_DIAGNOSTICS_ROOT = "/app/data"
+
+
+@open_api_scope("diagnostics:read")
 @router.get("/download_statistic")
 def download_statistic_file(file_path: str):
-    suffix = file_path.split(".")[-1]
-    if suffix != "log":
+    if os.path.splitext(file_path)[1] != ".log":
         raise ServerError.http_exception(msg="only .log file supported download")
-    dir_path = file_path.replace(".log", "")
-    if dir_path.find(".") != -1 or not dir_path.startswith("/app/data"):
-        raise ServerError.http_exception(msg="invalid file path, file path must not contain .")
 
-    file_name = os.path.basename(file_path)
-    return FileResponse(file_path, filename=file_name)
+    root = os.path.realpath(_DIAGNOSTICS_ROOT)
+    resolved = os.path.realpath(file_path)
+    try:
+        inside = os.path.commonpath([resolved, root]) == root
+    except ValueError:
+        # Different drives / malformed paths on some platforms.
+        inside = False
+    if not inside or not os.path.isfile(resolved):
+        raise ServerError.http_exception(msg="invalid file path")
+
+    return FileResponse(resolved, filename=os.path.basename(resolved))
 
 
 @open_api_scope("knowledge:write")

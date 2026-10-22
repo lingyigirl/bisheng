@@ -4,7 +4,7 @@
 
 1. **注册表**(`OPEN_API_SCOPES`):每条 scope 硬编码它覆盖的 `(METHOD, path)` 端点,
    **不用通配**——上游同类实现即如此,通配会让"注册表 ↔ 真实路由"的双向守卫
-   (T-12)失去意义。44 条路由 = 42 HTTP + 2 WS(WS 用方法串 `WS`)。
+   (T-12)失去意义。46 条登记端点 = 44 HTTP + 2 WS(WS 用方法串 `WS`)。
 2. **标记助手**(`open_api_scope` 装饰器 + `get_open_api_scope_marker`):
    把 scope 挂到端点函数上,鉴权依赖经 `request.scope["endpoint"]` 读取。
    **fail-closed**:没打标记的端点会被依赖判为 500/11811(服务端配置错误),
@@ -35,7 +35,8 @@ class OpenApiScope:
     group: str
 
 
-#: 一期可签发的 10 项权限位（F077 追加 `schedule:trigger`，F078 追加 `managed_agent:invoke`）。`delegate` 为二期(受控代表调用)预留:
+#: 一期可签发的 12 项权限位（F077 追加 `schedule:trigger`，F078 追加 `managed_agent:invoke`，
+#: 2026-10-22 安全收口追加 `llm:workbench` 与 `diagnostics:read`）。`delegate` 为二期(受控代表调用)预留:
 #: 可签发但当前不产生任何生效行为(design §2.6,spec 已在 §2.6 声明)。
 OPEN_API_SCOPES: tuple[OpenApiScope, ...] = (
     OpenApiScope(
@@ -58,8 +59,6 @@ OPEN_API_SCOPES: tuple[OpenApiScope, ...] = (
         endpoints=(
             ("POST", f"{_V2}/assistant/chat/completions"),
             (WS, f"{_V2}/assistant/chat/{{assistant_id}}"),
-            ("POST", f"{_V2}/llm/workbench/asr"),
-            ("POST", f"{_V2}/llm/workbench/tts"),
         ),
     ),
     OpenApiScope(
@@ -68,6 +67,14 @@ OPEN_API_SCOPES: tuple[OpenApiScope, ...] = (
         endpoints=(
             ("GET", f"{_V2}/assistant/info/{{assistant_id}}"),
             ("GET", f"{_V2}/assistant/list"),
+        ),
+    ),
+    OpenApiScope(
+        code="llm:workbench",
+        group="llm",
+        endpoints=(
+            ("POST", f"{_V2}/llm/workbench/asr"),
+            ("POST", f"{_V2}/llm/workbench/tts"),
         ),
     ),
     OpenApiScope(
@@ -99,7 +106,6 @@ OPEN_API_SCOPES: tuple[OpenApiScope, ...] = (
             ("GET", f"{_V2}/filelib/"),
             ("GET", f"{_V2}/filelib/file/list"),
             ("POST", f"{_V2}/filelib/retrieve"),
-            ("GET", f"{_V2}/filelib/download_statistic"),
             ("GET", f"{_V2}/filelib/detail_qa"),
             ("POST", f"{_V2}/filelib/query_qa"),
             ("GET", f"{_V2}/knowledge/get_metadata_fields/{{knowledge_id}}"),
@@ -132,6 +138,12 @@ OPEN_API_SCOPES: tuple[OpenApiScope, ...] = (
             ("PUT", f"{_V2}/knowledge/file/modify_user_metadata"),
             ("DELETE", f"{_V2}/knowledge/file/delete_user_metadata"),
         ),
+    ),
+    OpenApiScope(
+        code="diagnostics:read",
+        group="diagnostics",
+        # 2026-10-22 安全收口:与知识资源读取解耦;仅服务诊断日志,默认不建议签发。
+        endpoints=(("GET", f"{_V2}/filelib/download_statistic"),),
     ),
     OpenApiScope(
         code="delegate",

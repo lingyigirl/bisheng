@@ -202,9 +202,11 @@ async def test_scopes_catalog_lists_all_issuable(patched_db):
         "knowledge:write",
         "schedule:trigger",
         "managed_agent:invoke",
+        "llm:workbench",
+        "diagnostics:read",
         "delegate",
     }
-    assert catalog.data["total"] == 10
+    assert catalog.data["total"] == 12
 
 
 def test_every_key_endpoint_declares_admin_dependency():

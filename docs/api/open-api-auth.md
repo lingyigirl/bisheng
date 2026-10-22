@@ -18,7 +18,7 @@ PATCH  /api/v1/service-accounts/{id}/keys/{key_id}  改名称/权限位/智能�
 POST   /api/v1/service-accounts/{id}/keys/{key_id}/reveal   管理员查看明文(写审计;存量密钥 11823)
 POST   /api/v1/service-accounts/{id}/keys/{key_id}/revoke   单把吊销
 POST   /api/v1/service-accounts/{id}/keys/revoke-all        全量吊销(轮换收尾)
-GET    /api/v1/open-api/scopes                      可签发权限位目录(10 项)
+GET    /api/v1/open-api/scopes                      可签发权限位目录(12 项)
 GET    /api/v1/service-accounts/{id}/assignable-agents      可加入白名单的智能体目录
 ```
 
@@ -51,11 +51,13 @@ Authorization: Bearer bs-sak-<43 字符>
 |---|---|
 | `workflow:invoke` | 工作流调用/停止、工作流会话（WS） |
 | `workflow:read` | 工作流详情 |
-| `assistant:invoke` | 助手对话（含流式与 WS）、语音转写/合成 |
+| `assistant:invoke` | 助手对话（含流式与 WS） |
 | `assistant:read` | 助手信息与列表 |
+| `llm:workbench` | 工作台语音转写/合成（`/llm/workbench/asr|tts`），不寻址具体智能体 |
 | `chat:invoke` | 会话管理（历史、标题、点赞、标记、评论、消息同步） |
 | `knowledge:read` | 知识库与文件读取、检索（`/filelib/retrieve` 等）、引用详情 |
 | `knowledge:write` | 知识库与文件的增删改、问答与元数据写入 |
+| `diagnostics:read` | 诊断日志下载（`/filelib/download_statistic`），默认不建议签发 |
 | `delegate` | 预留位：本期可签发但**不产生任何生效行为** |
 | `schedule:trigger` | 定时任务的事件触发端点（`POST /api/v2/schedule/trigger`） |
 | `managed_agent:invoke` | 纳管智能体调用端点（`POST /api/v2/managed-agent/invoke`） |
@@ -63,6 +65,8 @@ Authorization: Bearer bs-sak-<43 字符>
 - 目录端点 `GET /api/v1/open-api/scopes` 返回可签发清单（`code`/`group`/`endpoint_count`），以它为准。
 - **隐含规则**：授予 `knowledge:write` 即同时具备 `knowledge:read`。
 - 签发时未登记的 code 一律拒绝（`400 / 11819`）。
+- **知识库是账号级权限**：`knowledge:read/write` 覆盖该服务账号可见的**全部**知识库/空间；每 Key 智能体白名单**不适用于**知识库。需要按知识库隔离时，请按隔离域拆**服务账号**（各自资源授权），拆 Key 不能分区知识。
+- **ASR/TTS** 走独立的 `llm:workbench`，不受智能体白名单限制。
 
 ## 4.1 每 Key 智能体白名单（`allowed_apps`）
 

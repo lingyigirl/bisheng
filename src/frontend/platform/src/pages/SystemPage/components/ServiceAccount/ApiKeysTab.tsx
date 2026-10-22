@@ -37,9 +37,11 @@ interface ApiKeysTabProps {
     /** Every key write changes key_count / last_used_at on the account, so the
      *  parent re-reads it instead of trusting the write responses. */
     onKeysChanged: () => void
+    /** Switches the detail view to the grants tab (setup order: grant, then issue). */
+    onGoToGrants?: () => void
 }
 
-export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
+export function ApiKeysTab({ account, onKeysChanged, onGoToGrants }: ApiKeysTabProps) {
     const { t } = useTranslation("serviceAccount")
     const [keys, setKeys] = useState<ServiceAccountKey[]>([])
     const [scopes, setScopes] = useState<OpenApiScope[]>([])
@@ -248,7 +250,15 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
                         ) : keys.length === 0 ? (
                             <TableRow>
                                 <TableCell colSpan={8} className="text-center text-muted-foreground">
+                                    {/* Empty state doubles as the setup entry point: a
+                                        restricted key can only target agents the account
+                                        has already been granted. */}
                                     {t("keys.emptyHint")}
+                                    {onGoToGrants && (
+                                        <Button variant="link" size="sm" onClick={onGoToGrants}>
+                                            {t("keys.form.goToGrants")}
+                                        </Button>
+                                    )}
                                 </TableCell>
                             </TableRow>
                         ) : visibleKeys.length === 0 ? (
@@ -368,6 +378,7 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
                 assignableAgents={assignableAgents}
                 editing={editing}
                 onClose={setIssueOpen}
+                onGoToGrants={onGoToGrants}
                 onIssued={handleIssued}
                 onUpdated={() => {
                     void load()

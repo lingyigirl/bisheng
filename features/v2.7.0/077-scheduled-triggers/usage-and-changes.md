@@ -87,7 +87,7 @@
 | `bisheng/core/config/settings.py` | `Settings.scheduled_task` + beat 条目 | beat 全静态，不加默认条目 = 存量部署升级后拿不到调度 |
 | `bisheng/core/database/tenant_filter.py` | 新表登记 | 漏登记 = 行落 ROOT 租户 |
 | `bisheng/database/models/audit_log.py` + `platform/.../log.ts` | 白名单与镜像 | 双份手维护、有锁步测试 |
-| `bisheng/open_api/domain/scopes.py` | 权限位 8 → **9**（`schedule:trigger`） | 事件触发的对外契约 |
+| `bisheng/open_api/domain/scopes.py` | 权限位 8 → **9**（`schedule:trigger`）；截至 2026-10-22 共 **12** 项（F078 加 `managed_agent:invoke`，安全收口加 `llm:workbench` / `diagnostics:read`） | 事件触发的对外契约 |
 | `bisheng/api/v1/flows.py` / `api/services/assistant.py` | 删除前拦截（有启用中的任务 → 11908） | **唯一**一处对既有行为的可感知变化 |
 | `client/.../NotificationsDialog.tsx` + client 三语 | 两个 action_code 的文案 | 失败通知的消费面 |
 | `scripts/arch-guard.sh` | `DOMAIN_MODULES` 补新模块 | C1 的机器执行臂 |
@@ -98,7 +98,7 @@
 2. **应用编辑者**：左侧导航「智能体」→ 点击应用卡片 → 顶部「对外发布 → 定时任务」→ 新建：选计划（或写一句自然语言生成草稿）→ 选运行身份 →（可选）填预设输入 → 保存。
 3. **三种触发**：
    - 到点自动跑（平台每 20 秒扫描一次）；
-   - 行内系统调 `POST /api/v2/schedule/trigger`（带密钥、时间戳、随机数）；
+   - 行内系统调 `POST /api/v2/schedule/trigger`（带密钥、时间戳、随机数）；**任务的运行身份所属服务账号必须与密钥所属服务账号一致**，否则 `404/11809`（与任务不存在不可区分）；
    - 控制台点「立即运行」。
 4. **看结果**：任务列表的「上次结果」（失败原因在悬停提示里）→ 点「监控」按 `run_trace_id` 看运行详情；失败会收到站内信（首败一条、连续 5 次自动停用一条）。
 5. **排障**：先看任务列表的 `last_error`（`overlap` / `app_offline` / `app_deleted` / `no_use_app` / `owner_privileged` / `account_unavailable` …），再看服务端日志关键字 `schedule.scan.round` / `schedule.run.finalized` / `schedule.run.reclaim` / `schedule.trigger.replay_rejected`。
@@ -112,7 +112,7 @@
 | 任务创建被拒 11913 | 应用开启了"用户知识库权限校验"，运行身份读不到所绑知识 | 给该身份授予知识范围，或改用开关关闭的引用 |
 | 任务创建被拒 11914 | 应用含多个人工输入节点或文件类输入 | 一期不支持，改造成单输入/无文件后再定时化 |
 | 定时不跑 | beat 是否在跑 / `scheduled_task_scan` 条目是否被删 | `celery call bisheng.worker.scheduled_task.scan.scan_scheduled_tasks` 手工跑一轮看日志 |
-| 事件触发 404/11809 | 任务不存在 / 已停用 / **密钥所属账号对该应用无运行权限** | 三者刻意不可区分；按后两条排查 |
+| 事件触发 404/11809 | 任务不存在 / 已停用 / **任务不属于该密钥所属服务账号** / **密钥所属账号对该应用无运行权限** | 刻意不可区分；按后三条排查 |
 | 事件触发 409/11910 | 有新一轮在跑 | 等本轮结束；平台不做排队 |
 | 事件触发 429/11911 | 触发频率超限（默认 10 次/分/任务） | 降低频率或调 `event_rate_limit_per_minute` |
 | 任务一直「等待应用上线」 | 一次性任务到期时应用不在线 | 应用上线后会自动补跑一次；否则重新安排 |

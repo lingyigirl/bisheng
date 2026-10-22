@@ -101,7 +101,7 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 
 `allowed_apps` 是这把密钥的**智能体白名单**：`null` 表示不限制（沿用服务账号资源授权）；非空数组表示只能调用其中的助手/工作流/纳管智能体；空数组表示不能调用任何智能体。未在白名单内的目标一律返回 `404 / 11809`。
 
-## 六、权限位（可签发 10 项）
+## 六、权限位（可签发 12 项）
 
 每个密钥携带一组权限位，**按端点判定**：调用某端点需要它登记的权限位，缺位返回 `403 / 11807`，响应体 `data.required` 回带缺少的 code。
 
@@ -109,17 +109,20 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 |---|---|
 | `workflow:invoke` | 工作流调用/停止、工作流会话（WebSocket） |
 | `workflow:read` | 工作流详情 |
-| `assistant:invoke` | 助手对话（含流式与 WebSocket）、语音转写/合成 |
+| `assistant:invoke` | 助手对话（含流式与 WebSocket） |
 | `assistant:read` | 助手信息与列表 |
+| `llm:workbench` | 工作台语音转写/合成（`/api/v2/llm/workbench/asr|tts`），不寻址具体智能体 |
 | `chat:invoke` | 会话管理（历史、标题、点赞、标记、评论、消息同步） |
 | `knowledge:read` | 知识库与文件读取、检索、引用详情 |
 | `knowledge:write` | 知识库与文件的增删改、问答与元数据写入 |
+| `diagnostics:read` | 诊断日志下载（`/api/v2/filelib/download_statistic`），默认不建议签发 |
 | `schedule:trigger` | 事件触发 `POST /api/v2/schedule/trigger` |
 | `managed_agent:invoke` | 调用已纳管的智能体（本平台投影或第三方）`POST /api/v2/managed-agent/invoke` |
 | `delegate` | 预留位：本期可签发但**不产生任何生效行为** |
 
 - **隐含规则**：授予 `knowledge:write` 即同时具备 `knowledge:read`。
 - 权限位决定"能调哪类端点"，**资源授权**（第七节）决定"能调哪个资源"——两者都要满足。
+- **知识库是账号级权限**：`knowledge:read/write` 作用于该服务账号可见的**全部**知识库/空间；智能体白名单**不适用于**知识库。若需按知识库隔离，请按隔离域拆**服务账号**（每个账号单独资源授权），只拆 Key 无法分区知识。
 - 权限位在签发/编辑密钥时由管理员选择；需要补位时联系管理员（编辑后 ≤5 秒生效）。
 
 ## 七、资源可见范围
@@ -145,7 +148,9 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
   2. 目标智能体在这把 Key 的**白名单**内（`null` = 不限制，空数组 = 全拒绝）；
   3. 服务账号的**资源授权**对该资源有足够档位。
 - 未命中白名单与资源不可见**同码** `404 / 11809`；白名单不可用于探测资源是否存在。
-- 典型用法：同一对接系统拆多把 Key（如"只调 A 流程"和"只调 B 流程"），而不是给每把 Key 建一个服务账号。
+- **白名单只覆盖智能体，不覆盖知识库/知识空间**：`knowledge:read/write` 的作用域是账号可见的**全部**知识库/空间，同一账号所有 Key 共享；需要按知识库隔离时必须拆**服务账号**（各自资源授权），拆 Key 不能分区知识。
+- **ASR/TTS 不受白名单限制**：它们走独立的 `llm:workbench` 权限位，不寻址具体智能体。
+- 典型用法：只调不同智能体时，同一对接系统可拆多把 Key（如"只调 A 流程"和"只调 B 流程"），而不必给每把 Key 建服务账号；需要不同知识库范围时，则必须按隔离域拆服务账号。
 - 注意：`managed_agent` 白名单条目对应**纳管注册表 id**（不是 `native_app_id`）；工作流内部的 agent 节点、助手绑定的技能不单独授权。
 
 ## 八、常用端点速查
@@ -156,6 +161,8 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 | 助手对话（含流式） | `POST /api/v2/assistant/chat/completions` | `assistant:invoke` | `model`（助手ID）、`messages`、`stream`（默认 false）、`temperature`、`tools?` |
 | 助手信息 / 列表 | `GET /api/v2/assistant/info/{assistant_id}` · `GET /api/v2/assistant/list` | `assistant:read` | 列表 `page`、`limit`、`name?`、`tag_id?`、`status?` |
 | 助手对话（WebSocket） | `WS /api/v2/assistant/chat/{assistant_id}` | `assistant:invoke` | `chat_id?` |
+| 语音转写 / 合成 | `POST /api/v2/llm/workbench/asr` · `POST /api/v2/llm/workbench/tts` | `llm:workbench` | asr 上传 `file`；tts 传 `text` |
+| 诊断日志下载 | `GET /api/v2/filelib/download_statistic` | `diagnostics:read` | `file_path`（仅 `/app/data` 下 `.log`；默认不建议签发） |
 | 工作流调用 / 停止 | `POST /api/v2/workflow/invoke` · `POST /api/v2/workflow/stop` | `workflow:invoke` | `workflow_id`、`input`、`stream`（默认 **true**）、`session_id?`、`message_id?`、`override?`、`tools?` |
 | 工作流详情 | `GET /api/v2/flows/{flow_id}` | `workflow:read` | 返回 `data.tools` |
 | 工作流会话（WebSocket） | `WS /api/v2/workflow/chat/{workflow_id}` | `workflow:invoke` | `chat_id?` |
@@ -174,6 +181,8 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 > **档位提示**：助手对话（HTTP/WS）、工作流调用/停止、事件触发需要 `use_app`（**editor 及以上**）；知识库检索需要 `use_kb`（系统默认 viewer 档已含）；只读的列表与详情 viewer 即可。
 
 ### 8.1 事件触发（`schedule:trigger`）
+
+> **归属前置**：任务必须属于这把密钥所属的服务账号（`task.service_account_id` 一致），否则与“任务不存在”同码 `404 / 11809`。跨账号集中触发不再允许；需要集中运维时请为该运维账号单独创建任务。
 
 ```bash
 TS=$(date +%s); NONCE=$(uuidgen)

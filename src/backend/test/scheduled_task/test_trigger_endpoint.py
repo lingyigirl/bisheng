@@ -188,6 +188,27 @@ async def test_not_found_is_blind_for_missing_disabled_and_unauthorized(wire):
         await endpoint.trigger_scheduled_task(endpoint.TriggerRequest(task_id=1), req)
 
 
+async def test_cross_account_task_is_blind_404(wire):
+    """2026-10-22 安全收口:任务归属必须与密钥所属服务账号一致。
+
+    否则 A 账号的 Key 可触发 B 账号的任务,任务按 B 的运行身份执行
+    (confused deputy)。此时目标应用权限仍判通过,拒绝必须来自归属校验,
+    且与"任务不存在"同码 404/11809。
+    """
+    req = await _request({"task_id": 1}, _ts())
+    wire["use_app"] = True
+    wire["task"] = _task(service_account_id=6)
+
+    with pytest.raises(OpenApiNotFoundError):
+        await endpoint.trigger_scheduled_task(endpoint.TriggerRequest(task_id=1), req)
+
+    # 同账号任务不受影响。
+
+    wire["task"] = _task(service_account_id=5)
+    response = await endpoint.trigger_scheduled_task(endpoint.TriggerRequest(task_id=1), req)
+    assert response.data["run_trace_id"] == "trace-event-1"
+
+
 async def test_replay_guard_rejects_missing_stale_and_reused(wire):
     req_ok = await _request({"task_id": 1}, _ts())
 
