@@ -50,6 +50,9 @@ class MessageSessionBase(SQLModelSerializable):
     dislike: int | None = Field(default=0, description="Number of messages clicked")
     copied: int | None = Field(default=0, description="Number of messages copied")
     sensitive_status: int = Field(default=SensitiveStatus.PASS.value, description="Review Status")
+    # 同一会话同时只允许一个执行中的轮次；字段由 ChatTurnService 维护。
+    active_turn_id: str | None = Field(default=None, index=True, max_length=128)
+    active_turn_started_at: datetime | None = Field(default=None, sa_column=Column(DateTime, nullable=True))
     create_time: datetime | None = Field(
         default=None, sa_column=Column(DateTime, nullable=False, index=True, server_default=text("CURRENT_TIMESTAMP"))
     )

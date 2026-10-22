@@ -6,6 +6,10 @@ from langchain_core.runnables import RunnableConfig
 from loguru import logger
 from openai import APITimeoutError
 
+from bisheng.chat_session.domain.services.model_context_budget import (
+    calculate_history_budget,
+    get_cached_model_budget,
+)
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum
 from bisheng.llm.domain.services import LLMService
 from bisheng.workflow.callback.llm_callback import LLMNodeCallbackHandler
@@ -104,11 +108,36 @@ class LLMNode(BaseNode):
         self._system_prompt_list.append(system)
 
         variable_map = {}
+        history_variables = {
+            one for one in self._user_variables if one.endswith(".chat_history")
+        }
         for one in self._user_variables:
             if input_variable and one == special_variable:
                 variable_map[one] = self.get_other_node_variable(input_variable)
                 continue
+            if one in history_variables:
+                # 先留空计算系统提示词和其它业务变量，再按当前模型剩余窗口索要历史。
+                variable_map[one] = ""
+                continue
             variable_map[one] = self.get_other_node_variable(one)
+        if history_variables:
+            fixed_prompt = self._user_prompt.format(variable_map)
+            model_id = self.node_params.get("model_id")
+            model_budget = get_cached_model_budget(self.graph_state.model_budget_cache, model_id)
+            fixed_prompt_tokens = self.graph_state.count_prompt_tokens(
+                f"{system}\n{fixed_prompt}",
+                self.id,
+                model_id,
+            )
+            history_budget = calculate_history_budget(
+                context_window=model_budget["context_window"],
+                fixed_prompt_tokens=fixed_prompt_tokens,
+                output_reserve=model_budget["output_reserve"],
+                safety_reserve=model_budget["safety_reserve"],
+            )
+            history_text = self.graph_state.get_chat_history(max_tokens=history_budget)
+            for one in history_variables:
+                variable_map[one] = history_text
         user = self._user_prompt.format(variable_map)
         self._user_prompt_list.append(user)
 

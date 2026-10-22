@@ -36,4 +36,5 @@ from bisheng.worker.telemetry.mid_table import (
 )
 from bisheng.worker.tenant_reconcile.tasks import reconcile_user_tenant_assignments
 from bisheng.worker.test.test import add
+from bisheng.worker.workflow.chat_summary_tasks import summarize_chat_turn
 from bisheng.worker.workflow.tasks import continue_workflow, execute_workflow, stop_workflow

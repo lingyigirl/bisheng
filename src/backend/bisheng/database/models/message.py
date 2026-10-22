@@ -89,6 +89,8 @@ class MessageBase(SQLModelSerializable):
 
 class ChatMessage(MessageBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
+    # 一轮对话的稳定关联 ID；旧消息允许为空，由兼容读取和回填脚本处理。
+    turn_id: str | None = Field(default=None, index=True, max_length=128)
     receiver: dict | None = Field(default=None, sa_column=Column(JsonType))
 
     # Key: Set table level character set to utf8mb4

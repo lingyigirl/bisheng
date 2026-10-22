@@ -10,6 +10,7 @@ from loguru import logger
 
 from bisheng.api.v1.schema.workflow import WorkflowEventType
 from bisheng.api.v1.schemas import ChatResponse
+from bisheng.chat_session.domain.services.chat_turn_service import ChatTurnService
 from bisheng.citation.domain.schemas.citation_schema import CitationRegistryItemSchema
 from bisheng.citation.domain.services.citation_prompt_helper import (
     collect_rag_citation_registry_items,
@@ -39,8 +40,8 @@ from bisheng.database.models.message import ChatMessage, ChatMessageDao
 from bisheng.database.models.session import MessageSession, MessageSessionDao
 from bisheng.database.models.workflow_node_run import NodeRunDao
 from bisheng.llm.domain import LLMService
-from bisheng.utils.threadpool import thread_pool
 from bisheng.sensitive_word.domain.services.answer_filter import filter_chat_response_message
+from bisheng.utils.threadpool import thread_pool
 from bisheng.workflow.callback.base_callback import BaseCallback
 from bisheng.workflow.callback.event import (
     GuideQuestionData,
@@ -56,8 +57,28 @@ from bisheng.workflow.callback.event import (
 )
 from bisheng.workflow.common.workflow import WorkflowStatus
 
+#: F067: the namespace our payload occupies inside `chat_message.extra`. That column is
+#: shared -- answer rows carry citation provenance in it -- so we neither replace it nor
+#: write at its top level, and a future writer can tell whose keys are whose.
+INPUT_OUTPUTS_EXTRA_KEY = "input_outputs"
+
+#: The message rows that make up the conversation, as `follow_up_history` reads them back.
+QUESTION_CATEGORY = "question"
+
+#: How many question messages back the recorded inputs are looked for (F067). Each
+#: follow-up round adds one row that does NOT carry them, so this bounds the number of
+#: follow-up rounds in one session that can still find the first round's copy.
+RECORDED_OUTPUTS_LOOKBACK = 30
+
 
 class RedisCallback(BaseCallback):
+    # Both are really set by __init__. Defaulted at class level because callbacks are
+    # also built with ``__new__`` (the persistence tests, to avoid a live Redis): such an
+    # object has no round-id key, and `run_id` then resolves to the chat-scoped
+    # `unique_id` -- the same fallback an expired key gets.
+    _run_id: str | None = None
+    workflow_run_id_key: str | None = None
+
     def __init__(self, unique_id: str, workflow_id: str, chat_id: str, user_id: int, **kwargs):
         # F022 INV-T18: Owner tenant of the Flow (set by the celery task entry
         # via tasks.py from FlowDao.get_flow_by_id) — used by sync helpers
@@ -75,6 +96,13 @@ class RedisCallback(BaseCallback):
         self.source = kwargs.get("source", "platform")  # only platform or api
 
         self.new_session = None
+        self.business_turn_id: str | None = None
+        self.business_turn_no: int | None = None
+        self.last_final_message_id: int | None = None
+        self.last_final_answer_text: str | None = None
+        # F067: the form-mode input node this round is waiting on, remembered when the
+        # engine asks the user for it and used when that node finishes running.
+        self._form_input_node_id: str | None = None
 
         self.redis_client = get_redis_client_sync()
         self.workflow_data_key = f"workflow:{unique_id}:data"
@@ -82,6 +110,12 @@ class RedisCallback(BaseCallback):
         self.workflow_event_key = f"workflow:{unique_id}:event"
         self.workflow_input_key = f"workflow:{unique_id}:input"
         self.workflow_stop_key = f"workflow:{unique_id}:stop"
+        # F052 fix: the id of the CURRENT round. `unique_id` has to stay chat-scoped
+        # (check_status derives it from chat_id alone to re-attach a paused run), so a
+        # round needs an identity of its own -- without one, every round of a chat
+        # collapses into a single transaction and their node rows pile up in the detail.
+        self.workflow_run_id_key = f"workflow:{unique_id}:run_id"
+        self._run_id: str | None = None
         self.workflow_expire_time = settings.get_workflow_conf().timeout * 60 + 60
 
     def set_workflow_data(self, data: dict, override: dict = None):
@@ -166,11 +200,16 @@ class RedisCallback(BaseCallback):
         self.redis_client.delete(self.workflow_status_key)
         self.redis_client.delete(self.workflow_stop_key)
         self.redis_client.delete(self.workflow_data_key)
+        # F052 fix: the round is over, so its id goes with the rest of the round state.
+        self.redis_client.delete(self.workflow_run_id_key)
+        self._run_id = None
 
     async def async_clear_workflow_status(self):
         await self.redis_client.adelete(self.workflow_status_key)
         await self.redis_client.adelete(self.workflow_stop_key)
         await self.redis_client.adelete(self.workflow_data_key)
+        await self.redis_client.adelete(self.workflow_run_id_key)
+        self._run_id = None
 
     def insert_workflow_response(self, event: dict):
         self.redis_client.rpush(self.workflow_event_key, json.dumps(event), expiration=self.workflow_expire_time)
@@ -286,9 +325,7 @@ class RedisCallback(BaseCallback):
                 # so there is no cached workflow object to stop, and the dispatched
                 # task would only clobber the reason we just recorded.
                 self.set_workflow_stop(dispatch=False)
-                yield self.build_chat_response(
-                    WorkflowEventType.Error.value, "over", message=err_msg.to_dict()
-                )
+                yield self.build_chat_response(WorkflowEventType.Error.value, "over", message=err_msg.to_dict())
                 break
             elif time.time() - status_info["time"] > 86400:
                 yield self.build_chat_response(
@@ -351,9 +388,7 @@ class RedisCallback(BaseCallback):
                     err_msg = WorkFlowTaskOtherError(exception=Exception(reason))
                 # dispatch=False — see set_workflow_stop for why.
                 await self.async_set_workflow_stop(dispatch=False)
-                yield self.build_chat_response(
-                    WorkflowEventType.Error.value, "over", message=err_msg.to_dict()
-                )
+                yield self.build_chat_response(WorkflowEventType.Error.value, "over", message=err_msg.to_dict())
                 break
             elif time.time() - status_info["time"] > 86400:
                 yield self.build_chat_response(
@@ -379,6 +414,7 @@ class RedisCallback(BaseCallback):
         self, data: dict, message_id: int = None, message_content: str = None, verify_input: bool = False
     ):
         if self.chat_id and message_id:
+            self._bind_current_turn()
             message_db = ChatMessageDao.get_message_by_id(message_id)
             self.update_old_message(data, message_db, message_content, verify_input)
         # Notify Asynchronous Task User Input
@@ -394,11 +430,20 @@ class RedisCallback(BaseCallback):
         files: list | None = None,
     ):
         if self.chat_id and message_id:
+            self._bind_current_turn()
             message_db = await ChatMessageDao.aget_message_by_id(message_id)
             await self.async_update_old_message(data, message_db, message_content, verify_input, files)
         # Notify Asynchronous Task User Input
         await self.redis_client.aset(self.workflow_input_key, data, expiration=self.workflow_expire_time)
         return
+
+    def _bind_current_turn(self) -> None:
+        """输入由 API 进程落库，轮次由 Worker 持有；按 Redis 中的轮次 ID 补齐关联。"""
+        if self.business_turn_id:
+            return
+        turn_id = self.run_id
+        if turn_id and ChatTurnService.get_turn(turn_id) is not None:
+            self.business_turn_id = turn_id
 
     @staticmethod
     def _verify_input_schema(input_schema_message: dict, user_input: dict):
@@ -546,6 +591,33 @@ class RedisCallback(BaseCallback):
         """In order to stop in timeworkflow, Do not cache memory"""
         return await self.redis_client.aget(self.workflow_stop_key) == 1
 
+    def mint_run_id(self) -> str:
+        """Start a new round: give it an id, remember it, and publish it for the round's
+        ``continue_workflow`` (a different process) to pick up.
+
+        Prefixed with ``unique_id`` on purpose: the log format is
+        ``trace={extra[trace_id]}`` (config.yaml), so ``grep <chat_id>`` still finds every
+        round of a chat. It stays a single opaque ``keyword`` to Elasticsearch.
+        """
+        self._run_id = f"{self.unique_id}:{uuid.uuid4().hex}"
+        self.redis_client.set(self.workflow_run_id_key, self._run_id, expiration=self.workflow_expire_time)
+        return self._run_id
+
+    @property
+    def run_id(self) -> str:
+        """This round's id, or ``unique_id`` when there is none to be had.
+
+        The fallback is deliberate and load-bearing: a round whose key expired (or a
+        caller that never minted -- evaluation, older rows) degrades to the legacy
+        chat-scoped id instead of raising, which at worst re-merges rounds the way
+        everything did before the split. Read at most once per instance, so the node
+        callbacks that ask for it on every row pay nothing after the first ask.
+        """
+        if self._run_id is None:
+            stored = self.redis_client.get(self.workflow_run_id_key) if self.workflow_run_id_key else None
+            self._run_id = stored or self.unique_id
+        return self._run_id
+
     def send_chat_response(self, chat_response: ChatResponse):
         """Send a chat message"""
         self.insert_workflow_response(chat_response.dict())
@@ -574,9 +646,7 @@ class RedisCallback(BaseCallback):
         # the citation extraction below, which would otherwise resolve offsets
         # against text the user never saw.
         if chat_response.category != WorkflowEventType.UserInput.value:
-            chat_response.message = filter_chat_response_message(
-                chat_response.message, self.tenant_id
-            )
+            chat_response.message = filter_chat_response_message(chat_response.message, self.tenant_id)
 
         if not self.chat_id:
             answer_text = self._extract_message_text(chat_response.message)
@@ -626,8 +696,25 @@ class RedisCallback(BaseCallback):
                 extra=chat_response.extra,
                 category=chat_response.category,
                 files=json.dumps(chat_response.files, ensure_ascii=False),
+                turn_id=self.business_turn_id,
             )
         )
+
+        if self.business_turn_id and chat_response.category == QUESTION_CATEGORY:
+            ChatTurnService.record_question(
+                turn_id=self.business_turn_id,
+                question_message_id=message.id,
+                question_text=self._extract_message_text(chat_response.message),
+            )
+        elif self.business_turn_id and chat_response.category in {
+            "answer",
+            "stream_msg",
+            "output_msg",
+            "output_with_input_msg",
+            "output_with_choose_msg",
+        }:
+            self.last_final_message_id = message.id
+            self.last_final_answer_text = self._extract_message_text(chat_response.message)
 
         answer_text = self._extract_message_text(chat_response.message)
         items = self._resolve_citation_items(
@@ -688,6 +775,105 @@ class RedisCallback(BaseCallback):
             self.create_session = True
 
         return message.id
+
+    @staticmethod
+    def _read_extra(raw_extra: str | None) -> dict:
+        """The `extra` column as a dict. Unreadable values read as empty rather than
+        raised on: losing a run over a column nobody can parse is worse than losing
+        whatever was in it."""
+        try:
+            extra = json.loads(raw_extra) if raw_extra else {}
+        except ValueError:
+            logger.warning("chat message extra is not json, treating it as empty: {!r}", raw_extra)
+            extra = {}
+        return extra if isinstance(extra, dict) else {}
+
+    @classmethod
+    def merge_extra(cls, raw_extra: str | None, payload: dict) -> str:
+        """Read-merge-write on the shared `extra` column (F067 decision 3, pitfall 10).
+
+        The column already holds other writers' keys -- citation provenance lands there
+        on answer rows -- so it can only ever be merged into, never replaced.
+        """
+        extra = cls._read_extra(raw_extra)
+        extra.update(payload)
+        return json.dumps(extra, ensure_ascii=False)
+
+    def _own_question_messages(self, limit: int) -> list:
+        """This chat's question messages that belong to the caller, newest first.
+
+        The ownership filter lives here rather than at each call site because the WS
+        layer never checks that a chat id is the caller's (pitfall 11): a chat we do not
+        own must yield nothing to read *and* nothing to write to.
+        """
+        rows = ChatMessageDao.get_messages_by_chat_id(self.chat_id, [QUESTION_CATEGORY], limit)
+        mine = [row for row in rows if row.user_id == self.user_id]
+        if len(mine) != len(rows):
+            logger.warning("chat {} has question messages belonging to another user, ignoring them", self.chat_id)
+        return mine
+
+    def read_input_outputs(self) -> dict:
+        """F067: the first round's input node outputs recorded for this chat ({} if none).
+
+        The read side of `save_input_outputs`, kept next to it so that the namespace and
+        the "which message" rule have one home.
+
+        **Not just the newest question message.** Every follow-up round writes its own
+        question row and none of them carries the outputs (only the first round's node
+        run does), so on round 3 the newest row is round 2's -- and reading that one
+        would report "no inputs on record" and quietly turn the round back into a first
+        round, asking for the form again (AC-16). So: the newest row that *has* them.
+        Looking back is bounded by the number of follow-up rounds in the session, and
+        running out of window degrades to the same first-round path rather than to a
+        wrong value, with a warning to say so.
+        """
+        for row in self._own_question_messages(RECORDED_OUTPUTS_LOOKBACK):  # newest first
+            outputs = self._read_extra(row.extra).get(INPUT_OUTPUTS_EXTRA_KEY)
+            if outputs:
+                return outputs
+        logger.info(
+            "no recorded input outputs within {} question messages on chat={}", RECORDED_OUTPUTS_LOOKBACK, self.chat_id
+        )
+        return {}
+
+    def save_input_outputs(self, node_id: str) -> None:
+        """F067: put the form input node's outputs on this round's question message.
+
+        This is where a follow-up round gets the first round's outputs from (AC-16):
+        the graph state that produced them dies with the round's `Workflow` object.
+
+        Read from the variable pool, not from the node's log -- `InputNode.parse_log`
+        drops the file field's temp-KB key, and one key short is enough for the next
+        round to miss the reuse and re-download + re-parse the files (AC-04).
+        """
+        workflow = self.workflow
+        outputs = (workflow.graph_engine.graph_state.variables_pool.get(node_id) or {}) if workflow else {}
+        if not outputs:
+            logger.warning("no input outputs to record for node={} chat={}", node_id, self.chat_id)
+            return
+        # The round's own question message: written when the user submitted the form,
+        # and the only question on this chat that can be newer (AC-11: same chat runs
+        # one round at a time).
+        # The round's own question message: normally the one this very round just wrote,
+        # so the ownership rule in `_own_question_messages` changes nothing; it matters
+        # only when the round left no row of its own (no message id on the submission).
+        rows = self._own_question_messages(1)
+        if not rows:
+            logger.warning("no own question message to record input outputs on chat={}", self.chat_id)
+            return
+        message = rows[0]
+        message.extra = self.merge_extra(message.extra, {INPUT_OUTPUTS_EXTRA_KEY: outputs})
+        ChatMessageDao.update_message_model(message)
+
+    def save_follow_up_question(self, question: str) -> int | str | None:
+        """F067: persist this round's follow-up question (decision 5).
+
+        A follow-up round skips the input node's interrupt, so no `UserInput` event
+        fires and the existing write branch never runs. Without this the question is
+        missing from the conversation, and the next round reads back a history that
+        stops at the previous answer.
+        """
+        return self.save_chat_message(self.build_chat_response(QUESTION_CATEGORY, "over", question))
 
     @staticmethod
     def _resolve_citation_items(
@@ -753,10 +939,11 @@ class RedisCallback(BaseCallback):
             )
         )
         # F052: persist node-run record for the transaction monitor (best-effort, AC-04).
-        # Run trace = self.unique_id; data.unique_id is the per-execution uuid
-        # (pairs this start with its end — do NOT confuse the two).
+        # Row key = this ROUND's id (what the monitor lists as the transaction trace);
+        # data.unique_id is the per-execution uuid (pairs this start with its end --
+        # do NOT confuse the two).
         NodeRunDao.insert_event(
-            unique_id=self.unique_id,
+            unique_id=self.run_id,
             exec_id=data.unique_id,
             chat_id=self.chat_id,
             flow_id=self.workflow_id,
@@ -781,9 +968,9 @@ class RedisCallback(BaseCallback):
             )
         )
         # F052: persist node-run record for the transaction monitor (best-effort, AC-04).
-        # Run trace = self.unique_id; data.unique_id pairs start/end (per-execution uuid).
+        # Row key = this ROUND's id; data.unique_id pairs start/end (per-execution uuid).
         NodeRunDao.insert_event(
-            unique_id=self.unique_id,
+            unique_id=self.run_id,
             exec_id=data.unique_id,
             chat_id=self.chat_id,
             flow_id=self.workflow_id,
@@ -797,10 +984,19 @@ class RedisCallback(BaseCallback):
             user_id=self.user_id,
             tenant_id=self.tenant_id,
         )
+        # F067: the form input node has now run (the user's submission resumed this run)
+        # -- record its outputs for the follow-up rounds to reuse (AC-16, decision 3).
+        if data.node_id and data.node_id == self._form_input_node_id:
+            self.save_input_outputs(data.node_id)
 
     def on_user_input(self, data: UserInputData):
         """user input event"""
         logger.debug(f"user input: {data}")
+        # F067: the engine pauses *before* this node runs, so this is the only place that
+        # can tell a form-mode input node (whose outputs the follow-up rounds reuse) from
+        # a dialog-mode one (untouched by this feature, AC-13).
+        if getattr(data.input_schema, "tab", None) == "form_input":
+            self._form_input_node_id = data.node_id
         chat_response = ChatResponse(
             message=data.dict(),
             category=WorkflowEventType.UserInput.value,
@@ -876,9 +1072,14 @@ class RedisCallback(BaseCallback):
 
     def on_stream_over(self, data: StreamMsgOverData):
         logger.debug(f"stream over: {data}")
-        # Replaceminioright of privacysharePrefix bynginxShare  ugly solve
-        minio_share = settings.get_minio_conf().sharepoint
-        data.msg = data.msg.replace(f"http://{minio_share}", "")
+        # 分享链接前缀剥离：MinIO 模式下去掉 "http://<sharepoint>"，让前端按同源相对路径解析；
+        # 本地存储模式下分享链接本身就是相对路径，这里自然成为空操作。
+        # 走存储实例而不是直接读 minio 配置，切换后端时行为自动一致。
+        from bisheng.core.storage.minio.minio_manager import get_minio_storage_sync
+
+        share_host = get_minio_storage_sync().get_minio_share_host().replace("https://", "").replace("http://", "")
+        if share_host:
+            data.msg = data.msg.replace(f"http://{share_host}", "")
         chat_response = ChatResponse(
             message=data.dict(exclude={"source_documents", "citation_registry_items"}),
             category=WorkflowEventType.StreamMsg.value,

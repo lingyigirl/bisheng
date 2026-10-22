@@ -1,8 +1,16 @@
-from typing import Any, Dict, Optional, List
+import hashlib
+from typing import Any, Dict, List, Optional
 
 from langchain_classic.memory import ConversationBufferWindowMemory
-from langchain_core.messages import AIMessage, HumanMessage, get_buffer_string, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, get_buffer_string
 from pydantic import BaseModel, Field
+
+from bisheng.chat_session.domain.services.history_context import (
+    HistorySummary,
+    HistoryTurn,
+    assemble_history,
+    count_text_tokens,
+)
 
 
 class GraphState(BaseModel):
@@ -11,12 +19,22 @@ class GraphState(BaseModel):
     # Store Chat History
     history_memory: Optional[ConversationBufferWindowMemory] = None
 
+    # 当前轮消息与已完成历史分开保存，避免当前问题被重复注入 chat_history。
+    current_turn_messages: List[BaseMessage] = Field(default_factory=list)
+    current_turn_active: bool = False
+    history_turns: List[HistoryTurn] = Field(default_factory=list)
+    history_summaries: List[HistorySummary] = Field(default_factory=list)
+    model_budget_cache: Dict[str, Dict[str, int]] = Field(default_factory=dict)
+    prompt_token_cache: Dict[str, int] = Field(default_factory=dict)
+
     # Global Variable Pool
     variables_pool: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description='Global Variable Pool: {node_id: {key: value}}')
 
     def get_history_memory(self, count: int) -> str:
         """ Get chat history
         'Cause it's not.1Right.1, so rewrite buffer_as_str"""
+        if self.history_memory is None:
+            return ''
         if not count:
             count = self.history_memory.k
         if count == 0:
@@ -29,15 +47,79 @@ class GraphState(BaseModel):
         )
 
     def get_history_list(self, count: int) -> List[BaseMessage]:
+        if self.history_memory is None:
+            return []
         return self.history_memory.buffer_as_messages[-count:]
 
-    def save_context(self, content: str, msg_sender: str) -> None:
-        """  Save chat
-        workflow In special cases, the process will have multiple rounds of interaction, so it is not one-to-one, reworking the message structure"""
+    def begin_current_turn(self) -> None:
+        """开始当前轮，后续 save_context 不再写入已完成历史。"""
+        self.current_turn_messages = []
+        self.current_turn_active = True
+
+    def discard_current_turn(self) -> None:
+        """丢弃失败或取消的当前轮，不改动已完成历史。"""
+        self.current_turn_messages = []
+        self.current_turn_active = False
+
+    def set_completed_history(self, messages: List[tuple[str, str]]) -> None:
+        """用纯文本问答重建已完成历史。"""
+        if self.history_memory is None:
+            return
+        self.history_memory.chat_memory.clear()
+        for content, sender in messages:
+            self._save_to_completed_history(content, sender)
+
+    def set_history_context(
+        self,
+        *,
+        turns: List[HistoryTurn],
+        summaries: List[HistorySummary],
+    ) -> None:
+        self.history_turns = list(turns)
+        self.history_summaries = list(summaries)
+
+    def get_chat_history(self, max_tokens: int) -> str:
+        if not self.history_turns and not self.history_summaries:
+            return self.get_history_memory(0)
+        text, _ = assemble_history(
+            turns=self.history_turns,
+            summaries=self.history_summaries,
+            max_tokens=max_tokens,
+            count_tokens=count_text_tokens,
+        )
+        return text
+
+    def count_prompt_tokens(self, text: str, node_id: str, model_id: int | str | None) -> int:
+        """同一次工作流运行内按节点、模型和 Prompt 内容复用 Token 数。"""
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        cache_key = f"{node_id}:{model_id}:{digest}"
+        count = self.prompt_token_cache.get(cache_key)
+        if count is None:
+            count = count_text_tokens(text)
+            self.prompt_token_cache[cache_key] = count
+        return count
+
+    def _save_to_completed_history(self, content: str, msg_sender: str) -> None:
+        if self.history_memory is None:
+            return
         if msg_sender == 'human':
             self.history_memory.chat_memory.add_messages([HumanMessage(content=content)])
         elif msg_sender == 'AI':
             self.history_memory.chat_memory.add_messages([AIMessage(content=content)])
+
+    def save_context(self, content: str, msg_sender: str) -> None:
+        """  Save chat
+        workflow In special cases, the process will have multiple rounds of interaction, so it is not one-to-one, reworking the message structure"""
+        if self.current_turn_active:
+            if msg_sender == 'human':
+                self.current_turn_messages.append(HumanMessage(content=content))
+            elif msg_sender == 'AI':
+                self.current_turn_messages.append(AIMessage(content=content))
+            return
+        if msg_sender == 'human':
+            self._save_to_completed_history(content, msg_sender)
+        elif msg_sender == 'AI':
+            self._save_to_completed_history(content, msg_sender)
 
     def set_variable(self, node_id: str, key: str, value: Any):
         """ Put the data generated by the node into a global variable """
