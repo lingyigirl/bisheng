@@ -244,21 +244,6 @@ def _execute_workflow(
         # invoke this helper directly keep working unchanged. It is also what makes
         # `trace_id_var` below round-scoped, which is what the monitor keys on.
         trace_id_var.set(redis_callback.mint_run_id())
-        # F052: announce the round while it runs. `input_snapshot` is deliberately left
-        # empty -- the round's own question row is written later, by the input node, so
-        # reading it here would publish the PREVIOUS round's text. The event the task's
-        # `finally` writes is newer on the same trace, so `collapse` keeps that one and
-        # the snapshot appears once the round is done.
-        round_start = time.time()
-        _report_run_event(
-            workflow_id=workflow_id,
-            chat_id=chat_id,
-            user_id=user_id,
-            app_name=workflow_info.name if workflow_info else None,
-            start_time=round_start,
-            end_time=round_start,
-            status=StatusEnum.RUNNING,
-        )
         # update workflow status
         redis_callback.set_workflow_status(WorkflowStatus.RUNNING.value)
         # get workflow data
