@@ -128,10 +128,11 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 - 可授权的资源类型：知识库（`knowledge_library`）、知识空间（`knowledge_space`）、助手（`assistant`）、工作流（`workflow`）、纳管智能体（`managed_agent`）。
 - 档位：`viewer`（只读）/ `editor`（读写/调用）/ `manager`（管理，不含 `owner`）。
 - 调用类端点的档位要求：
-  - 工作流调用/停止、会话管理、事件触发：需要 `use_app`，即 **editor 及以上**；
-  - 助手对话：`view_app` 或 `use_app` 任一即可，**viewer 也够**；
+  - 工作流调用/停止、助手对话（HTTP 与 WebSocket）、会话管理、事件触发：需要 `use_app`，即 **editor 及以上**；
   - 纳管智能体调用：需要 **editor**；
-  - 只读的列表与详情：viewer 即可。
+  - 知识库检索：文档知识库需要 `use_kb`（系统默认 viewer 档已含）；知识空间沿用视图权限，不适用 `use_kb`；
+  - 问答行查询（`POST /api/v2/filelib/query_qa`）：只返回该身份有 `view_kb` 的知识库下的记录；
+  - 只读的列表与详情（含助手详情/列表）：viewer 即可。
 - 资源不在授权范围、或资源不存在，**都返回 `404 / 11809`**（防枚举，两者不可区分）；资源可见但档位不足返回 `403 / 11808`。
 - **实现建议**：把 `403` 与 `404` 都当作"未授权/不可见"处理，据此做降级提示，不要用来判断资源是否存在。
 
@@ -160,7 +161,8 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 | 工作流会话（WebSocket） | `WS /api/v2/workflow/chat/{workflow_id}` | `workflow:invoke` | `chat_id?` |
 | 知识库 / 知识空间列表 | `GET /api/v2/filelib/` | `knowledge:read` | `type`（0 文档库、1 问答库、3 知识空间；2 不支持）、`name?`、`page_size`、`cursor?` |
 | 文件列表 | `GET /api/v2/filelib/file/list` | `knowledge:read` | **`knowledge_id`（必填）**、`parent_id?`、`keyword?`、`page_size`、`cursor?` |
-| 知识库检索 | `POST /api/v2/filelib/retrieve` | `knowledge:read` | `query`、`knowledge_base_ids`、`top_k`（1–200，默认 10） |
+| 知识库检索 | `POST /api/v2/filelib/retrieve` | `knowledge:read` | `query`、`knowledge_base_ids`、`top_k`（1–200，默认 10）；文档知识库需 `use_kb` |
+| 问答行查询 | `POST /api/v2/filelib/query_qa` | `knowledge:read` | `timeRange`；只返回有 `view_kb` 的知识库记录 |
 | 会话历史 | `GET /api/v2/chat/history` | `chat:invoke` | **`chat_id`、`flow_id`（均必填）**、`id?`、`page_size?` |
 | 会话其他 | `POST /api/v2/chat/gen_title` · `liked` · `solved` · `comment` · `sync/messages` | `chat:invoke` | 见 openapi.json |
 | 引用详情 | `GET /api/v2/citation/{citation_id}` | `knowledge:read` | — |
@@ -168,6 +170,8 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 | 纳管智能体调用 | `POST /api/v2/managed-agent/invoke` | `managed_agent:invoke` | 见 8.2 |
 
 以上路径前都需拼上接入地址。表中未列出的端点同样遵循同一套鉴权与错误码规则；完整入参/出参与返回示例见 `GET {{base_url}}/docs`（Swagger UI）或 `GET {{base_url}}/openapi.json`（机器可读，**以它为准**）。
+
+> **档位提示**：助手对话（HTTP/WS）、工作流调用/停止、事件触发需要 `use_app`（**editor 及以上**）；知识库检索需要 `use_kb`（系统默认 viewer 档已含）；只读的列表与详情 viewer 即可。
 
 ### 8.1 事件触发（`schedule:trigger`）
 

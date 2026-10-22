@@ -13,15 +13,18 @@
 
 ```
 POST   /api/v1/service-accounts                     建服务账号(同事务自动创建专用身份 svc-*,零角色零授权)
-POST   /api/v1/service-accounts/{id}/keys           签发密钥(明文仅本响应出现一次)
-PATCH  /api/v1/service-accounts/{id}/keys/{key_id}  改名称/权限位/有效期(立即生效)
+POST   /api/v1/service-accounts/{id}/keys           签发密钥(可带 allowed_apps;响应含明文)
+PATCH  /api/v1/service-accounts/{id}/keys/{key_id}  改名称/权限位/智能体白名单/有效期(立即生效)
+POST   /api/v1/service-accounts/{id}/keys/{key_id}/reveal   管理员查看明文(写审计;存量密钥 11823)
 POST   /api/v1/service-accounts/{id}/keys/{key_id}/revoke   单把吊销
 POST   /api/v1/service-accounts/{id}/keys/revoke-all        全量吊销(轮换收尾)
 GET    /api/v1/open-api/scopes                      可签发权限位目录(10 项)
+GET    /api/v1/service-accounts/{id}/assignable-agents      可加入白名单的智能体目录
 ```
 
 - **密钥格式**：`bs-sak-` + 43 字符随机串，共 50 字符。
-- **明文只在签发响应里出现一次**。平台只保存不可逆摘要，此后任何接口、界面、日志、审计都取不回明文；遗失只能**重新签发**。
+- **明文可由管理员查看**：签发响应返回明文；此后可调用 `POST .../keys/{key_id}/reveal` 再次获取（仅租户管理员，每次写审计）。平台校验只依赖不可逆摘要，查看用密文独立加密存储；明文不进入日志/审计/列表/缓存。
+- **存量密钥**：本次升级前签发的密钥没有查看密文，reveal 返回 `400 / 11823`，需重新签发。
 - **掩码**：列表与审计中一律显示为 `bs-sak-********` + 明文末四位（例：`bs-sak-********AbCd`），用于对账与轮换识别。
 - **停用服务账号 = 立即吊销其名下全部密钥**（不可逆，重新启用不会恢复）；删除账号同理。建议按系统/环境分开建账号（例：`信贷系统-生产`、`信贷系统-测试`）。
 
@@ -38,7 +41,7 @@ Authorization: Bearer bs-sak-<43 字符>
 
 - 调用身份 = 该密钥所属**服务账号的专用身份**（`svc-*`，平台自动创建，零角色零资源授权）。**不继承任何管理员特权。**
 - **请求里的 `user_id` 等身份参数一律不予采用**：query/form 形态出现即被拒（`400 / 11817`）；出现在请求体里时也不会生效——调用永远按密钥所属身份执行，不会"代表"某个用户。
-- 自检端点：`GET /api/v2/auth/whoami` 回显当前身份（账号、掩码、权限位、有效期），**不需要权限位**，适合联调第一步。
+- 自检端点：`GET /api/v2/auth/whoami` 回显当前身份（账号、掩码、权限位、智能体白名单、有效期），**不需要权限位**，适合联调第一步。
 
 ## 4. 权限位（scope）
 
@@ -61,16 +64,31 @@ Authorization: Bearer bs-sak-<43 字符>
 - **隐含规则**：授予 `knowledge:write` 即同时具备 `knowledge:read`。
 - 签发时未登记的 code 一律拒绝（`400 / 11819`）。
 
+## 4.1 每 Key 智能体白名单（`allowed_apps`）
+
+权限位是**功能维度**（能调哪类端点），白名单是**具体对象维度**（能调哪些智能体）：
+
+- `allowed_apps` 为 `null`/不传 = 不限制，沿用账号资源授权；
+- `[]` = 不调用任何智能体（只读/知识库调用不受影响）；
+- 非空数组 = 只能调用其中的助手/工作流/纳管智能体：`[{"type":"assistant|workflow|managed_agent","id":"..."}]`。
+
+判定顺序：**权限位 → 白名单 → 资源授权**，三者同时满足才放行。白名单未命中与资源不可见同码 `404 / 11809`。同一服务账号下的不同密钥可以有不同白名单（例如 Key1 只允许工作流 A，Key2 只允许工作流 B）。
+
+- `schedule:trigger` 是间接调用：事件触发时会按任务的目标应用再判一次白名单。
+- `managed_agent` 条目对应纳管注册表 id（不是 `native_app_id`）。
+- 白名单只收窄、不扩权；编辑后 ≤5 秒生效。
+
 ## 5. 资源可见范围
 
 - 可见范围 = **该专用身份在平台权限体系中的资源授权**。默认**为空**。
 - 可授权的资源类型：`knowledge_library`（知识库）、`knowledge_space`（知识空间）、`assistant`（助手）、`workflow`（工作流）、`managed_agent`（纳管智能体）。
 - 管理员在服务账号详情页的「资源授权」里代管这些授权（也可用 `POST /api/v1/service-accounts/{id}/resource-grants:mutate`）；授权有档位：`viewer` / `editor` / `manager`（不含 `owner`）。
 - 调用类端点的档位要求：
-  - 工作流调用/停止、`/api/v2/chat/*`、`schedule/trigger`：需要 `use_app`，即 **editor 及以上**；
-  - 助手对话 `POST /api/v2/assistant/chat/completions`：`view_app` **或** `use_app` 任一即可，**viewer 也够**；
+  - 工作流调用/停止、助手对话（HTTP 与 WebSocket）、`/api/v2/chat/*`、`schedule/trigger`：需要 `use_app`，即 **editor 及以上**；
   - `managed-agent/invoke`：需要 **editor**；
-  - 只读的列表与详情：viewer 即可。
+  - 知识库检索 `POST /api/v2/filelib/retrieve`：文档知识库需要 `use_kb`（系统默认 viewer 档同时含 `view_kb` + `use_kb`）；知识空间（type=3）沿用视图权限，不适用 `use_kb`；
+  - 问答行查询 `POST /api/v2/filelib/query_qa`：只返回该身份有 `view_kb` 的知识库下的记录；
+  - 只读的列表与详情（含助手详情/列表）：viewer 即可。
 - **对接方应把 `403` 与 `404` 都当作"未授权/不可见"处理**：资源不在授权范围、或本就不可见，都按"不能访问"实现降级（不要据此区分资源存在性）。档位不足是 `403 / 11808`（资源可见），不可见是 `404 / 11809`。
 
 ## 6. 错误码与 HTTP 状态
@@ -110,6 +128,8 @@ Authorization: Bearer bs-sak-<43 字符>
 | 11819 | 400 | 签发/编辑密钥时指定了未登记的权限位 | 从目录端点取合法 code |
 | 11820 | 400 | 授权代管时资源类型/档位不在白名单 | 见第 5 节 |
 | 11821 | 400 | 该用户是服务账号专用身份，不允许在用户侧人工管理 | 到「服务账号」页操作 |
+| 11822 | 400（管理面） | 签发/编辑密钥时指定的智能体不可用或不在账号授权范围 | 先在「资源授权」中授予 |
+| 11823 | 400（管理面） | 该密钥不可查看明文（存量密钥无密文或密文损坏） | 重新签发一把新密钥 |
 
 ### 6.2 事件触发（119xx）
 
@@ -159,7 +179,7 @@ Authorization: Bearer bs-sak-<43 字符>
 ## 9. 审计与日志
 
 - 每次被鉴权的调用都会留一条审计（密钥掩码、服务账号、权限位、HTTP 状态、业务码、耗时、来源 IP），管理动作另有前后取值。
-- 审计**不含密钥明文或摘要**；明文只在签发响应里出现一次。
+- 审计**不含密钥明文、密文或摘要**；管理员每次查看明文另写一条 `open_api.api_key.reveal`（只记掩码/账号/操作者）。
 - 审计不在平台「审计日志」页展示（取证数据），需要时由运维按 `auditlog.action = 'open_api.call'` 查询；对客口径建议保留 **≥ 6 个月**。
 
 ## 10. 常见联调问题
