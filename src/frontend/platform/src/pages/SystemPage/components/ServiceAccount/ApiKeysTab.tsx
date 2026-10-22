@@ -1,6 +1,7 @@
 import { bsConfirm } from "@/components/bs-ui/alertDialog/useConfirm"
 import { Badge } from "@/components/bs-ui/badge"
 import { Button } from "@/components/bs-ui/button"
+import { SearchInput } from "@/components/bs-ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/bs-ui/table"
 import { message } from "@/components/bs-ui/toast/use-toast"
 import {
@@ -20,7 +21,7 @@ import {
     ServiceAccountKeyIssued,
 } from "@/types/api/serviceAccount"
 import { formatIsoDateTime } from "@/util/utils"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { KeyIssueDialog, scopeLocaleKey } from "./KeyIssueDialog"
 import { KeyRevealDialog } from "./KeyRevealDialog"
@@ -43,6 +44,7 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
     const [keys, setKeys] = useState<ServiceAccountKey[]>([])
     const [scopes, setScopes] = useState<OpenApiScope[]>([])
     const [assignableAgents, setAssignableAgents] = useState<AssignableAgent[]>([])
+    const [query, setQuery] = useState("")
     const [loading, setLoading] = useState(true)
     const [issueOpen, setIssueOpen] = useState(false)
     const [editing, setEditing] = useState<ServiceAccountKey | null>(null)
@@ -86,10 +88,45 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
     const unrevokedCount = keys.filter((row) => row.status !== "revoked").length
 
     // Resolve a stored allowlist id to its display name; stale ids keep the raw id.
-    const agentLabel = (ref: { type: string; id: string }) => {
-        const found = assignableAgents.find((agent) => agent.type === ref.type && agent.id === ref.id)
-        return found ? `${t(`keys.agents.type.${ref.type}`)} · ${found.name}` : ref.id
-    }
+    const agentLabel = useCallback(
+        (ref: { type: string; id: string }) => {
+            const found = assignableAgents.find((agent) => agent.type === ref.type && agent.id === ref.id)
+            return found ? `${t(`keys.agents.type.${ref.type}`)} · ${found.name}` : ref.id
+        },
+        [assignableAgents, t],
+    )
+
+    // Client-side filter: the key list endpoint returns every key (no pagination).
+    // Match the text the admin can see, including scope/agent names and the mask.
+    const visibleKeys = useMemo(() => {
+        const needle = query.trim().toLowerCase()
+        if (!needle) return keys
+        return keys.filter((row) => {
+            const scopes = row.scopes
+                .map((code) => `${code} ${t(scopeLocaleKey(code), { defaultValue: code })}`)
+                .join(" ")
+            const agents =
+                row.allowed_apps === null
+                    ? t("keys.agents.unrestricted")
+                    : row.allowed_apps.length === 0
+                      ? t("keys.agents.none")
+                      : row.allowed_apps.map((ref) => `${agentLabel(ref)} ${ref.id}`).join(" ")
+            const haystack = [
+                row.name ?? t("keys.unnamed"),
+                row.key_mask,
+                String(row.id),
+                t(`keys.status.${row.status}`),
+                scopes,
+                agents,
+                row.expires_at ? formatIsoDateTime(row.expires_at) : "",
+                row.last_used_at ? formatIsoDateTime(row.last_used_at) : "",
+                row.revoked_at ? formatIsoDateTime(row.revoked_at) : "",
+            ]
+                .join(" ")
+                .toLowerCase()
+            return haystack.includes(needle)
+        })
+    }, [keys, query, agentLabel, t])
 
     const openIssue = () => {
         setEditing(null)
@@ -166,7 +203,13 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
         <div className="flex h-full w-full flex-col gap-3 overflow-hidden">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">{t("keys.oneTimeNotice")}</p>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                    <SearchInput
+                        className="w-[240px]"
+                        placeholder={t("keys.searchPlaceholder")}
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                    />
                     {!account.enabled && <span className="text-sm text-red-500">{t("keys.accountDisabledHint")}</span>}
                     <Button variant="outline" className="px-6" disabled={!unrevokedCount} onClick={handleRevokeAll}>
                         {t("keys.revokeAll")}
@@ -208,8 +251,17 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
                                     {t("keys.emptyHint")}
                                 </TableCell>
                             </TableRow>
+                        ) : visibleKeys.length === 0 ? (
+                            <TableRow>
+                                <TableCell colSpan={8} className="text-center text-muted-foreground">
+                                    {t("keys.noMatch")}
+                                    <Button variant="link" size="sm" onClick={() => setQuery("")}>
+                                        {t("keys.clearSearch")}
+                                    </Button>
+                                </TableCell>
+                            </TableRow>
                         ) : (
-                            keys.map((row) => (
+                            visibleKeys.map((row) => (
                                 <TableRow key={row.id}>
                                     <TableCell>{row.name || t("keys.unnamed")}</TableCell>
                                     <TableCell>
@@ -269,15 +321,21 @@ export function ApiKeysTab({ account, onKeysChanged }: ApiKeysTabProps) {
                                         {row.last_used_at ? formatIsoDateTime(row.last_used_at) : t("never")}
                                     </TableCell>
                                     <TableCell className="text-right">
-                                        <Button
-                                            variant="link"
-                                            size="sm"
-                                            disabled={!row.revealable}
-                                            title={!row.revealable ? t("keys.reveal.notRevealableHint") : undefined}
-                                            onClick={() => handleReveal(row)}
-                                        >
-                                            {t("keys.reveal.action")}
-                                        </Button>
+                                        {row.revealable ? (
+                                            <Button variant="link" size="sm" onClick={() => handleReveal(row)}>
+                                                {t("keys.reveal.action")}
+                                            </Button>
+                                        ) : (
+                                            // Legacy keys have no ciphertext; a disabled button's
+                                            // title is unreachable (pointer-events: none), so show a
+                                            // non-interactive hint that can actually explain why.
+                                            <span
+                                                className="cursor-help text-xs text-muted-foreground"
+                                                title={t("keys.reveal.notRevealableHint")}
+                                            >
+                                                {t("keys.reveal.notRevealable")}
+                                            </span>
+                                        )}
                                         <Button
                                             variant="link"
                                             size="sm"
