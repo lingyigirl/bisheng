@@ -2,7 +2,7 @@
 
 本文档供**行内对接系统的开发人员**使用：通过 API Key 调用本平台的智能体应用、工作流、知识库与已纳管智能体接口。
 
-文中出现的 `{{base_url}}` / `{{ws_base_url}}` 会在查看与导出时自动替换为页面顶部的「接入地址」。该地址默认可能来自平台配置、自动探测或控制台地址，**不一定是正确的对接地址**，交付前请按第二节确认。示例中的密钥均为占位符，请以管理员实际交付的为准。
+文中出现的 `{{base_url}}` / `{{ws_base_url}}` 会在查看与导出时自动替换为页面顶部的「接入地址」。该地址可能来自**平台配置**、**已保存**、**自动探测**或**控制台地址**（优先级见 2.1），**不一定是正确的对接地址**，交付前请按第二节确认。示例中的密钥均为占位符，请以管理员实际交付的为准。
 
 ## 一、三步开始
 
@@ -20,7 +20,7 @@
 - 经 API 网关/反向代理：`https://<网关域名>[:端口][/前缀]`（由运维提供）；
 - 生产必须 HTTPS；WebSocket 对应 `wss://`。
 
-页面顶部地址的来源有三种：**平台配置**（运维在 `config.yaml` 的 `open_api.public_base_url` 设置，最权威）、**自动探测**（平台探测本机 IP 与监听端口，仅在开发环境作为默认值）、**控制台地址**（默认值）。前端开发服务器地址只在开发代理下可用，**不可作为交付地址**。
+页面顶部地址的来源有四种（优先级从高到低）：**平台配置**（运维在 `config.yaml` 的 `open_api.public_base_url` 设置，最权威）、**已保存**（管理员在本页输入并保存，仅对当前浏览器生效）、**自动探测**（平台探测本机 IP 与监听端口，仅在开发环境作为默认值）、**控制台地址**（默认值）。前端开发服务器地址只在开发代理下可用，**不可作为交付地址**。
 
 - 浏览器直连后端时，需要运维把对接系统的源加入后端 CORS 白名单；服务端到服务端调用不受此限制。
 - 验证地址（不带密钥）：
@@ -40,7 +40,7 @@
   - 其余端点按**默认租户**的租户开关判定：开启 → `401 / 11801`；关闭 → 旧行为（分租户灰度）。
 - 总闸开启、请求**带** `Authorization` 时：**始终校验**，身份与权限位一律按密钥执行，**与租户开关无关**。
 - 免登录面共 8 个端点：`POST /api/v2/assistant/chat/completions`、`GET /api/v2/assistant/info/{id}`、`GET /api/v2/assistant/list`、`WS /api/v2/assistant/chat/{id}`、`WS /api/v2/workflow/chat/{id}`、`POST /api/v2/chat/gen_title`、`GET /api/v2/chat/history`、`GET /api/v2/flows/{id}`。
-- **例外**：`POST /api/v2/schedule/trigger` 与 `POST /api/v2/managed-agent/invoke` 无论总闸是否开启都要求有效密钥（总闸关闭时返回 `401 / 11801`）。
+- **例外**：始终要求有效密钥的端点有三个——`GET /api/v2/auth/whoami`、`POST /api/v2/schedule/trigger`、`POST /api/v2/managed-agent/invoke`。总闸关闭时它们不会匿名放行，即使携带密钥也一律返回 `401 / 11801`。
 - 判断总闸（**不要用 whoami**，总闸关闭时它同样返回 `401 / 11801`，与"密钥格式错"无法区分）：
 
   ```bash
@@ -55,7 +55,7 @@
 
 - 密钥由**平台管理员**在控制台「系统 → 服务账号」中建号并签发，经行内安全渠道线下交付；平台不提供自助申请与工单流程。
 - **密钥格式**：`bs-sak-` 开头 + 43 个随机字符，共 50 个字符。
-- **明文可由管理员查看**：钥匙串页的「查看」动作会经审计地返回明文；对接方仍应把密钥当口令保管，不要依赖"以后再看"。本次升级前签发的存量密钥没有查看密文，需要重新签发才能查看。
+- **明文可由管理员查看**：**「密钥」页**的「查看」动作会经审计地返回明文；对接方仍应把密钥当口令保管，不要依赖"以后再看"。本次升级前签发的存量密钥没有查看密文，需要重新签发才能查看。
 - **平台校验只依赖不可逆摘要**；查看用的密文独立加密存储，明文不会出现在日志、审计、列表或缓存中。
 - 平台列表与审计中密钥显示为掩码（如 `bs-sak-********AbCd`），用于对账与轮换识别。
 - 建议**一个对接系统（一个环境）一个服务账号**：生产与测试分开，便于单独吊销、单独审计。
@@ -71,7 +71,7 @@ Authorization: Bearer bs-sak-<43 个字符>
 - **禁止**把密钥放进 URL 查询串（`?api_key=...` 之类）：请求行会被访问日志原样记录，等同于泄露；平台也不接受这种形式。
 - **不要**在请求中传 `user_id` 等身份参数：调用身份完全由密钥决定，传了会被拒绝（`400 / 11817`）。
 - 调用**不代表**任何具体用户：密钥对应平台为该服务账号自动创建的专用身份（`svc-*`，零角色零权限），**不继承任何管理员权限**。
-- `Authorization` 只在总闸开启时生效；两个新增端点（见 2.2）例外——它们始终要求密钥。
+- `Authorization` 只在总闸开启时生效；`GET /api/v2/auth/whoami`、`POST /api/v2/schedule/trigger`、`POST /api/v2/managed-agent/invoke` 三个端点例外——它们始终要求有效密钥。
 
 ## 五、先自检：这个密钥能干什么
 
@@ -110,7 +110,7 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 | `workflow:invoke` | 工作流调用/停止、工作流会话（WebSocket） |
 | `workflow:read` | 工作流详情 |
 | `assistant:invoke` | 助手对话（含流式与 WebSocket） |
-| `assistant:read` | 助手信息与列表 |
+| `assistant:read` | 助手信息与列表（助手列表另需 `use_app` 资源档位） |
 | `llm:workbench` | 工作台语音转写/合成（`/api/v2/llm/workbench/asr|tts`），不寻址具体智能体 |
 | `chat:invoke` | 会话管理（历史、标题、点赞、标记、评论、消息同步） |
 | `knowledge:read` | 知识库与文件读取、检索、引用详情 |
@@ -135,9 +135,9 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
   - 纳管智能体调用：需要 **editor**；
   - 知识库检索：文档知识库需要 `use_kb`（系统默认 viewer 档已含）；知识空间沿用视图权限，不适用 `use_kb`；
   - 问答行查询（`POST /api/v2/filelib/query_qa`）：只返回该身份有 `view_kb` 的知识库下的记录；
-  - 只读的列表与详情（含助手详情/列表）：viewer 即可。
-- 资源不在授权范围、或资源不存在，**都返回 `404 / 11809`**（防枚举，两者不可区分）；资源可见但档位不足返回 `403 / 11808`。
-- **实现建议**：把 `403` 与 `404` 都当作"未授权/不可见"处理，据此做降级提示，不要用来判断资源是否存在。
+  - 助手详情、工作流详情、知识库/文件列表：viewer 即可；**助手列表**按 `use_app` 过滤，需要 editor 及以上——仅 viewer 的助手不会出现在列表中。
+- 资源不存在、不在授权范围、不在该 Key 白名单、或调用档位不足，**统一返回 `404 / 11809`**（防枚举，四者不可区分）。`11808` 只用于管理面代管授权：执行授权的管理员对目标资源没有 `manager` 权限。
+- **实现建议**：把 `403`（缺权限位等）与 `404`（资源不可见/档位不足）都按"不可调用"处理，据此做降级提示；不要用错误码判断资源是否存在。
 
 ### 7.1 每把 Key 的智能体白名单
 
@@ -159,11 +159,12 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 |---|---|---|---|
 | 凭据自检 | `GET /api/v2/auth/whoami` | 无（仅需密钥） | — |
 | 助手对话（含流式） | `POST /api/v2/assistant/chat/completions` | `assistant:invoke` | `model`（助手ID）、`messages`、`stream`（默认 false）、`temperature`、`tools?` |
-| 助手信息 / 列表 | `GET /api/v2/assistant/info/{assistant_id}` · `GET /api/v2/assistant/list` | `assistant:read` | 列表 `page`、`limit`、`name?`、`tag_id?`、`status?` |
+| 助手信息 / 列表 | `GET /api/v2/assistant/info/{assistant_id}` · `GET /api/v2/assistant/list` | `assistant:read`（列表另需 `use_app` 档位） | 列表 `page`、`limit`、`name?`、`tag_id?`、`status?` |
 | 助手对话（WebSocket） | `WS /api/v2/assistant/chat/{assistant_id}` | `assistant:invoke` | `chat_id?` |
 | 语音转写 / 合成 | `POST /api/v2/llm/workbench/asr` · `POST /api/v2/llm/workbench/tts` | `llm:workbench` | asr 上传 `file`；tts 传 `text` |
 | 诊断日志下载 | `GET /api/v2/filelib/download_statistic` | `diagnostics:read` | `file_path`（仅 `/app/data` 下 `.log`；默认不建议签发） |
-| 工作流调用 / 停止 | `POST /api/v2/workflow/invoke` · `POST /api/v2/workflow/stop` | `workflow:invoke` | `workflow_id`、`input`、`stream`（默认 **true**）、`session_id?`、`message_id?`、`override?`、`tools?` |
+| 工作流调用 | `POST /api/v2/workflow/invoke` | `workflow:invoke` | `workflow_id`、`input`、`stream`（默认 **true**）、`session_id?`、`message_id?`、`override?`、`tools?` |
+| 工作流停止 | `POST /api/v2/workflow/stop` | `workflow:invoke` | 只接受 `workflow_id` 与 `session_id`（必填），其他调用参数不适用 |
 | 工作流详情 | `GET /api/v2/flows/{flow_id}` | `workflow:read` | 返回 `data.tools` |
 | 工作流会话（WebSocket） | `WS /api/v2/workflow/chat/{workflow_id}` | `workflow:invoke` | `chat_id?` |
 | 知识库 / 知识空间列表 | `GET /api/v2/filelib/` | `knowledge:read` | `type`（0 文档库、1 问答库、3 知识空间；2 不支持）、`name?`、`page_size`、`cursor?` |
@@ -178,7 +179,7 @@ curl -H "Authorization: Bearer $KEY" {{base_url}}/api/v2/auth/whoami
 
 以上路径前都需拼上接入地址。表中未列出的端点同样遵循同一套鉴权与错误码规则；完整入参/出参与返回示例见 `GET {{base_url}}/docs`（Swagger UI）或 `GET {{base_url}}/openapi.json`（机器可读，**以它为准**）。
 
-> **档位提示**：助手对话（HTTP/WS）、工作流调用/停止、事件触发需要 `use_app`（**editor 及以上**）；知识库检索需要 `use_kb`（系统默认 viewer 档已含）；只读的列表与详情 viewer 即可。
+> **档位提示**：助手对话（HTTP/WS）、工作流调用/停止、事件触发需要 `use_app`（**editor 及以上**）；纳管智能体调用需要 **editor**；知识库检索需要 `use_kb`（系统默认 viewer 档已含）；助手详情、工作流详情、知识库/文件列表 viewer 即可；**助手列表**按 `use_app` 过滤，需 editor 及以上。
 
 ### 8.1 事件触发（`schedule:trigger`）
 
@@ -195,7 +196,8 @@ curl -s -X POST "$BASE/api/v2/schedule/trigger" \
 
 - 必带两个头：`X-Bs-Timestamp`（epoch 秒，允许 ±300 秒）与 `X-Bs-Nonce`（一次性，窗口内重复即拒）。
 - 请求体只接受 `task_id`（整数，必填）与可选的 `inputs`；**`inputs` 当前不生效**——运行时入参取自任务本身的预设配置；多余字段直接拒绝。
-- 任务必须处于启用状态，且密钥身份对任务目标应用有 `use_app` 权限；否则一律 `404 / 11809`（不区分不存在、停用与越权）。
+- 任务不存在、未启用、不属于该密钥所属的服务账号，或密钥身份对任务目标应用没有 `use_app` 权限：一律 `404 / 11809`（不区分不存在、停用与越权）。
+- 任务目标应用已下线、已删除或不可调度：`409 / 11907`（应用本身不可用，请联系管理员恢复）。
 - 受理即返回，不等运行完成；运行结果在平台任务列表与监控中查看。
 - 该端点无论总闸是否开启都要求密钥。
 
@@ -210,7 +212,8 @@ curl -s -X POST "$BASE/api/v2/managed-agent/invoke" \
 ```
 
 - 请求体只接受 `agent_id`（整数，必填）、`input`（必填）与可选的 `session_id`；多余字段或类型错误直接拒绝。
-- 智能体必须已上线，且密钥身份对其有 **editor** 授权；未上线、未授权都按不可见处理。
+- 智能体不存在、或密钥身份对其没有 **editor** 授权：按不可见处理，返回 `404 / 11809`。
+- 已授权但未上线（草稿/下线/停用）：`400 / 12105`。
 - 出站地址受平台 SSRF / allowlist 策略约束；上游失败、凭据错误、响应非法分别返回对应的 502 系错误码（见 10.3）。
 - 频控 60 次/分钟（租户 + 智能体），超限返回 429 并带 `Retry-After`；健康检查不计入。
 - 部署关闭「智能体纳管」开关时该路由不存在，返回**普通 404**（无统一信封）。
@@ -236,9 +239,10 @@ curl -s -X POST "$BASE/api/v2/managed-agent/invoke" \
 }
 ```
 
-- **两个例外，排障时不要按 HTTP 状态判断**：
+- **118xx 之外的业务错误多数仍是 HTTP 200，排障时请以响应体 `status_code` 为准，不要只看 HTTP 状态**：
   - 请求参数缺失或类型错误：HTTP **200**，响应体 `status_code: 422`；
-  - 工作流内部错误（如续跑缺 `message_id`）：HTTP **200**，响应体 `status_code: 500`。
+  - 工作流内部错误（如续跑缺 `message_id`）：HTTP **200**，响应体 `status_code: 500`；
+  - 诊断日志路径非法：HTTP **200**，响应体 `status_code: 500`（`invalid file path`）。
 - 部署关闭「智能体纳管」开关时，`POST /api/v2/managed-agent/invoke` 返回**普通 404**（FastAPI 默认响应体，无统一信封）。
 
 ### 10.1 鉴权与授权（118xx）
@@ -252,8 +256,8 @@ curl -s -X POST "$BASE/api/v2/managed-agent/invoke" \
 | 11805 | 401 | 服务账号停用 / 专用身份不可用 | 联系管理员 |
 | 11806 | 403 | 租户停用 | 联系管理员 |
 | 11807 | 403 | 缺权限位（`data.required` 回带） | 让管理员把该权限位补进密钥 |
-| 11808 | 403 | 资源可见但授权档位不足 | 让管理员提升授权档位 |
-| 11809 | 404 | 资源不存在**或**不在授权范围（防枚举） | 确认资源已授权给该账号 |
+| 11808 | 403（管理面） | 仅管理面：执行资源授权的管理员对目标资源没有 `manager` 权限（对接调用不会返回此码） | 由有该资源 `manager` 权限的管理员操作 |
+| 11809 | 404 | 资源不存在 / 不在授权范围 / 不在该 Key 白名单 / 调用档位不足（不可区分） | 确认资源已授权、档位足够且在该 Key 白名单内 |
 | 11810 | 400 | 指定的资源所有者是管理员（防提权） | 换非管理员用户 |
 | 11811 | 500 | 端点漏标权限位（平台配置错误） | 报障（服务端日志可见） |
 | 11812 | 503 | 鉴权依赖不可用（fail-closed） | 稍后重试 |
@@ -273,9 +277,11 @@ curl -s -X POST "$BASE/api/v2/managed-agent/invoke" \
 
 | 码 | HTTP | 含义 | 对接方动作 |
 |---|---|---|---|
+| 11905 | 409 | 任务锁定的运行身份不可用（专用身份被更换/提权，或已失去目标应用的 `use_app`） | 联系管理员修复任务的运行身份 |
 | 11907 | 409 | 目标应用不可用（下线/不可调度） | 联系管理员恢复应用 |
+| 11909 | 409 | 触发被拒：平台并发名额已满等运行条件不满足（任务已有运行中见 11910） | 稍后重试；持续出现联系管理员 |
 | 11910 | 409 | 该任务已有运行在进行 | 等本次运行结束后再触发 |
-| 11911 | 429 | 任务级触发频控（默认 10 次/分钟/任务） | 降低频率后重试；响应**不带** `Retry-After` |
+| 11911 | 429 | 任务级触发频控（代码默认 10 次/分钟/任务，可由 `scheduled_task.event_rate_limit_per_minute` 覆盖；当前验收环境为 60） | 降低频率后重试；响应**不带** `Retry-After` |
 | 11912 | 400 | 时间戳超窗/缺失，或 nonce 重放 | 校准系统时钟，每次使用新的 nonce |
 | 11916 | 400 | 触发载荷含多余字段 | 只传 `task_id` 与 `inputs` |
 
@@ -370,7 +376,7 @@ curl -s -X POST "$BASE/api/v2/managed-agent/invoke" \
   -d '{"agent_id":29,"input":{"query":"你好"}}'
 ```
 
-工作流停止（用调用返回的 `session_id`）：
+工作流停止（只接受 `workflow_id` 与调用返回的 `session_id`，其他调用参数不适用）：
 
 ```bash
 curl -s -X POST "$BASE/api/v2/workflow/stop" \
@@ -387,17 +393,17 @@ wscat -c '{{ws_base_url}}/api/v2/assistant/chat/<助手ID>' \
 
 ## 十四、联调自查顺序
 
-1. **401 / 11801** → 请求头没带或格式不对（必须是 `Bearer bs-sak-` + 43 字符）。
-2. **401 / 11802 / 11803 / 11804** → 密钥不存在 / 过期 / 已吊销，找管理员在密钥列表核对状态。
+1. **401 / 11801** → 请求头没带、格式不对，或总闸关闭（`whoami`、`schedule/trigger`、`managed-agent/invoke` 在总闸关闭时也返回 11801）。
+2. **401 / 11802 / 11803 / 11804 / 11805** → 密钥不存在 / 过期 / 已吊销 / 账号停用或专用身份不可用，找管理员核对密钥与账号状态。
 3. **403 / 11807** → 响应体 `data.required` 直接告诉你缺哪个权限位。
 4. **403 / 11815** → 工具不在该应用的绑定清单里：先取 `tool_list` / `tools` 清单再传。
-5. **404 / 11809** → 资源没有授权给这个账号（或确实不存在）——两者不可区分，属预期设计。
+5. **404 / 11809** → 资源没有授权、档位不足、不在该 Key 白名单，或确实不存在——四者不可区分，属预期设计。
 6. **400 / 11817** → 请求里出现了 `user_id` 之类的身份参数，去掉。
 7. **400 / 11818** → 工作流续跑时不要传 `tools[]`（本轮工具只在新会话生效）。
-8. **409 / 11910、429 / 11911、400 / 11912** → 事件触发：运行未结束、触发频控、时间戳超窗或 nonce 重放。
+8. **409 / 11905、11907、11909、11910；429 / 11911；400 / 11912、11916** → 事件触发：运行身份不可用、目标应用不可用、触发被拒（平台并发已满）、运行未结束、触发频控、时间戳超窗或 nonce 重放、载荷含多余字段。
 9. **400 / 12105、502 / 12106 / 12107 / 12113、403 / 12111、429 / 12112** → 纳管智能体：未上线、上游失败/凭据/响应非法、出站被拒、频控。
-10. **HTTP 200 但 `status_code` 为 422** → 缺必填参数或类型错误；**HTTP 200 但 `status_code` 为 500** → 工作流内部错误（如续跑缺 `message_id`）。
-11. 一切正常但结果为空 → 检查调用身份对该资源的授权档位、以及资源本身的数据状态。
+10. **HTTP 200 但 `status_code` 不是 118xx**（如 `422` 缺必填参数/类型错误；`500` 工作流内部错误或诊断日志路径非法）→ 以响应体 `status_code` 为准，不要只看 HTTP 状态。
+11. 一切正常但结果为空 → 检查调用身份对该资源的授权档位、以及资源本身的数据状态；助手列表为空还可能是该助手仅为 viewer（列表按 `use_app` 过滤）。
 
 ## 十五、密钥轮换建议
 

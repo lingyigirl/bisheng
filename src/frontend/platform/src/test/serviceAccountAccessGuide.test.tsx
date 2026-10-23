@@ -4,7 +4,7 @@
  * The load-bearing promise is "what the admin reads is what the integrator
  * receives": the rendered body and the copied/exported text come from one
  * substitution, so the tests assert that equality directly. The content
- * anchors (21 error codes, 8 permission scopes) tie the shipped document to
+ * anchors (37 error codes, 12 permission scopes) tie the shipped document to
  * the backend contract — `scopes.py` and `errcode/open_api.py` must move
  * together with `accessGuide.md`, and this test goes red if they drift.
  */
@@ -151,12 +151,14 @@ describe("AccessGuideTab (F076)", () => {
         await waitFor(() => expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ description: "guide.copyFailed" })))
     })
 
-    it("keeps the document in step with the backend contract (35 codes, 12 scopes)", () => {
+    it("keeps the document in step with the backend contract (37 codes, 12 scopes)", () => {
         render(<AccessGuideTab />)
         const text = bodyText()
         expect(new Set(text.match(/118\d\d/g) ?? []).size).toBe(23)
         expect([...new Set(text.match(/119\d\d/g) ?? [])].sort()).toEqual([
+            "11905",
             "11907",
+            "11909",
             "11910",
             "11911",
             "11912",
