@@ -38,6 +38,8 @@ from bisheng.common.security.outbound_url import (
 from bisheng.common.services.config_service import settings
 from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.database.models.audit_log import AuditLogDao
+from bisheng.database.models.group_resource import ResourceTypeEnum
+from bisheng.database.models.tag import TagDao
 from bisheng.managed_agent.domain.constants import ManagedAgentAuditAction
 from bisheng.managed_agent.domain.models.dao import (
     ManagedAgentDao,
@@ -253,6 +255,8 @@ async def create_agent(user, req: ManagedAgentCreateReq) -> ManagedAgent:
     )
     agent = await ManagedAgentDao.acreate(agent)
     try:
+        if req.tags:
+            await TagDao.aupdate_resource_tags(req.tags, str(agent.id), ResourceTypeEnum.MANAGED_AGENT, user.user_id)
         await OwnerService.write_owner_tuple(
             user.user_id,
             "managed_agent",
@@ -260,7 +264,12 @@ async def create_agent(user, req: ManagedAgentCreateReq) -> ManagedAgent:
             enforce_fga_success=True,
         )
     except Exception:
-        # Do not leave an ownerless resource behind.
+        # Do not leave an ownerless/tag-orphaned resource behind. Tag cleanup is
+        # best-effort: the original failure is what the caller must see.
+        try:
+            await TagDao.aupdate_resource_tags([], str(agent.id), ResourceTypeEnum.MANAGED_AGENT, user.user_id)
+        except Exception:
+            logger.exception("managed agent tag cleanup failed during create rollback for {}", agent.id)
         await ManagedAgentDao.adelete(agent.id, tenant_id=agent.tenant_id)
         raise
     await _audit(user, ManagedAgentAuditAction.CREATE, agent)
@@ -357,6 +366,8 @@ async def update_agent(user, agent_id: int, req: ManagedAgentUpdateReq) -> Manag
     rowcount = await ManagedAgentDao.aupdate_fields(current.id, fields, tenant_id=current.tenant_id)
     if rowcount != 1:
         raise ManagedAgentUnavailableError(msg="managed agent changed concurrently")
+    if req.tags is not None:
+        await TagDao.aupdate_resource_tags(req.tags, str(current.id), ResourceTypeEnum.MANAGED_AGENT, user.user_id)
     updated = await ManagedAgentDao.aget(current.id)
     if updated is None:
         raise ManagedAgentNotFoundError()
@@ -416,9 +427,20 @@ async def delete_agent(user, agent_id: int) -> None:
 
     enabled_tasks = await ScheduledTaskDao.acount_enabled_by_app(str(current.id), 100)
     if enabled_tasks:
-        raise ManagedAgentInUseError(msg=f"managed agent has {enabled_tasks} enabled scheduled task(s)")
+        # `count` lands in the response `data` so the UI can render the number
+        # instead of the generic localized sentence (report §6 #6).
+        raise ManagedAgentInUseError(
+            count=enabled_tasks,
+            msg=f"managed agent has {enabled_tasks} enabled scheduled task(s)",
+        )
     if await ManagedAgentDao.adelete(current.id, tenant_id=current.tenant_id) != 1:
         raise ManagedAgentNotFoundError()
+    # Drop tag links after the row is gone; run traces keep their snapshots.
+    # Orphaned links are harmless, so a cleanup failure must not fail the delete.
+    try:
+        await TagDao.aupdate_resource_tags([], str(current.id), ResourceTypeEnum.MANAGED_AGENT, user.user_id)
+    except Exception:
+        logger.exception("managed agent tag link cleanup failed for {}", current.id)
     await _audit(user, ManagedAgentAuditAction.DELETE, current)
 
 
@@ -431,19 +453,40 @@ async def list_agents(
     status: str | None = None,
     scenario_code: str | None = None,
     industry_code: str | None = None,
+    tag_id: int | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[ManagedAgent], int]:
-    rows, total = await ManagedAgentDao.alist(
-        keyword=keyword,
-        source_kind=source_kind,
-        protocol=protocol,
-        status=status,
-        scenario_code=scenario_code,
-        industry_code=industry_code,
-        page=page,
-        page_size=page_size,
-    )
+    if tag_id is not None:
+        # TagLink.resource_id is a string; resolve the tagged set first, then
+        # filter/slice in memory (agent counts per tenant are small).
+        links = await TagDao.aget_resources_by_tags([tag_id], ResourceTypeEnum.MANAGED_AGENT)
+        tagged = {int(link.resource_id) for link in links if str(link.resource_id).isdigit()}
+        rows, _ = await ManagedAgentDao.alist(
+            keyword=keyword,
+            source_kind=source_kind,
+            protocol=protocol,
+            status=status,
+            scenario_code=scenario_code,
+            industry_code=industry_code,
+            page=1,
+            page_size=10_000,
+        )
+        rows = [row for row in rows if row.id in tagged]
+        total = len(rows)
+        start = max(page - 1, 0) * page_size
+        rows = rows[start : start + page_size]
+    else:
+        rows, total = await ManagedAgentDao.alist(
+            keyword=keyword,
+            source_kind=source_kind,
+            protocol=protocol,
+            status=status,
+            scenario_code=scenario_code,
+            industry_code=industry_code,
+            page=page,
+            page_size=page_size,
+        )
     if await _is_tenant_admin(user):
         return rows, total
     visible = await asyncio.gather(
@@ -452,7 +495,7 @@ async def list_agents(
             for row in rows
         ]
     )
-    filtered = [row for row, ok in zip(rows, visible) if ok]
+    filtered = [row for row, ok in zip(rows, visible, strict=True) if ok]
     return filtered, len(filtered)
 
 
@@ -462,27 +505,77 @@ async def list_catalog(
     keyword: str | None = None,
     scenario_code: str | None = None,
     industry_code: str | None = None,
+    tag_id: int | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[ManagedAgent], int]:
-    rows, _ = await ManagedAgentDao.alist_online_for_catalog(
-        keyword=keyword,
-        scenario_code=scenario_code,
-        industry_code=industry_code,
-        page=page,
-        page_size=page_size,
-    )
+    if tag_id is not None:
+        links = await TagDao.aget_resources_by_tags([tag_id], ResourceTypeEnum.MANAGED_AGENT)
+        tagged = {int(link.resource_id) for link in links if str(link.resource_id).isdigit()}
+        rows, _ = await ManagedAgentDao.alist_online_for_catalog(
+            keyword=keyword,
+            scenario_code=scenario_code,
+            industry_code=industry_code,
+            page=1,
+            page_size=10_000,
+        )
+        rows = [row for row in rows if row.id in tagged]
+        start = max(page - 1, 0) * page_size
+        rows = rows[start : start + page_size]
+    else:
+        rows, _ = await ManagedAgentDao.alist_online_for_catalog(
+            keyword=keyword,
+            scenario_code=scenario_code,
+            industry_code=industry_code,
+            page=page,
+            page_size=page_size,
+        )
     visible = await asyncio.gather(
         *[
             PermissionService.check(user.user_id, "viewer", "managed_agent", str(row.id), login_user=user)
             for row in rows
         ]
     )
-    filtered = [row for row, ok in zip(rows, visible) if ok]
+    filtered = [row for row, ok in zip(rows, visible, strict=True) if ok]
     return filtered, len(filtered)
 
 
-def to_item(agent: ManagedAgent, *, scenario_name: str | None = None, industry_name: str | None = None) -> dict:
+async def tag_meta_map(agent_ids: list[int]) -> dict[int, tuple[list[int], list[str]]]:
+    """Batch tag ids + names for list/detail rendering (resource type = managed_agent).
+
+    Ids are needed by the edit form: it echoes `tags` back on save, so an empty
+    list would silently clear the agent's tags.
+    """
+    if not agent_ids:
+        return {}
+    links = await TagDao.aget_resource_tag_ids_batch(
+        [str(agent_id) for agent_id in agent_ids], ResourceTypeEnum.MANAGED_AGENT
+    )
+    all_tag_ids = sorted({tag_id for ids in links.values() for tag_id in ids})
+    tags = await TagDao.aget_tags_by_ids(all_tag_ids)
+    name_by_id = {tag.id: tag.name for tag in tags}
+    result: dict[int, tuple[list[int], list[str]]] = {}
+    for resource_id, ids in links.items():
+        if not resource_id.isdigit():
+            continue
+        valid_ids = [tag_id for tag_id in ids if tag_id in name_by_id]
+        result[int(resource_id)] = (valid_ids, [name_by_id[tag_id] for tag_id in valid_ids])
+    return result
+
+
+async def tag_names_map(agent_ids: list[int]) -> dict[int, list[str]]:
+    """Names-only view over :func:`tag_meta_map` (kept for callers/tests)."""
+    return {agent_id: names for agent_id, (_, names) in (await tag_meta_map(agent_ids)).items()}
+
+
+def to_item(
+    agent: ManagedAgent,
+    *,
+    scenario_name: str | None = None,
+    industry_name: str | None = None,
+    tag_ids: list[int] | None = None,
+    tag_names: list[str] | None = None,
+) -> dict:
     return {
         "id": agent.id,
         "name": agent.name,
@@ -499,6 +592,8 @@ def to_item(agent: ManagedAgent, *, scenario_name: str | None = None, industry_n
         "industry_code": agent.industry_code,
         "scenario_name": scenario_name,
         "industry_name": industry_name,
+        "tags": tag_ids or [],
+        "tag_names": tag_names or [],
         "health_status": agent.health_status,
         "health_method": agent.health_method,
         "last_health_check_at": agent.last_health_check_at,

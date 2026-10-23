@@ -3,7 +3,7 @@
 分配前已按 v2.7.0 release-contract 的三来源口径扫描确认全空
 (`common/errcode/*.py` / 全部版本 release-contract / `packages/locales/src/api_errors/*.json`);
 118 此前由 F062 / F063 / F064 连续三次声明「留待后续 Feature」,由本特性正式申领
-(11801-11821,见 release-contract 的「已分配模块编码」表)。
+(11801-11823,见 release-contract 的「已分配模块编码」表)。
 
 **与全局错误码的两点差异(design §3 决策 3 / §4.2)**:
 
@@ -22,7 +22,7 @@ class OpenApiErrorBase(BaseErrorCode):
     """F076 错误基类:携带真实 HTTP 状态码(见模块 docstring 第 1 条)。
 
     公开命名:_EXCEPTION_HANDLERS 在 main.py 里按本类注册专用处理器
-    (T-13),Starlette 沿 MRO 匹配,因此全部 17 个子类自动走真状态 + 信封。
+    (T-13),Starlette 沿 MRO 匹配,因此全部子类自动走真状态 + 信封。
     """
 
     HttpStatus: int = 400
@@ -223,4 +223,29 @@ class OpenApiIdentityInputRejectedError(OpenApiErrorBase):
 
     Code: int = 11817
     Msg: str = "Specifying a user identity in the request is not allowed"
+    HttpStatus: int = 400
+
+
+class OpenApiAgentNotAssignableError(OpenApiErrorBase):
+    """签发/编辑密钥时指定的智能体对该服务账号不可见或格式非法(管理面 400)。
+
+    只校验"资源对该账号可见";调用档位不足由运行时按 11809/11808 判定,不在
+    写入期拒绝(只读 Key 仍可把该资源加入白名单用于详情/列表读取)。
+    `data` 回带 `{agent_type, agent_id}` 供管理员定位。
+    """
+
+    Code: int = 11822
+    Msg: str = "The selected agent is invalid or not visible to this service account"
+    HttpStatus: int = 400
+
+
+class OpenApiKeyNotRevealableError(OpenApiErrorBase):
+    """该密钥没有可用的查看密文(存量密钥)或密文无法解密(管理面 400)。
+
+    刻意用 400 而不是 401:管理面任何 401 都会被 platform 拦截器当成登录失效
+    并整页跳转(design §5 坑 13)。管理员应重新签发一把新密钥。
+    """
+
+    Code: int = 11823
+    Msg: str = "This API key cannot be revealed; please issue a new key"
     HttpStatus: int = 400

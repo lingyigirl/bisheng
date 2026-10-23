@@ -25,17 +25,20 @@ export function ManagedAgentCard({ agent, onOpen }: Props) {
                 <div className="min-w-0">
                     <div className="truncate font-medium text-text-1">{agent.name}</div>
                     <div className="mt-1 text-caption text-text-3">
-                        {localize(SOURCE_KEY[agent.source_kind])} · {agent.protocol}
+                        {localize(SOURCE_KEY[agent.source_kind])} · {localize(`com_managed_agents_protocol_${agent.protocol}`)}
                     </div>
                 </div>
                 <Badge variant={agent.health_status === "healthy" ? "default" : "secondary"}>
-                    {agent.health_status}
+                    {localize(`com_managed_agents_health_${agent.health_status}`)}
                 </Badge>
             </div>
             {agent.description && <p className="line-clamp-2 text-body-sm text-text-2">{agent.description}</p>}
             <div className="mt-3 flex flex-wrap gap-1.5 text-caption text-text-3">
                 {agent.scenario_name && <span className="rounded bg-fill-1 px-2 py-0.5">{agent.scenario_name}</span>}
                 {agent.industry_name && <span className="rounded bg-fill-1 px-2 py-0.5">{agent.industry_name}</span>}
+                {(agent.tag_names || []).map((name) => (
+                    <span key={name} className="rounded bg-blue-500/[0.07] px-2 py-0.5 text-blue-500">{name}</span>
+                ))}
             </div>
         </button>
     )

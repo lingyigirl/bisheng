@@ -11,7 +11,7 @@ import { useLocalize } from "~/hooks"
 import { ManagedAgentCard } from "./ManagedAgentCard"
 import { ManagedAgentFilters, type ManagedAgentFilterState } from "./ManagedAgentFilters"
 
-const EMPTY_FILTERS: ManagedAgentFilterState = { keyword: "", scenarioCode: "", industryCode: "" }
+const EMPTY_FILTERS: ManagedAgentFilterState = { keyword: "", scenarioCode: "", industryCode: "", tag: "" }
 
 export function ManagedAgentTab() {
     const localize = useLocalize()
@@ -36,11 +36,13 @@ export function ManagedAgentTab() {
     })
 
     const taxonomies = taxonomiesQuery.data?.data ?? []
-    const agents = catalogQuery.data?.data?.data ?? []
+    const allAgents = catalogQuery.data?.data?.data ?? []
+    const tagOptions = Array.from(new Set(allAgents.flatMap((agent) => agent.tag_names || [])))
+    const agents = filters.tag ? allAgents.filter((agent) => (agent.tag_names || []).includes(filters.tag)) : allAgents
 
     return (
         <div className="flex w-full max-w-[1000px] flex-1 flex-col gap-4 px-5 pb-5">
-            <ManagedAgentFilters value={filters} taxonomies={taxonomies} onChange={setFilters} />
+            <ManagedAgentFilters value={filters} taxonomies={taxonomies} tags={tagOptions} onChange={setFilters} />
             {catalogQuery.isLoading ? (
                 <div className="flex flex-1 items-center justify-center py-20 text-blue-500">
                     <LoadingIcon className="size-10" />
@@ -61,11 +63,12 @@ export function ManagedAgentTab() {
                     {preview && (
                         <div className="space-y-2 text-body-sm text-text-2">
                             {preview.description && <p>{preview.description}</p>}
-                            <div>{localize("com_managed_agents_source")}: {preview.source_kind}</div>
-                            <div>{localize("com_managed_agents_protocol")}: {preview.protocol}</div>
+                            <div>{localize("com_managed_agents_source")}: {localize(`com_managed_agents_source_${preview.source_kind}`)}</div>
+                            <div>{localize("com_managed_agents_protocol")}: {localize(`com_managed_agents_protocol_${preview.protocol}`)}</div>
                             <div>{localize("com_managed_agents_scenario")}: {preview.scenario_name || "—"}</div>
                             <div>{localize("com_managed_agents_industry")}: {preview.industry_name || "—"}</div>
-                            <div>{localize("com_managed_agents_health")}: {preview.health_status}</div>
+                            <div>{localize("com_managed_agents_health")}: {localize(`com_managed_agents_health_${preview.health_status}`)}</div>
+                            <div>{localize("com_managed_agents_tags")}: {(preview.tag_names || []).join(", ") || "—"}</div>
                             <p className="pt-2 text-caption text-text-3">{localize("com_managed_agents_preview_only")}</p>
                         </div>
                     )}

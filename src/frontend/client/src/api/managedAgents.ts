@@ -13,6 +13,7 @@ export interface ManagedAgentCatalogItem {
     industry_code: string | null
     scenario_name: string | null
     industry_name: string | null
+    tag_names: string[]
     health_status: string
     last_call_at: string | null
 }

@@ -28,7 +28,9 @@ export const renderSystemId = (log: AuditLogRecord, t: TranslateFn): string => {
     if (log.system_id) return t(`log.systemIdEnum.${log.system_id}`)
     if (log.action) {
         const ns = String(log.action).split('.')[0]
-        return t(`log.systemIdEnum.${ns}`, { defaultValue: ns })
+        // Synthetic v2 namespaces are stored snake_case (managed_agent) while
+        // the locale keys are camelCase (managedAgent); fold before lookup.
+        return t(`log.systemIdEnum.${actionToI18nKey(ns)}`, { defaultValue: ns })
     }
     return '-'
 }

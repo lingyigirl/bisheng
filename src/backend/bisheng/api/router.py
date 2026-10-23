@@ -25,6 +25,7 @@ from bisheng.brand.api.router import router as brand_router
 from bisheng.channel.api.router import router as channel_router
 from bisheng.chat_session.api.router import router as session_router
 from bisheng.citation.api.router import router as citation_router
+from bisheng.common.services.config_service import settings
 from bisheng.datasource.api.router import router as datasource_router
 from bisheng.department.api.router import router as department_router
 from bisheng.doc_extract.api.router import router as doc_extract_router
@@ -149,13 +150,17 @@ router_rpc.include_router(open_api_rpc_router)
 # 端点的 scope 在 open_api/domain/scopes.py 逐条登记，漏标即 500/11811（design 决策 12）。
 router_rpc.include_router(scheduled_task_rpc_router)
 # F078: 纳管智能体的统一调用端点（POST /api/v2/managed-agent/invoke）。
-# 与 F077 一样继承上面的密钥鉴权依赖；scope 在 open_api/domain/scopes.py 登记。
-router_rpc.include_router(managed_agent_rpc_router)
+# The deployment-level switch is read at import/startup; off means the route is
+# not mounted at all, so FastAPI answers 404 (AC-63) instead of the route
+# existing but failing later.
+if settings.managed_agent.enabled:
+    router_rpc.include_router(managed_agent_rpc_router)
 # F076: 开放 API 管理面(服务账号/密钥/设置)挂在 /api/v1
 router.include_router(open_api_management_router)
 # F077: 定时任务管理面(CRUD/立即运行/可用运行身份/cron 预览/NL 草稿)挂在 /api/v1，
 # 应用级 edit_app 校验在各端点内独立声明（design 决策 11）。
 router.include_router(scheduled_task_management_router)
 # F078: 纳管智能体管理面（注册/分类/健康/目录）挂在 /api/v1。
-router.include_router(managed_agent_management_router)
-router.include_router(managed_agent_taxonomy_router)
+if settings.managed_agent.enabled:
+    router.include_router(managed_agent_management_router)
+    router.include_router(managed_agent_taxonomy_router)

@@ -29,6 +29,7 @@ async def get_config(request: Request, login_user=LoginUserDep):
     ret = ret.model_dump(exclude_unset=True) if ret else {}
     ret["linsightConfig"] = linsight_config.model_dump() if linsight_config else {}
     ret["enable_etl4lm"] = knowledge_conf.image_parser_enabled
+    ret["managed_agent_enabled"] = bisheng_settings.managed_agent.enabled
     linsight_invitation_code = (await bisheng_settings.aget_all_config()).get("linsight_invitation_code", None)
     ret["linsight_invitation_code"] = linsight_invitation_code if linsight_invitation_code else False
     ret["linsight_cache_dir"] = "./"
@@ -60,12 +61,8 @@ async def get_config(request: Request, login_user=LoginUserDep):
     ret["subscription"] = {"assistant_name": (sub_assistant_cfg.assistant_name or "") if sub_assistant_cfg else ""}
     # Sidebar entry names for the knowledge-space / subscription modules; the home and
     # app-center ones ride along in the daily config dump above. Empty => client i18n default.
-    ret["knowledge_space"]["menu_display_name"] = (
-        (ks_assistant_cfg.menu_display_name or "") if ks_assistant_cfg else ""
-    )
-    ret["subscription"]["menu_display_name"] = (
-        (sub_assistant_cfg.menu_display_name or "") if sub_assistant_cfg else ""
-    )
+    ret["knowledge_space"]["menu_display_name"] = (ks_assistant_cfg.menu_display_name or "") if ks_assistant_cfg else ""
+    ret["subscription"]["menu_display_name"] = (sub_assistant_cfg.menu_display_name or "") if sub_assistant_cfg else ""
     return resp_200(data=ret)
 
 

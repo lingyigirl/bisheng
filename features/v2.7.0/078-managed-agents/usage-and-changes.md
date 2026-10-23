@@ -25,7 +25,7 @@
 | `domain/models/{managed_agent,taxonomy,run}.py` | 三张表：注册表、分类法、调用留痕；`JsonType`/`LargeText`/`UPDATE_TIME_SERVER_DEFAULT`，租户列 `default=None` |
 | `domain/models/dao.py` | CRUD、状态 CAS、删除前计数、健康更新、调用统计；管理读 `strict_tenant_filter`，批量写手写 `tenant_id` |
 | `domain/services/agent_card.py` | Agent Card 解析/预设输入校验；文件输入不可定时化（11914） |
-| `domain/services/registry_service.py` | 注册/编辑/上线/下线/停用/删除；owner tuple `enforce_fga_success=True`，失败回滚行 |
+| `domain/services/registry_service.py` | 注册/编辑/上线/下线/停用/删除；标签关联（`TagLink`，create/update/delete 同步）；owner tuple `enforce_fga_success=True`，失败回滚行 |
 | `domain/services/classification_service.py` | 场景/行业 CRUD；被引用时禁止删除 |
 | `domain/services/credential_service.py` | Fernet 加密凭据、掩码、空 secret = 不变 |
 | `domain/services/adapters/*` | native / OpenAI-compatible / custom HTTP；SSRF/allowlist/超时/响应体上限 |
@@ -41,7 +41,7 @@
 | `api/router.py` | 挂载 v1/v2 路由 |
 | `core/database/tenant_filter.py` | 三个模型登记租户过滤 |
 | `common/errcode/managed_agent.py` + `main.py` | 12101–12114；v2 真状态、v1 200 信封；429 `Retry-After` |
-| `core/openfga/authorization_model.py` | `managed_agent` 类型；`MODEL_VERSION=v2.0.4`（18 类型） |
+| `core/openfga/authorization_model.py` | `managed_agent` 类型；合并后 `MODEL_VERSION=v2.0.5`（19 类型；`linsight_skill` 随 llm-guardrail 合并带入） |
 | `scripts/migrate_fga_add_managed_agent_type.py/.sh` | 按 store 写一次新模型（dry-run 默认） |
 | `permission/domain/services/permission_service.py` | creator/tenant/list 分支 + `_TENANT_GATED_RESOURCE_TYPES` |
 | `permission/.../fine_grained_permission_service.py`、`resource_authorization_service.py`、`permission_schema.py` | 权限 ID 映射/白名单 |
@@ -59,7 +59,7 @@
 
 ### 平台（`src/frontend/platform`）
 
-- 新页面 `pages/BuildPage/managedAgents/`：列表/筛选、注册编辑、详情、分类管理、健康检查、启停/删除、定时任务面板。
+- 新页面 `pages/BuildPage/managedAgents/`：列表/筛选（含标签）、注册编辑（含标签多选）、详情（含调用统计面板）、分类管理、健康检查、启停/删除、定时任务面板。
 - 路由 `build/managed-agents` + HeaderMenu「智能体纳管」。
 - API `controllers/API/managedAgent.ts`、类型 `types/api/managedAgent.ts`。
 - 服务账号授权代管增加 `managed_agent` 类型。
@@ -68,7 +68,7 @@
 ### 客户端（`src/frontend/client`）
 
 - `pages/apps/explore.tsx` 增加 Tabs：原生应用广场 / 第三方智能体。
-- `ManagedAgentTab/Card/Filters`：只展示 online + 有查看权限的纳管智能体；场景/行业筛选、预览抽屉。
+- `ManagedAgentTab/Card/Filters`：只展示 online + 有查看权限的纳管智能体；场景/行业/标签筛选、标签展示、预览弹窗。
 - `api/managedAgents.ts` + 三语 `translation.json` 键。
 
 ---
@@ -78,13 +78,18 @@
 ### 4.1 部署顺序
 
 1. 部署代码（`managed_agent.enabled` 默认 false，既有行为不变）。
-2. 执行 FGA 升级脚本（每 store 一次）：
+2. 执行 FGA 升级脚本（每 store 一次，**两个都跑**）：
    ```bash
    cd src/backend
    bash scripts/migrate_fga_add_managed_agent_type.sh --dry-run
    bash scripts/migrate_fga_add_managed_agent_type.sh --apply
+   # skill 脚本默认只读；写入用 --apply，报告路径按环境替换
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py --report /tmp/fga-skill-plan.json
+   # --expected-model-id 取 preview 输出的 old_model_id；report 每次用新路径
+   .venv/bin/python scripts/migrate_fga_skill_permissions.py \
+     --apply --expected-model-id <old_model_id> --report /tmp/fga-skill-apply-$(date +%s).json
    ```
-   按输出 pin `openfga.model_id` 或重启让 manager 取最新模型。
+   合并后的模型是 `v2.0.5` / 19 类型（`managed_agent` + `linsight_skill`）。只跑 managed_agent 脚本时，若 store 已有 `managed_agent` 但缺 `linsight_skill`，脚本会判定“已存在”而 no-op；两个脚本任一顺序都能收敛到完整模型。按输出 pin `openfga.model_id` 或重启让 manager 取最新模型。
 3. 在目标环境 `config.yaml` 开启：
    ```yaml
    managed_agent:
@@ -117,11 +122,12 @@
 
 ## 5. 验证记录
 
-- 后端回归 **635 passed**（`test/managed_agent` + `test/open_api` + `test/scheduled_task` + FGA/F013）。
-- 平台 `pnpm typecheck` **429 strict 全过**；接入指南测试 17/17；`check-i18n` OK。
-- 客户端目标文件 eslint 0；typecheck 仅剩 6 条既有 Linsight 错误（与本特性无关）。
+- 后端回归 **644 passed**（`config=config.yaml`：`test/managed_agent` + `test/open_api` + `test/scheduled_task` + FGA/F013）；现场配置 `config=config.celery-private.yaml` 下 **643 passed, 1 skipped**（开关打开时路由挂载用例按设计跳过）。
+- 平台 `pnpm typecheck` **434 strict 全过**；客户端 `pnpm typecheck` **1305 strict 全过**；`check-i18n` OK。
+- 客户端/平台本次改动文件 eslint 0。
 - MySQL DDL 离线编译：31/11/20 列；DM8 无本机实例，按清单留现场。
-- e2e 套件 `test/e2e/test_e2e_managed_agents.py` 已落地，实跑需目标环境开启 `allow_private_networks`（仅测试）并配置 allowlist。
+- e2e 套件 `test/e2e/test_e2e_managed_agents.py` **9 passed**（本机运行实例，启用 `allow_private_networks` + allowlist `127.0.0.1`）。
+- 现场验收报告 §6 的 9 项问题 + 补充复核 #10 共 10 项已逐项核实与修复（验收修复与验证记录仅本机留存，不入库）。
 
 ---
 
@@ -131,4 +137,6 @@
 - 原生工作流同步调用只支持至多一次人工输入；多输入/文件输入走定时任务或原生工作流接口。
 - 健康检查默认只标记 unhealthy，不自动下线（`auto_offline_on_health_failure` 默认 false）。
 - 复用既有硬编码 Fernet key（平台既有 C6 缺口）；换 key 会导致已存凭据不可解密。
-- `docs/report.md` 为并行会话文件，不在本特性提交范围。
+- **平台编辑当前 HEAD 存在缺陷**：编辑弹窗 PUT 会带 `source_kind`，后端 `ManagedAgentUpdateReq` 为 `extra='forbid'` 且无该字段，保存返回 HTTP 200 + body `status_code=422`。规避：API PUT 省略 `source_kind`；前端单行修复待提交。
+- 编辑字段以 `None` 表示「不修改」，控制台无法清空 `description/model_name/version/health_url/scenario_code/industry_code/agent_card`；`ManagedAgentItem` 不返回 `agent_card`/`health_url`，编辑弹窗留空即沿用原值。
+- `docs/F078-report.md` 为现场验收输入报告，当前未跟踪；其截图/日志链接在仓库内不可用。

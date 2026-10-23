@@ -8,7 +8,7 @@ from bisheng.open_endpoints.domain.utils import get_default_operator
 router = APIRouter(prefix="/llm", tags=["OpenAPI", "llm"])
 
 
-@open_api_scope("assistant:invoke")
+@open_api_scope("llm:workbench")
 @router.post("/workbench/asr")
 async def invoke_workbench_asr(request: Request, file: UploadFile = None):
     """Call the workbench'sasrModels Convert Voice to Text"""
@@ -17,7 +17,7 @@ async def invoke_workbench_asr(request: Request, file: UploadFile = None):
     return resp_200(data=text)
 
 
-@open_api_scope("assistant:invoke")
+@open_api_scope("llm:workbench")
 @router.post("/workbench/tts")
 async def invoke_workbench_tts(
     request: Request, text: str = Body(..., embed=True, description="Text that needs to be synthesized")

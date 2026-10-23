@@ -34,7 +34,8 @@
     "health": "ヘルス",
     "classification": "シーン / 業界",
     "lastCall": "最終呼び出し",
-    "actions": "操作"
+    "actions": "操作",
+    "tags": "タグ"
   },
   "actions": {
     "publish": "公開",
@@ -70,7 +71,9 @@
     "agentCard": "Agent Card（JSON）",
     "cancel": "キャンセル",
     "save": "保存",
-    "none": "設定しない"
+    "none": "設定しない",
+    "tags": "タグ",
+    "noTags": "タグがありません。先にタグ管理で作成してください"
   },
   "taxonomy": {
     "title": "シーン / 業界分類",
@@ -96,5 +99,27 @@
     "close": "閉じる",
     "prev": "前へ",
     "next": "次へ"
+  },
+  "protocol": {
+    "native": "ネイティブ",
+    "openai_compatible": "OpenAI 互換",
+    "custom_http": "カスタム HTTP"
+  },
+  "tags": {
+    "all": "すべてのタグ"
+  },
+  "stats": {
+    "calls": "呼び出し回数",
+    "successRate": "成功率",
+    "avgLatency": "平均レイテンシ"
+  },
+  "credential": {
+    "none": "設定しない",
+    "bearer": "Bearer トークン",
+    "api_key": "API キー"
+  },
+  "runStatus": {
+    "success": "成功",
+    "failed": "失敗"
   }
 }

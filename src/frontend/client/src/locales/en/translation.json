@@ -2256,5 +2256,13 @@
   "com_managed_agents_preview_only": "Preview only. Contact an administrator for invocation access.",
   "com_managed_agents_source_native": "Platform",
   "com_managed_agents_source_low_code": "Low-code",
-  "com_managed_agents_source_high_code": "High-code"
+  "com_managed_agents_source_high_code": "High-code",
+  "com_managed_agents_protocol_native": "Native",
+  "com_managed_agents_protocol_openai_compatible": "OpenAI-compatible",
+  "com_managed_agents_protocol_custom_http": "Custom HTTP",
+  "com_managed_agents_health_unknown": "Unknown",
+  "com_managed_agents_health_healthy": "Healthy",
+  "com_managed_agents_health_unhealthy": "Unhealthy",
+  "com_managed_agents_tags": "Tags",
+  "com_managed_agents_all_tags": "All tags"
 }

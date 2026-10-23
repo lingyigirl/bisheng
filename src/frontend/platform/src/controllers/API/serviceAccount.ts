@@ -3,6 +3,8 @@
 // resolve to the envelope `data` payload directly (see @/controllers/request).
 import axios from "@/controllers/request"
 import {
+    AssignableAgentPage,
+    OpenApiBaseUrl,
     OpenApiScopePage,
     ResourceGrantItemInput,
     ResourceGrantMutateResult,
@@ -14,6 +16,7 @@ import {
     ServiceAccountKeyIssue,
     ServiceAccountKeyIssued,
     ServiceAccountKeyPage,
+    ServiceAccountKeyRevealed,
     ServiceAccountKeyUpdate,
     ServiceAccountPage,
     ServiceAccountUpdate,
@@ -68,6 +71,17 @@ export async function revokeServiceAccountKeyApi(
     return await axios.post(`/api/v1/service-accounts/${accountId}/keys/${keyId}/revoke`)
 }
 
+/**
+ * Explicit admin reveal. Every call writes an audit row; the response must not
+ * be cached or persisted anywhere outside the dialog that shows it.
+ */
+export async function revealServiceAccountKeyApi(
+    accountId: number,
+    keyId: number,
+): Promise<ServiceAccountKeyRevealed> {
+    return await axios.post(`/api/v1/service-accounts/${accountId}/keys/${keyId}/reveal`)
+}
+
 export async function revokeAllServiceAccountKeysApi(
     accountId: number,
 ): Promise<{ account_id: number; revoked: number }> {
@@ -85,6 +99,11 @@ export async function listOpenApiScopesApi(): Promise<OpenApiScopePage> {
  */
 export async function listResourceGrantsApi(accountId: number): Promise<ResourceGrantPage> {
     return await axios.get(`/api/v1/service-accounts/${accountId}/resource-grants`)
+}
+
+/** Agents the account may be restricted to; the key dialog's picker source. */
+export async function listAssignableAgentsApi(accountId: number): Promise<AssignableAgentPage> {
+    return await axios.get(`/api/v1/service-accounts/${accountId}/assignable-agents`)
 }
 
 /**
@@ -119,4 +138,18 @@ export async function enableServiceAccountApi(accountId: number): Promise<Servic
 
 export async function disableServiceAccountApi(accountId: number): Promise<ServiceAccount> {
     return await axios.post(`/api/v1/service-accounts/${accountId}/disable`)
+}
+
+/**
+ * Where the access guide's default address should come from. `configured` is
+ * the ops-set public base URL; `detected` is the backend's guessed host:port and
+ * may be null when it cannot determine one.
+ *
+ * `silent: true`: during a rolling upgrade an older backend answers 404, which
+ * the global interceptor would turn into a full-page /404 redirect. The caller
+ * treats any failure as "no address sources" and keeps the console default.
+ */
+export async function getOpenApiBaseUrlApi(): Promise<OpenApiBaseUrl> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `silent` is a custom axios config flag (see request.ts)
+    return await axios.get(`/api/v1/open-api/base-url`, { silent: true } as any)
 }

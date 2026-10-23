@@ -481,8 +481,12 @@ async def _dispatch(task: ScheduledTask, *, trace_id: str, trigger_kind: str = "
 
 
 async def _dispatch_managed_agent(task: ScheduledTask, trace_id: str, trigger_kind: str) -> None:
+    from bisheng.common.services.config_service import settings
     from bisheng.managed_agent.domain.models.dao import ManagedAgentDao
 
+    if not settings.managed_agent.enabled:
+        # Backstop for callers that bypassed trigger_guard recheck.
+        raise ScheduledTaskConfigInvalidError(msg="managed_agent is disabled")
     agent = await ManagedAgentDao.aget(int(task.app_id))
     if agent is None:
         raise RuntimeError(f"managed agent {task.app_id} disappeared before dispatch")

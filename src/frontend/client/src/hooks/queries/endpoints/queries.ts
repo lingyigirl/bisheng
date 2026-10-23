@@ -74,6 +74,7 @@ export const useGetBsConfig = (
       if (!data.fileUpload) data.fileUpload = { enabled: false, prompt: '' };
       if (!data.skillEntry) data.skillEntry = { enabled: false };
       if (!data.shougang) data.shougang = { enabled: false };
+      if (data.managed_agent_enabled === undefined) data.managed_agent_enabled = false;
 
       // Update favicon
       if (data.assistantIcon.image) {

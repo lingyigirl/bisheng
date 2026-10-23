@@ -248,3 +248,92 @@ async def test_revoke_account_credentials_bulk(patched_db, fake_redis):
     assert len(rows) == 3
     reasons = {r[0].revoke_reason for r in rows}
     assert reasons == {REVOKE_REASON_MANUAL, REVOKE_REASON_BATCH}
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-22 增量:查看密文 + 每 Key 智能体白名单
+# ---------------------------------------------------------------------------
+
+
+async def test_issue_stores_revealable_ciphertext(patched_db, fake_redis):
+    """签发同时写摘要与 Fernet 密文;reveal 能取回同一明文。"""
+    row, plaintext = await _issue()
+
+    assert row.token_ciphertext
+    assert row.token_ciphertext != plaintext
+    assert service.reveal_credential(row) == plaintext
+    assert service.hash_token(service.reveal_credential(row)) == row.token_hash
+
+
+async def test_reveal_rejects_legacy_and_corrupt_rows(patched_db, fake_redis):
+    """没有密文(存量)或密文损坏 → 11823,绝不返回明文。"""
+    from bisheng.common.errcode.open_api import OpenApiKeyNotRevealableError
+    from bisheng.open_api.domain.models.api_credential import ApiCredential
+
+    legacy = ApiCredential(
+        tenant_id=TENANT_ID,
+        service_account_id=1,
+        key_prefix="bs-sak-",
+        last4="AbCd",
+        token_hash=service.hash_token("bs-sak-legacy-value"),
+        token_ciphertext=None,
+    )
+    with pytest.raises(OpenApiKeyNotRevealableError):
+        service.reveal_credential(legacy)
+
+    corrupt = legacy.model_copy(update={"token_ciphertext": "not-a-fernet-token"})
+    with pytest.raises(OpenApiKeyNotRevealableError):
+        service.reveal_credential(corrupt)
+
+
+async def test_allowed_apps_survive_the_cache_round_trip(patched_db, fake_redis):
+    """缓存命中不能让白名单丢失/变成 None(否则第二次调用会权限放大)。"""
+    import uuid
+
+    assistant_id = uuid.uuid4().hex
+    row, plaintext = await _issue(
+        allowed_apps=[{"type": "assistant", "id": assistant_id}],
+    )
+    assert row.allowed_apps == [{"type": "assistant", "id": assistant_id}]
+
+    first = await validator.validate_bearer(f"Bearer {plaintext}")
+    second = await validator.validate_bearer(f"Bearer {plaintext}")
+    for credential in (first, second):
+        assert credential.allowed_apps == [{"type": "assistant", "id": assistant_id}]
+
+    # 显式空列表同样要穿越缓存,不能被洗成 None。
+    _row2, plaintext2 = await _issue(name="deny-all", allowed_apps=[])
+    assert (await validator.validate_bearer(f"Bearer {plaintext2}")).allowed_apps == []
+
+
+async def test_update_allowed_apps(patched_db, fake_redis):
+    """白名单可设置/清空;显式 null 清除限制,[] 保留为全拒绝。"""
+    import uuid
+
+    assistant_id = uuid.uuid4().hex
+    row, plaintext = await _issue()
+    assert row.allowed_apps is None
+
+    assert await service.update_credential(
+        row.id,
+        {"allowed_apps": [{"type": "assistant", "id": assistant_id}]},
+        tenant_id=TENANT_ID,
+    )
+    assert (await validator.validate_bearer(f"Bearer {plaintext}")).allowed_apps == [
+        {"type": "assistant", "id": assistant_id}
+    ]
+
+    assert await service.update_credential(row.id, {"allowed_apps": []}, tenant_id=TENANT_ID)
+    assert (await validator.validate_bearer(f"Bearer {plaintext}")).allowed_apps == []
+
+    assert await service.update_credential(row.id, {"allowed_apps": None}, tenant_id=TENANT_ID)
+    assert (await validator.validate_bearer(f"Bearer {plaintext}")).allowed_apps is None
+
+
+async def test_cache_payload_excludes_ciphertext_and_uses_v2_prefix(patched_db, fake_redis):
+    row, _plaintext = await _issue()
+    payload = service.to_cache_payload(row)
+
+    assert service.CACHE_KEY_PREFIX == "oapi:cred:v2:"
+    assert "token_ciphertext" not in payload
+    assert payload["allowed_apps"] is None

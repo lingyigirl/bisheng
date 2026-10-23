@@ -164,7 +164,7 @@
 
 ## 4. spec 必须落死的技术边界（本轮实测）
 
-- **FGA 模型变更**：`core/openfga/authorization_model.py` 新增 `_standard_resource_type('managed_agent')`，`MODEL_VERSION` 从 `v2.0.3` 升至 `v2.0.4`；部署需按既有模型写入流程（`force_write_model` / 版本变更触发 reload）。`permission_service.py` 的 `_IMPLICIT_SCOPE_RESOURCE_TYPES`、`_TENANT_GATED_RESOURCE_TYPES` 与 owner/existence 分支必须同步，否则列表可见但 check 失败。
+- **FGA 模型变更**：`core/openfga/authorization_model.py` 新增 `_standard_resource_type('managed_agent')`；合并 llm-guardrail 后 `MODEL_VERSION=v2.0.5` / 19 类型（`managed_agent` + `linsight_skill`）。部署需按既有模型写入流程（一次性脚本写 store，`MODEL_VERSION` 本身不触发运行期 reload）。`permission_service.py` 的 `_IMPLICIT_SCOPE_RESOURCE_TYPES`、`_TENANT_GATED_RESOURCE_TYPES` 与 owner/existence 分支必须同步，否则列表可见但 check 失败。
 - **不新增 `FlowType`**：F077 `scheduled_task.app_type` 是 int 列，用 `MANAGED_AGENT_APP_TYPE = 100` 常量；所有 `app_type` 分支必须显式处理 100，不能落入 assistant 兜底。
 - **C2 双库**：新表用 `dialect_helpers.JsonType/LargeText/UPDATE_TIME_SERVER_DEFAULT`；分类过滤走关系列；禁止 `RETURNING` 与 JSON 函数。
 - **C3 租户**：新表 `tenant_id default=None` 自动填充；批量 update/delete 手写 `tenant_id`；beat 跨租户显式处理。

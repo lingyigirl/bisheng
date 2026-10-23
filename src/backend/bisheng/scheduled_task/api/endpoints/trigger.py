@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from bisheng.common.errcode.open_api import OpenApiKeyMissingError, OpenApiNotFoundError
 from bisheng.common.schemas.api import resp_200
+from bisheng.open_api.domain.agent_scope import assert_open_api_agent_allowed
 from bisheng.open_api.domain.context import get_open_api_principal
 from bisheng.open_api.domain.scopes import open_api_scope
 from bisheng.permission.domain.services.application_permission_service import (
@@ -66,8 +67,19 @@ async def trigger_scheduled_task(payload: TriggerRequest, request: Request):
     if task is None or task.status != TaskStatus.ENABLED.value:
         raise OpenApiNotFoundError()
 
+    # 2026-10-22 安全收口:任务归属必须与调用密钥一致。否则 A 账号的 Key 可触发
+    # B 账号的任务,而任务按 B 的运行身份执行(confused deputy)。与"不存在/停用"
+    # 同码 404/11809,避免跨账号任务枚举。
+    if task.service_account_id != principal.service_account_id:
+        raise OpenApiNotFoundError()
+
     object_type = trigger_guard.object_type_of(task.app_type)
-    if object_type is None or not await ApplicationPermissionService.has_any_permission_async(
+    if object_type is None:
+        raise OpenApiNotFoundError()
+    # F076 增量(2026-10-22):定时触发是"密钥 → 任务 → 智能体"的间接调用,同样受
+    # 每 Key 智能体白名单约束;与资源不可见同码(11809)防枚举。
+    assert_open_api_agent_allowed(object_type, str(task.app_id))
+    if not await ApplicationPermissionService.has_any_permission_async(
         principal.owner_payload, object_type, str(task.app_id), ["use_app"]
     ):
         # 授权范围口径（design 决策 12）：密钥所属服务账号对任务的目标应用有运行权限。

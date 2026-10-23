@@ -89,7 +89,8 @@ export function LocationProvider({ children }: { children: ReactNode }) {
           uploadFileMaxSize: res.uploaded_files_maximum_size || 50,
           uploadMediaMaxSize: res.uploaded_media_maximum_size ?? 1024,
           enableEtl4lm: res.enable_etl4lm,
-          multiTenantEnabled: !!res.multi_tenant_enabled
+          multiTenantEnabled: !!res.multi_tenant_enabled,
+          managedAgentEnabled: !!res.managed_agent_enabled
         }));
 
         // backend version

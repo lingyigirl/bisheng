@@ -19,7 +19,7 @@ from bisheng.common.schemas.api import resp_200
 from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.database.models.tenant import ROOT_TENANT_ID
 from bisheng.open_api.domain.constants import OpenApiAuditAction
-from bisheng.open_api.domain.services import call_audit_service
+from bisheng.open_api.domain.services import agent_scope_service, call_audit_service, identity_service
 from bisheng.open_api.domain.services import service_account_service as svc
 from bisheng.open_api.domain.services.resource_grant_service import list_grants, mutate_grants
 from bisheng.utils import get_request_ip
@@ -63,6 +63,30 @@ async def list_resource_grants(
     tenant_id = _acting_tenant(login_user)
     account = await _require_account(account_id, tenant_id)
     rows = await list_grants(account.resource_owner_user_id)
+    return resp_200(data={"data": rows, "total": len(rows)})
+
+
+@router.get("/{account_id}/assignable-agents")
+async def list_assignable_agents(
+    account_id: int,
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+):
+    """该账号可被加入密钥白名单的智能体(助手/工作流/纳管智能体)。
+
+    ``invocable`` 是提示性的调用档位判断(assistant/workflow: use_app;
+    managed_agent: editor),不阻止选择——只读 Key 仍可把该资源加入白名单用于
+    详情/列表读取。无授权或 owner 不可用时返回空列表,不抛 401(管理面 401 会
+    被 platform 当成登录失效并踢出登录)。
+    """
+    tenant_id = _acting_tenant(login_user)
+    account = await _require_account(account_id, tenant_id)
+    owner = await identity_service.load_owner_payload(
+        owner_user_id=account.resource_owner_user_id,
+        tenant_id=tenant_id,
+    )
+    if owner is None:
+        return resp_200(data={"data": [], "total": 0})
+    rows = await agent_scope_service.list_assignable_agents(owner)
     return resp_200(data={"data": rows, "total": len(rows)})
 
 

@@ -9,7 +9,6 @@ from bisheng.api.services.assistant_agent import AssistantAgent
 from bisheng.api.services.assistant_base import AssistantUtils
 from bisheng.api.services.audit_log import AuditLogService
 from bisheng.api.v1.schemas import AssistantInfo, AssistantSimpleInfo, AssistantUpdateReq, StreamData
-from bisheng.citation.domain.services.citation_prompt_helper import CITATION_PROMPT_RULES
 from bisheng.common.constants.enums.telemetry import ApplicationTypeEnum, BaseTelemetryTypeEnum
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.errcode.assistant import (
@@ -57,9 +56,16 @@ class AssistantService(BaseService, AssistantUtils):
         page: int = 1,
         limit: int = 20,
         permission_id: str = "use_app",
+        allowed_ids: set[str] | None = None,
     ) -> (list[AssistantSimpleInfo], int):
         """
-        Get list of assistants
+        Get list of assistants.
+
+        F076 增量(2026-10-22):``allowed_ids`` 是每 Key 智能体白名单里的助手 id 集合。
+        ``None`` = 不限制(旧行为);空集合 = 全拒绝。它必须折进 DAO 的
+        ``assistant_ids`` 预过滤——服务内部已分页,端点后置过滤会让 total 与页内容
+        不一致。注意 ``AssistantDao.get_all_assistants`` 把空列表当作"不过滤",
+        所以空集合必须在这里提前返回。
         """
         assistant_ids = []
         if tag_id:
@@ -67,6 +73,16 @@ class AssistantService(BaseService, AssistantUtils):
             assistant_ids = [one.resource_id for one in ret]
             if not assistant_ids:
                 return [], 0
+
+        if allowed_ids is not None:
+            if not allowed_ids:
+                return [], 0
+            if assistant_ids:
+                assistant_ids = [one for one in assistant_ids if one in allowed_ids]
+                if not assistant_ids:
+                    return [], 0
+            else:
+                assistant_ids = list(allowed_ids)
 
         data = []
         if user.is_admin():
@@ -672,14 +688,14 @@ class AssistantService(BaseService, AssistantUtils):
 
             outcome = await gate_agent_publish(
                 login_user,
-                app_type='assistant',
+                app_type="assistant",
                 app_id=assistant_id,
                 business_name=assistant.name,
             )
             if outcome.pending:
                 from bisheng.common.errcode.approval import ApprovalPendingError
 
-                raise ApprovalPendingError(msg=f'发布申请已提交审批（单号 {outcome.instance_id}），审批通过后自动上线')
+                raise ApprovalPendingError(msg=f"发布申请已提交审批（单号 {outcome.instance_id}），审批通过后自动上线")
         # Determine permissions
         required_permission = "publish_app" if status == AssistantStatus.ONLINE.value else "unpublish_app"
         if not await ApplicationPermissionService.has_any_permission_async(

@@ -1,6 +1,6 @@
 """F076 T-21:密钥管理 API 契约测试。
 
-验证:签发**明文仅一次**(此后一律掩码)、权限位目录校验(11819)、停用账号拒签
+验证:签发返回明文、列表一律掩码、管理员经 reveal 查看(审计)、权限位目录校验(11819)、停用账号拒签
 (11805)、跨租户 404、编辑立即生效、单把/全量吊销即时失效、权限位目录内容。
 """
 
@@ -202,9 +202,11 @@ async def test_scopes_catalog_lists_all_issuable(patched_db):
         "knowledge:write",
         "schedule:trigger",
         "managed_agent:invoke",
+        "llm:workbench",
+        "diagnostics:read",
         "delegate",
     }
-    assert catalog.data["total"] == 10
+    assert catalog.data["total"] == 12
 
 
 def test_every_key_endpoint_declares_admin_dependency():
@@ -213,3 +215,159 @@ def test_every_key_endpoint_declares_admin_dependency():
         assert source.count("Depends(UserPayload.get_tenant_admin_user)") == source.count("@router.") + source.count(
             "@scopes_router."
         ), f"{module.__name__} 有端点漏声明管理依赖"
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-22 增量:明文查看 + 每 Key 智能体白名单
+# ---------------------------------------------------------------------------
+
+
+async def test_reveal_returns_plaintext_and_legacy_is_11823(patched_db, fake_redis, account):
+
+    from fastapi import Response
+
+    from bisheng.common.errcode.open_api import OpenApiKeyNotRevealableError
+
+    issued = await keys_api.issue_key(
+        account.id,
+        keys_api.KeyIssueReq(name="可查看", scopes=["assistant:read"]),
+        login_user=_Admin(),
+    )
+    key_id = issued.data["id"]
+    assert issued.data["plaintext"].startswith("bs-sak-")
+
+    listed = await keys_api.list_keys(account.id, login_user=_Admin())
+    listed_row = next(row for row in listed.data.data if row["id"] == key_id)
+    assert listed_row["revealable"] is True
+    assert listed_row["allowed_apps"] is None
+
+    revealed = await keys_api.reveal_key(account.id, key_id, response=Response(), login_user=_Admin())
+    assert revealed.data["plaintext"] == issued.data["plaintext"]
+    assert revealed.data["key_mask"] == issued.data["key_mask"]
+
+    # 模拟存量密钥(无查看密文):400/11823,不返回明文。
+    async with AsyncSession(bind=patched_db) as session:
+        row = await session.get(ApiCredential, key_id)
+        row.token_ciphertext = None
+        await session.commit()
+    with pytest.raises(OpenApiKeyNotRevealableError):
+        await keys_api.reveal_key(account.id, key_id, response=Response(), login_user=_Admin())
+
+
+async def test_issue_with_allowed_apps(patched_db, fake_redis, account, monkeypatch):
+    import uuid
+
+    from bisheng.open_api.domain.services import identity_service as keys_identity
+    from bisheng.permission.domain.services.application_permission_service import (
+        ApplicationPermissionService,
+    )
+
+    async def _owner(*, owner_user_id, tenant_id):
+        class _P:
+            user_id = 99
+
+        return _P()
+
+    async def _visible(owner, object_type, object_id, permission_ids):
+        return True
+
+    monkeypatch.setattr(keys_identity, "load_owner_payload", _owner)
+    monkeypatch.setattr(ApplicationPermissionService, "has_any_permission_async", _visible)
+
+    assistant_id = uuid.uuid4().hex
+    issued = await keys_api.issue_key(
+        account.id,
+        keys_api.KeyIssueReq(
+            name="限定智能体",
+            scopes=["assistant:invoke"],
+            allowed_apps=[keys_api.AgentRef(type="assistant", id=assistant_id)],
+        ),
+        login_user=_Admin(),
+    )
+    assert issued.data["allowed_apps"] == [{"type": "assistant", "id": assistant_id}]
+
+    listed = await keys_api.list_keys(account.id, login_user=_Admin())
+    row = next(one for one in listed.data.data if one["id"] == issued.data["id"])
+    assert row["allowed_apps"] == [{"type": "assistant", "id": assistant_id}]
+
+    # 编辑:显式 null 清除限制;[] 保留为全拒绝。
+    await keys_api.update_key(
+        account.id,
+        issued.data["id"],
+        keys_api.KeyUpdateReq(allowed_apps=[]),
+        login_user=_Admin(),
+    )
+    listed = await keys_api.list_keys(account.id, login_user=_Admin())
+    row = next(one for one in listed.data.data if one["id"] == issued.data["id"])
+    assert row["allowed_apps"] == []
+
+    await keys_api.update_key(
+        account.id,
+        issued.data["id"],
+        keys_api.KeyUpdateReq(allowed_apps=None),
+        login_user=_Admin(),
+    )
+    listed = await keys_api.list_keys(account.id, login_user=_Admin())
+    row = next(one for one in listed.data.data if one["id"] == issued.data["id"])
+    assert row["allowed_apps"] is None
+
+
+async def test_issue_rejects_malformed_agent_ref(patched_db, fake_redis, account):
+    from bisheng.common.errcode.open_api import OpenApiAgentNotAssignableError
+
+    with pytest.raises(OpenApiAgentNotAssignableError):
+        await keys_api.issue_key(
+            account.id,
+            keys_api.KeyIssueReq(
+                name="坏条目",
+                scopes=["assistant:invoke"],
+                allowed_apps=[keys_api.AgentRef(type="assistant", id="not-a-uuid")],
+            ),
+            login_user=_Admin(),
+        )
+
+
+def test_reveal_endpoint_http_shape_and_no_store(monkeypatch):
+    """真实 FastAPI 注入:Response 头生效、路由形状正确(直接调用测不到这两点)。"""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from bisheng.common.dependencies.user_deps import UserPayload
+    from bisheng.core.config.settings import encrypt_token
+
+    plaintext = "bs-sak-" + "x" * 43
+    row = ApiCredential(
+        id=42,
+        tenant_id=TENANT_ID,
+        service_account_id=1,
+        name="生产",
+        key_prefix="bs-sak-",
+        last4=plaintext[-4:],
+        token_hash=cred_service.hash_token(plaintext),
+        token_ciphertext=encrypt_token(plaintext).decode(),
+        scopes=["assistant:read"],
+        allowed_apps=None,
+    )
+    account = ServiceAccount(id=1, tenant_id=TENANT_ID, name="acct", resource_owner_user_id=99)
+
+    async def _account(*args, **kwargs):
+        return account
+
+    async def _row(*args, **kwargs):
+        return row
+
+    monkeypatch.setattr(keys_api.svc, "get_service_account", _account)
+    monkeypatch.setattr(keys_api.ApiCredentialDao, "aget_by_id", _row)
+
+    app = FastAPI()
+    app.include_router(keys_api.router)
+    app.dependency_overrides[UserPayload.get_tenant_admin_user] = lambda: _Admin()
+    client = TestClient(app)
+
+    response = client.post("/service-accounts/1/keys/42/reveal")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["data"]["plaintext"] == plaintext
+    assert body["data"]["key_mask"] == row.key_mask

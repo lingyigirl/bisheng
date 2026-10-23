@@ -47,6 +47,8 @@ from bisheng.open_endpoints.domain.schemas.filelib import (
     RetrieveResp,
 )
 from bisheng.open_endpoints.domain.utils import (
+    _is_key_authenticated_call,
+    assert_open_api_knowledge_usable,
     assert_open_api_knowledge_visible_sync,
     get_default_operator,
     get_default_operator_async,
@@ -525,18 +527,28 @@ async def post_string_chunks(request: Request, document: ChunkInput):
     return resp_200(data=res)
 
 
-@open_api_scope("knowledge:read")
+#: 诊断日志根目录。用 realpath + commonpath 判定,inode 层解析后再比较,
+#: 既拒绝 `/app/database/...` 这类字符串前缀绕过,也允许指向根目录内的轮转软链。
+_DIAGNOSTICS_ROOT = "/app/data"
+
+
+@open_api_scope("diagnostics:read")
 @router.get("/download_statistic")
 def download_statistic_file(file_path: str):
-    suffix = file_path.split(".")[-1]
-    if suffix != "log":
+    if os.path.splitext(file_path)[1] != ".log":
         raise ServerError.http_exception(msg="only .log file supported download")
-    dir_path = file_path.replace(".log", "")
-    if dir_path.find(".") != -1 or not dir_path.startswith("/app/data"):
-        raise ServerError.http_exception(msg="invalid file path, file path must not contain .")
 
-    file_name = os.path.basename(file_path)
-    return FileResponse(file_path, filename=file_name)
+    root = os.path.realpath(_DIAGNOSTICS_ROOT)
+    resolved = os.path.realpath(file_path)
+    try:
+        inside = os.path.commonpath([resolved, root]) == root
+    except ValueError:
+        # Different drives / malformed paths on some platforms.
+        inside = False
+    if not inside or not os.path.isfile(resolved):
+        raise ServerError.http_exception(msg="invalid file path")
+
+    return FileResponse(resolved, filename=os.path.basename(resolved))
 
 
 @open_api_scope("knowledge:write")
@@ -698,6 +710,9 @@ async def retrieve_chunks(
     login_user = await resolve_operator(req.user_id)
     chat_svc = KnowledgeSpaceChatService(request=request, login_user=login_user)
     chat_svc.version_repo = version_repo
+    # F076 增量(2026-10-22):密钥调用时检索要求普通知识库的 use_kb(与工作站
+    # 对话口径一致);知识空间无 use_* 权限,helper 内跳过。非密钥调用 no-op。
+    await assert_open_api_knowledge_usable(req.knowledge_base_ids, login_user)
 
     kb_filters = None
     if req.filters and req.filters.knowledge_base_filters:
@@ -740,11 +755,29 @@ async def retrieve_chunks(
 def query_qa(QueryQAParam: QueryQAParam):
     """Deleteqa Question to Information"""
     # Seed the tenant ContextVar before the tenant-aware read.
-    get_default_operator()
+    login_user = get_default_operator()
     sources = [1, 2]  # 3 Yes apiInverted
     qa_list = QAKnoweldgeDao.query_by_condition_v1(
         source=sources, create_start=QueryQAParam.timeRange[0], create_end=QueryQAParam.timeRange[1]
     )
+
+    # F076 增量(2026-10-22):密钥调用只返回该身份有 view_kb 的知识库下的问答行。
+    # 非密钥调用完全不走权限服务,返回集与改动前一致。
+    if _is_key_authenticated_call() and qa_list:
+        from bisheng.knowledge.domain.services.knowledge_permission_service import (
+            KnowledgePermissionService,
+        )
+
+        verdict: dict[int, bool] = {}
+        visible = []
+        for q in qa_list:
+            kb_id = int(q.knowledge_id)
+            if kb_id not in verdict:
+                verdict[kb_id] = KnowledgePermissionService.check_permission_id_sync(login_user, kb_id, "view_kb")
+            if verdict[kb_id]:
+                visible.append(q)
+        qa_list = visible
+
     if qa_list:
         for q in qa_list:
             q.answers = json.loads(q.answers)

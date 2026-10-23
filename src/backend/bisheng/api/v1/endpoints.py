@@ -92,6 +92,9 @@ def get_env():
     env["version"] = __version__
     env["enable_etl4lm"] = image_parser_enabled
     env["multi_tenant_enabled"] = bisheng_settings.multi_tenant.enabled
+    # F078: deployment-level managed-agent switch; the platform hides its menu/
+    # route and the client hides the third-party tab when this is false.
+    env["managed_agent_enabled"] = bisheng_settings.managed_agent.enabled
 
     # Expose knowledge-space version management flag so the client can toggle UI affordances.
     vm = getattr(bisheng_settings.get_knowledge(), "version_management", None)

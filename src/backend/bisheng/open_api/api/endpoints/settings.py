@@ -17,7 +17,7 @@ from bisheng.common.services.config_service import settings as app_settings
 from bisheng.core.context.tenant import get_current_tenant_id
 from bisheng.database.models.tenant import ROOT_TENANT_ID
 from bisheng.open_api.domain.constants import OpenApiAuditAction
-from bisheng.open_api.domain.services import call_audit_service, tenant_setting_service
+from bisheng.open_api.domain.services import base_url_service, call_audit_service, tenant_setting_service
 from bisheng.utils import get_request_ip
 
 router = APIRouter(prefix="/open-api", tags=["OpenApiManagement"])
@@ -82,3 +82,18 @@ async def update_settings(
     except Exception:  # 审计绝不能改变管理动作的结果
         logger.opt(exception=True).warning("open_api: settings audit enqueue failed")
     return resp_200(data=_serialize(tenant_id, row))
+
+
+@router.get("/base-url")
+async def get_base_url(
+    login_user: UserPayload = Depends(UserPayload.get_tenant_admin_user),
+    request: Request = None,  # FastAPI 按注解注入;默认值让测试可直接调用
+):
+    """接入指南的地址来源:运维配置 + 本机探测值。
+
+    探测值只在没有配置时给前端兜底——反向代理/HTTPS 部署下进程看不到对外地址,
+    猜测值可能被防火墙挡住,所以它**永远不覆盖** `open_api.public_base_url`。
+    两个值都回带,管理员与排障人员才能看清默认地址到底从哪来。
+    """
+    sources = base_url_service.resolve_base_url_sources(app_settings.open_api.public_base_url, request)
+    return resp_200(data=sources)

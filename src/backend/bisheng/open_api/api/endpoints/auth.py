@@ -13,6 +13,7 @@ from fastapi import APIRouter
 
 from bisheng.common.errcode.open_api import OpenApiKeyMissingError
 from bisheng.common.schemas.api import resp_200
+from bisheng.open_api.domain.agent_scope import allowed_apps_to_json
 from bisheng.open_api.domain.context import get_open_api_principal
 from bisheng.open_api.domain.models.dao import ServiceAccountDao
 from bisheng.open_api.domain.scopes import open_api_scope
@@ -37,6 +38,8 @@ async def whoami():
             "account_name": account.name if account is not None else None,
             "key_mask": principal.key_mask,
             "scopes": list(principal.scopes),
+            # None = unrestricted; [] = no agent may be called (spec AC-45).
+            "allowed_apps": allowed_apps_to_json(principal),
             "expires_at": principal.expires_at.isoformat() if principal.expires_at else None,
             "tenant_id": principal.tenant_id,
         }

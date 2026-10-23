@@ -1,8 +1,13 @@
 """F076 API 密钥表(`api_credential`)。
 
-密钥形如 `bs-sak-<secrets.token_urlsafe(32)>`(43 字符)。**明文只在签发响应
-出现一次**;库内只存 SHA-256 摘要(`token_hash` 唯一),且任何接口 / 日志 /
-审计 / 异常都不得出现明文(INV-23 条款 1,spec AC-08 / AC-09)。
+密钥形如 `bs-sak-<secrets.token_urlsafe(32)>`(43 字符)。**校验**只依赖
+SHA-256 摘要(`token_hash` 唯一);为支持管理员显式查看,另存一份 Fernet
+密文(`token_ciphertext`,可空)。明文不出现在日志 / 审计 / 列表 / 缓存 /
+异常中;密文只在 reveal 动作里解密并留审计(INV-23 条款 1,spec AC-08 / AC-09)。
+
+`allowed_apps` 是**每把密钥**的智能体白名单:`NULL` = 不限制(沿用账号资源
+授权),`[]` = 不调用任何智能体,非空 = 只允许列表内的助手 / 工作流 / 纳管
+智能体。它只收窄、不扩权(INV-27,spec AC-42)。
 
 有效性是**单一判据**:未撤销且未过期(`is_valid_at`,spec AC-12);
 吊销 ≠ 删除——记录保留供审计(spec AC-11)。同账号允许多把并存用于轮换(spec AC-10)。
@@ -10,9 +15,9 @@
 租户感知:登记在 core/database/tenant_filter.py 的 `_TENANT_AWARE_MODEL_MODULES`;
 `tenant_id` 必须 `default=None`。匿名校验密钥时以 `bypass_tenant_filter()` 跨租户读取。
 
-回滚(整表由 SQLModel `create_all` 建,无 Alembic revision):
-
-    DROP TABLE IF EXISTS api_credential;
+迁移:整表由 SQLModel `create_all` 建;`token_ciphertext` / `allowed_apps`
+两列由 Alembic revision `f076_api_key_reveal_allowlist` 追加(2026-10-22)。
+回滚时**不要** drop `allowed_apps`(会把权限放宽回账号级),只回退代码。
 """
 
 from __future__ import annotations
@@ -82,11 +87,29 @@ class ApiCredential(SQLModelSerializable, table=True):
         sa_column=Column(String(4), nullable=False, comment="明文末四位(仅用于掩码展示)"),
     )
     token_hash: str = Field(
-        sa_column=Column(String(64), nullable=False, comment="SHA-256(明文) 十六进制摘要;明文永不落库"),
+        sa_column=Column(String(64), nullable=False, comment="SHA-256(明文) 十六进制摘要;校验唯一依据"),
+    )
+    token_ciphertext: str | None = Field(
+        default=None,
+        exclude=True,
+        repr=False,
+        sa_column=Column(
+            String(512),
+            nullable=True,
+            comment="Fernet 密文(仅管理员显式查看时解密);NULL=存量密钥不可查看",
+        ),
     )
     scopes: list = Field(
         default_factory=list,
         sa_column=Column(JsonType, nullable=False, comment="权限位数组(open_api.domain.scopes 的 code)"),
+    )
+    allowed_apps: list | None = Field(
+        default=None,
+        sa_column=Column(
+            JsonType,
+            nullable=True,
+            comment="每 Key 智能体白名单 [{type,id}];NULL=不限制,[]=全部拒绝",
+        ),
     )
     expires_at: datetime | None = Field(
         default=None,

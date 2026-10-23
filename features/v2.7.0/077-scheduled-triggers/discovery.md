@@ -104,7 +104,7 @@
 - 目标对象抽象＝`(app_id, app_type)`：助手是独立 `assistant` 表（`database/models/assistant.py:105-106`），「应用」列表是 Flow∪Assistant 并集（`database/models/flow.py:747-790`）；引用形状先例 `workstation/domain/models/user_app_favorite.py:19-22`。
 - 结果落会话链路：worker 懒创建 `MessageSession`（`user_id`＝运行身份，`redis_callback.py:656-669`）；`chat_id=""` 完全不落库（`:581-595`）。应用会话列表按 `(flow_id, 当前登录用户)` 过滤（`workstation/api/endpoints/apps.py:199-207`）。
 - 开放 API 编程调用面：工作流 v2 `session_id` 可传（`open_endpoints/api/endpoints/workflow.py:52,67-73,85`）；助手 v2 HTTP **无状态**（不落 session/消息，`assistant.py:105-115`）。
-- F076 边界：INV-23（`release-contract.md:97`）——密钥不可回读 ⇒ **不能"调度器存密钥自调 /api/v2"**，身份装载走进程内 `load_owner_payload`；运行期防提权 `open_api/api/dependencies.py:159-172`。
+- F076 边界：INV-23（`release-contract.md:97`）——密钥属高敏凭据，调度器**不持有密钥、不自调 `/api/v2`**（避免密钥落盘与自调链路），身份装载走进程内 `load_owner_payload`；运行期防提权 `open_api/api/dependencies.py:159-172`。
 - **事件触发面现状=零**：`webhook` 全后端仅命中出站机器人工具；`/api/v2` 新端点必须逐条登记 scope（`open_api/domain/scopes.py:40-133`，无通配，漏标 500/11811）；密钥是**裸 bearer、无请求签名**（`credential_validator.py:50-85`），防重放**无现成设施**；F076 明确不做限流/配额/幂等（`release-contract.md:194`）。
 
 **需新建 / 待裁定**：任务表的目标解析与可见性校验；**触发期预检三要素**（应用存在/未删 + 运行身份可装载 + `use_app` 仍在，复用 F076 的 11805/11816 语义）；事件触发端点（若做）的载荷白名单、响应契约与触发放大护栏（★D1 影响面）；结果落点与失败通知的最终口径（★D8）。
@@ -143,6 +143,7 @@
 - **A**：仅工作流。**B（推荐）**：工作流 + 助手。**C**：含工作站对话 / 灵思任务。
 - 推荐理由：平台「应用」＝工作流 ∪ 助手（`flow.py:747-790`），客户表述面向"应用"；助手侧可复用 v2 无状态链（无人值守不需要交互面）。C 的灵思是一次性会话、终态丢弃模型，上下游两侧均判不可作通用执行内核。
 - 影响面：B 须在 spec 写明"助手定时运行无会话落点"（见 D8）；数据模型统一 `(app_id, app_type)`。
+- **2026-10-23 复核补记（工具不纳入）**：侧边栏「智能体」下的「工具」（`t_gpts_tools`）**评估过但不纳入**。理由：工具不是「应用」——它不是 `FlowType`、没有 `(app_id, app_type)` 归属、也没有对外发布面，无法复用本特性「应用存在性 + 运行身份 `use_app` + 复用既有运行链路」的校验与派发模型。客户公告（四）3 亦把「智能体应用」与「工具」并列表述，二者在行方口径中是不同对象。如后续确需支持，须另立特性，重新评估权限资源类型（`GPTS_TOOL`）与工具参数到预设输入的映射。F078 追加的 `app_type=100`（纳管智能体）同理只覆盖智能体，不覆盖工具。
 - ⚠ 待验真项（技术风险审查提出，**降级为待澄清**）：助手侧"复用 v2 无状态 HTTP 链"的具体可调用入口需要 design 阶段钉死——**不得**走"调度器持密钥自调 `/api/v2`"（INV-23①），应在进程内直接调用助手服务层或走既有内部 chat 链路。
 
 ### ★ D3 运行身份（应用所有者 / 服务账号专用身份 / 新建专用身份）— ✅ **已确认 2026-10-16：C**
@@ -267,7 +268,7 @@
 6. **工作流执行模型**：整段占 Celery 线程（`workflow/graph/workflow.py:68-84` 同步 `while RUNNING`）；INPUT 态运行对象驻留 worker 内存（`tasks.py:22-24`），续跑必须同节点，worker 重启即丢（`tasks.py:134-136`）；**无 acks_late**（任务丢失不重投）。
 7. **会话落点语义**：`chat_id=""` 不落会话（`redis_callback.py:581-595`）；非空时懒创建 `MessageSession`（`user_id`＝运行时用户）。
 8. **助手 v2 HTTP 无状态**（`assistant.py:105-115`）→ 助手定时运行无会话落点（与 D8=A 自洽）。
-9. **F076 密钥不可回读**（INV-23①）→ 调度器**不能**"存密钥自调 /api/v2"；身份装载走进程内 `load_owner_payload` + `owner_is_privileged`。
+9. **F076 密钥属高敏凭据**（INV-23）→ 调度器**不持有密钥、不自调 /api/v2**（避免密钥落盘与自调链路）；身份装载走进程内 `load_owner_payload` + `owner_is_privileged`。
 10. **租户硬约束**：新表登记 `_TENANT_AWARE_MODEL_MODULES`；租户自动过滤**只拦 SELECT**，bulk update/delete 与 `text()` SQL 须手写租户条件（`src/backend/AGENTS.md` §Known Pitfalls）。
 11. **审计系统触发约定**：`operator_id=0 → 'system'`（`audit_log.py:407-408`）；系统触发的 `operator_tenant_id` 约定 = ROOT_TENANT_ID（`:390-396`）。
 12. **入站面零设施 + scope 逐条登记**：`/api/v2` 新端点无通配、漏标 500/11811、缺位 403/11807；密钥裸 bearer 无签名 → 防重放自建。

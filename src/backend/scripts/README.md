@@ -42,7 +42,7 @@ python scripts/migrate_skill_bundles.py --tenant-id 1 --legacy-root /old/skills 
 
 ### `f076_acceptance_probe.py`
 
-F076 开放 API 鉴权**验收探针**：把《docs/开放API条款验收表.md》的 B-J 行逐条跑一遍并输出预填的
+F076 开放 API 鉴权**验收探针**：把《开放API条款验收表》（本地交付材料，不入库）的 B-J 行逐条跑一遍并输出预填的
 markdown 表（通过 / 需现场人工 / 不通过）。自建一次性服务账号（前缀 `f076-probe-`，结束即删），
 只读探测为主；`--enable-tenant-switch` 允许在测试环境临时打开默认租户开关（跑完还原）。
 
@@ -401,6 +401,8 @@ Exit codes: `0` 成功（含「已存在」与 dry-run）/ `2` OpenFGA 不可达
 把已存在的 OpenFGA store 升级到带 `managed_agent` 资源类型的模型。
 
 F078 在静态授权模型里新增了 `managed_agent` 类型（纳管智能体，与 workflow/assistant 同构的 owner/manager/editor/viewer 金字塔）。与 F061 完全同因：OpenFGA 模型在 store 内不可变且分版本，**仅发新代码不会让既有 store 获得新类型**，必须按 store 写一次新模型。部署顺序：F078 代码（开关 off）→ 本脚本 → pin `model_id`/重启 → 开启 `managed_agent.enabled` → 首次创建。未写模型时，创建纳管智能体会卡在 owner 元组写入（`RegistryService.create` 传 `enforce_fga_success=True`）。
+
+> **合并后的模型是 v2.0.5 / 19 类型**（`managed_agent` + `linsight_skill`）。若 store 已有 `managed_agent` 但缺 `linsight_skill`，本脚本会判定“已存在”而 no-op；请同时按顺序运行 `scripts/migrate_fga_skill_permissions.py --report …`（默认只读）与 `--apply`，两个脚本任一顺序都能收敛到完整模型。
 
 Usage (from `src/backend/`):
 

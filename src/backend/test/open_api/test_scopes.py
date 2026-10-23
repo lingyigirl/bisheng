@@ -42,16 +42,22 @@ def test_registry_has_no_duplicate_endpoint():
 
 
 def test_registry_shape():
-    """10 项权限位;delegate 为二期预留(当前无端点),schedule:trigger 由 F077、managed_agent:invoke 由 F078 引入。"""
-    assert len(OPEN_API_SCOPES) == 10
+    """12 项权限位;delegate 为二期预留(当前无端点)。
+
+    F077 追加 schedule:trigger,F078 追加 managed_agent:invoke,2026-10-22
+    安全收口追加 llm:workbench(ASR/TTS)与 diagnostics:read(日志下载)。
+    """
+    assert len(OPEN_API_SCOPES) == 12
     assert OPEN_API_SCOPE_CODES == {
         "workflow:invoke",
         "workflow:read",
         "assistant:invoke",
         "assistant:read",
+        "llm:workbench",
         "chat:invoke",
         "knowledge:read",
         "knowledge:write",
+        "diagnostics:read",
         "schedule:trigger",
         "managed_agent:invoke",
         "delegate",

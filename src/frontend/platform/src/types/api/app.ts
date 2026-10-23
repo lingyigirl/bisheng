@@ -19,4 +19,6 @@ export type AppConfig = {
     uploaded_media_maximum_size?: number;
     /** 是否部署 ETL4LM  */
     enable_etl4lm: boolean;
+    /** F078：智能体纳管开关（关闭时隐藏菜单/路由与客户端页签） */
+    managed_agent_enabled?: boolean;
 };

@@ -52,6 +52,7 @@ export default function ExplorePlaza() {
     const isAtLeast768 = useMediaQuery('(min-width: 768px)')
     const isAtLeast1024 = useMediaQuery('(min-width: 1024px)')
 
+    const managedAgentsEnabled = !!bsConfig?.managed_agent_enabled
     const bannerTitle = bsConfig?.applicationCenterWelcomeMessage?.trim() || localize('com_app_plaza_title')
     const bannerDescription = bsConfig?.applicationCenterDescription?.trim() || localize('com_app_center_description')
 
@@ -265,16 +266,18 @@ export default function ExplorePlaza() {
                 </div>
             </div>
 
-            <div className="z-10 flex w-full max-w-[1000px] shrink-0 justify-center px-5 pt-3">
-                <Tabs value={tab} onValueChange={(v) => setTab(v as 'native' | 'managed')}>
-                    <TabsList>
-                        <TabsTrigger value="native">{localize('com_managed_agents_tab_native')}</TabsTrigger>
-                        <TabsTrigger value="managed">{localize('com_managed_agents_tab_managed')}</TabsTrigger>
-                    </TabsList>
-                </Tabs>
-            </div>
+            {managedAgentsEnabled && (
+                <div className="z-10 flex w-full max-w-[1000px] shrink-0 justify-center px-5 pt-3">
+                    <Tabs value={tab} onValueChange={(v) => setTab(v as 'native' | 'managed')}>
+                        <TabsList>
+                            <TabsTrigger value="native">{localize('com_managed_agents_tab_native')}</TabsTrigger>
+                            <TabsTrigger value="managed">{localize('com_managed_agents_tab_managed')}</TabsTrigger>
+                        </TabsList>
+                    </Tabs>
+                </div>
+            )}
 
-            {tab === 'managed' ? (
+            {managedAgentsEnabled && tab === 'managed' ? (
                 <main className="flex min-h-0 w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto scrollbar-os">
                     <ManagedAgentTab />
                 </main>

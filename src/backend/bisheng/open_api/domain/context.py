@@ -34,6 +34,8 @@ class OpenApiPrincipal:
     owner_payload: UserPayload = field(repr=False, compare=False)
     #: 凭据有效期(None = 不过期);whoami 回显用(带默认值,故排在无默认字段之后)。
     expires_at: datetime | None = None
+    #: 每 Key 智能体白名单;None = 不限制,空集合 = 全拒绝(INV-27 / spec AC-42)。
+    allowed_apps: frozenset[tuple[str, str]] | None = None
 
 
 _current_principal: ContextVar[OpenApiPrincipal | None] = ContextVar("open_api_principal", default=None)

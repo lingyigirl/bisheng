@@ -272,8 +272,10 @@ export function ServiceAccountPanel() {
                 }}
             />
 
-            {/* Post-create next step: jump straight into the detail view's keys
-                tab, which is where the first key gets issued. */}
+            {/* Post-create next step. Grants come first on purpose: a key restricted
+                to agents the account has not been granted yet cannot be issued, so
+                the primary action leads to the grants tab and issuing a key is the
+                explicit shortcut. */}
             <Dialog open={!!created} onOpenChange={(next) => !next && setCreated(null)}>
                 <DialogContent className="sm:max-w-[480px]">
                     <DialogHeader>
@@ -281,10 +283,8 @@ export function ServiceAccountPanel() {
                     </DialogHeader>
                     <p className="text-sm text-muted-foreground">{t("createdDialog.nextStep", { name: created?.name ?? "" })}</p>
                     <DialogFooter className="mt-4">
-                        <Button variant="outline" className="h-10 w-[120px] px-16" onClick={() => setCreated(null)}>
-                            {t("confirm.gotIt")}
-                        </Button>
                         <Button
+                            variant="outline"
                             className="h-10 w-[160px] px-6"
                             onClick={() => {
                                 if (!created) return
@@ -293,6 +293,16 @@ export function ServiceAccountPanel() {
                             }}
                         >
                             {t("createdDialog.goToKeys")}
+                        </Button>
+                        <Button
+                            className="h-10 w-[160px] px-6"
+                            onClick={() => {
+                                if (!created) return
+                                setDetail({ id: created.id, tab: "grants" })
+                                setCreated(null)
+                            }}
+                        >
+                            {t("createdDialog.goToGrants")}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
