@@ -12,6 +12,17 @@ class KnowledgeGraphBuildReq(BaseModel):
     force: bool = Field(default=False, description="图谱已存在时必须为 true 才允许清空重建")
 
 
+class KnowledgeGraphPublicQueryReq(BaseModel):
+    """Anonymous graph query: whole knowledge base, or one entity's 1-hop graph."""
+
+    knowledge_id: int = Field(..., ge=1, description="知识库ID")
+    entity_name: str | None = Field(
+        default=None,
+        max_length=255,
+        description="实体名称（精确匹配）；不传或传空则返回知识库完整图谱（最多500个节点）",
+    )
+
+
 class KnowledgeGraphBuildResp(BaseModel):
     job_id: int
     status: int

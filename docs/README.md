@@ -31,6 +31,7 @@
 | 目录 | 内容 |
 |------|------|
 | [`api/`](api/) | 接口文档(filelib 纯检索、知识空间/知识库接口、开放 API 鉴权与错误码) |
+| [`api/knowledge-graph-public-api.md`](api/knowledge-graph-public-api.md) | 知识图谱公开查询接口(匿名、body 传参):全图/实体 1 跳两种模式、字段说明、错误与自检清单(对客方向) |
 | [`开放API密钥鉴权迁移指引.md`](开放API密钥鉴权迁移指引.md) | `/api/v2` 存量调用方切换五步与回退、「默认操作员曾配超管」等排查条目(交付/运维向) |
 | [`开放API条款验收表.md`](开放API条款验收表.md) | 公告(四)3 对客条款验收:逐条验收动作与通过标准、现场填写栏、范围边界声明 |
 | [`api/scheduled-task-trigger.md`](api/scheduled-task-trigger.md) | 定时任务与事件触发 API(F077):三种触发方式、前置条件、防重放/频控、错误码表、与既有调用面的差异(对接方向) |

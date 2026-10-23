@@ -5,7 +5,10 @@ from starlette.concurrency import run_in_threadpool
 
 from bisheng.common.dependencies.user_deps import UserPayload
 from bisheng.common.schemas.api import UnifiedResponseModel, resp_200
-from bisheng.knowledge.domain.schemas.knowledge_graph_schema import KnowledgeGraphBuildReq
+from bisheng.knowledge.domain.schemas.knowledge_graph_schema import (
+    KnowledgeGraphBuildReq,
+    KnowledgeGraphPublicQueryReq,
+)
 from bisheng.knowledge.domain.services.knowledge_graph_service import KnowledgeGraphService
 from bisheng.knowledge.domain.services.knowledge_service import KnowledgeService
 
@@ -153,6 +156,26 @@ async def get_knowledge_graph_entity_neighbors(
         knowledge_id,
         entity_id,
         limit=limit,
+    )
+    return resp_200(data=result)
+
+
+@router.post(
+    "/graph/public/neighbors",
+    response_model=UnifiedResponseModel,
+    description=(
+        "Anonymous graph lookup by knowledge id. With entity_name, returns that entity's "
+        "complete 1-hop neighbourhood (an unknown name yields an empty graph). Without "
+        "entity_name, returns the whole knowledge-base graph, capped at 500 nodes and "
+        "flagged by `truncated`."
+    ),
+)
+async def get_public_knowledge_graph(req: KnowledgeGraphPublicQueryReq):
+    # Public endpoint by design: no UserPayload, body params, knowledge_id is the access key.
+    result = await run_in_threadpool(
+        KnowledgeGraphService.get_public_graph,
+        req.knowledge_id,
+        req.entity_name,
     )
     return resp_200(data=result)
 

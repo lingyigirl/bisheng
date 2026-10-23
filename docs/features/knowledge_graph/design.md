@@ -408,7 +408,42 @@ WHERE id = :job_id AND tenant_id = :tenant_id;
 | GET | `/{knowledge_id}/graph/entities` | 读 | 实体搜索/分页 |
 | GET | `/{knowledge_id}/graph/entities/{entity_id}` | 读 | 实体详情 + 关系 + 证据 |
 | GET | `/{knowledge_id}/graph/entities/{entity_id}/neighbors` | 读 | 1 跳邻居 |
+| POST | `/graph/public/neighbors` | **无（匿名）** | 按知识库 ID 查全图（≤500 节点）或按实体名称查完整 1 跳子图，对外接口 |
 | DELETE | `/{knowledge_id}/graph` | 写 | 清空图谱 |
+
+#### 公开邻居查询（匿名，POST `/api/v1/knowledge/graph/public/neighbors`）
+
+> 对客版接口文档（可直接提供给外部对接方）：[`docs/api/knowledge-graph-public-api.md`](../../api/knowledge-graph-public-api.md)
+
+外部系统通常只知道实体名称，不知道内部实体 ID，因此单独提供按名称解析的匿名接口；只传知识库 ID 时返回全库图谱（最多 500 个节点）。
+
+请求体（`entity_name` 可选）：
+
+```json
+{
+  "knowledge_id": 148,
+  "entity_name": "张伟"
+}
+```
+
+两种模式，由 `entity_name` 是否有值决定：
+
+| 入参 | 返回 |
+|---|---|
+| 传 `entity_name` | 该实体的完整 1 跳子图；不截断；查不到名称返回空图 |
+| 不传 / 传空串 | 知识库完整图谱；最多 500 个节点（按 `mention_count` 取 Top），节点间的全部关系边；超出时 `truncated=true` |
+
+行为约定：
+
+- `entity_name` 先按 `knowledge_graph_entity.name` 精确匹配；未命中再按 `normalize_entity_name()` 归一化后精确匹配 `normalized_name`（仅消除全半角/大小写/空白/标点差异，不做模糊匹配）。
+- 同名实体可能存在于多个 `entity_type`，取 `mention_count` 最高者，`id` 升序兜底。
+- **查不到实体不报错**：返回 `data: {nodes: [], edges: [], truncated: false}`，不再返回 10999。
+- **按实体名称查询不截断**：与登录态 `/neighbors`（默认 100、上限 300）不同，返回全部关系边，供外部系统完整消费。
+- **全图模式**：节点数超过 500 时截断到 Top 500，`truncated=true` 提示调用方；边不做额外截断（只返回保留节点之间的关系）。
+- 入参错误（`knowledge_id < 1`、`entity_name` 超 255）由 FastAPI 返回 422。
+- 无 JWT，因此服务层在 `bypass_tenant_filter()` 内查询；`knowledge_id` 即访问凭据。
+
+> **安全影响**：匿名接口意味着任何知道 `knowledge_id` 的调用方都能读取该库图谱。若部署在公网，应在网关层增加来源白名单、鉴权或限流；如需长期对外提供，建议改为 API Key（`/api/v2` 体系）而不是永久匿名。
 
 #### 生成请求
 

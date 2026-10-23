@@ -28,6 +28,7 @@ from bisheng.common.errcode.knowledge import (
     KnowledgeGraphTypeNotSupportedError,
 )
 from bisheng.core.cache.redis_manager import get_redis_client_sync
+from bisheng.core.context.tenant import bypass_tenant_filter
 from bisheng.core.database import get_sync_db_session
 from bisheng.knowledge.domain.knowledge_rag import KnowledgeRag
 from bisheng.knowledge.domain.models.knowledge import Knowledge, KnowledgeTypeEnum
@@ -57,6 +58,7 @@ from bisheng.knowledge.domain.schemas.knowledge_graph_schema import (
     KnowledgeGraphRelationItem,
     KnowledgeGraphStatusResp,
 )
+from bisheng.knowledge.domain.services.knowledge_graph_extraction import normalize_entity_name
 from bisheng.knowledge.domain.services.knowledge_utils import KnowledgeUtils
 from bisheng.llm.domain import LLMService
 
@@ -68,6 +70,8 @@ FILE_LOCK_TTL = 2 * 3600
 FINALIZE_LOCK_TTL = 300
 MAX_ENTITY_TYPES = 20
 MAX_ENTITY_TYPE_LENGTH = 64
+# Anonymous full-graph queries return at most this many nodes (and every edge among them).
+PUBLIC_GRAPH_NODE_LIMIT = 500
 RUNNING_STATUSES = (
     KnowledgeGraphJobStatus.QUEUED.value,
     KnowledgeGraphJobStatus.RUNNING.value,
@@ -308,6 +312,17 @@ class KnowledgeGraphService:
                 .limit(limit * 3)
             ).all()
 
+        return cls._build_graph(entities, relations, truncated=total > len(entities))
+
+    @staticmethod
+    def _build_graph(
+        entities: list[KnowledgeGraphEntity],
+        relations: list[KnowledgeGraphRelation],
+        *,
+        truncated: bool,
+    ) -> KnowledgeGraphDataResp:
+        """Render a node set and the relations among them as a drawable graph."""
+        entity_ids = [entity.id for entity in entities]
         degree: dict[int, int] = dict.fromkeys(entity_ids, 0)
         edges: list[KnowledgeGraphEdge] = []
         for relation in relations:
@@ -336,7 +351,7 @@ class KnowledgeGraphService:
             )
             for entity in entities
         ]
-        return KnowledgeGraphDataResp(nodes=nodes, edges=edges, truncated=total > len(nodes))
+        return KnowledgeGraphDataResp(nodes=nodes, edges=edges, truncated=truncated)
 
     @classmethod
     def search_entities(
@@ -491,8 +506,144 @@ class KnowledgeGraphService:
                 )
             ).all() if neighbor_ids else []
 
+        return cls._build_neighborhood(center, relations, neighbors)
+
+    @classmethod
+    def get_public_graph(cls, knowledge_id: int, entity_name: str | None = None) -> KnowledgeGraphDataResp:
+        """Public (login-free) graph query.
+
+        Two modes, selected by whether ``entity_name`` carries a value:
+
+        - **Name given**: resolve the entity by exact name, then return its
+          1-hop graph. An unknown name returns an empty graph instead of error
+          10999: for an external integration "no such entity" is data, not a
+          failure. No truncation — the complete neighbourhood is returned.
+        - **Name omitted/blank**: return the knowledge base's whole graph.
+          When it exceeds ``PUBLIC_GRAPH_NODE_LIMIT`` nodes, keep the top nodes
+          by ``mention_count`` and set ``truncated=true``. All relations among
+          the kept nodes are returned.
+
+        Tenancy: the caller has no JWT, so the request carries no tenant
+        context and tenant-aware SELECTs would raise ``NoTenantContextError``.
+        ``knowledge_id`` is the access key for this anonymous endpoint, so the
+        reads run under ``bypass_tenant_filter()``.
+        """
+        entity_name = (entity_name or "").strip()
+        if not entity_name:
+            with bypass_tenant_filter():
+                return cls._get_full_graph(knowledge_id)
+
+        with bypass_tenant_filter():
+            with get_sync_db_session() as session:
+                center = cls._find_entity_by_name(session, knowledge_id, entity_name)
+                if center is None:
+                    return KnowledgeGraphDataResp()
+                relations = session.exec(
+                    select(KnowledgeGraphRelation).where(
+                        KnowledgeGraphRelation.knowledge_id == knowledge_id,
+                        or_(
+                            KnowledgeGraphRelation.source_entity_id == center.id,
+                            KnowledgeGraphRelation.target_entity_id == center.id,
+                        ),
+                    )
+                ).all()
+                neighbor_ids = {
+                    relation.target_entity_id
+                    if relation.source_entity_id == center.id
+                    else relation.source_entity_id
+                    for relation in relations
+                }
+                neighbors = session.exec(
+                    select(KnowledgeGraphEntity).where(
+                        KnowledgeGraphEntity.id.in_(neighbor_ids),
+                        KnowledgeGraphEntity.knowledge_id == knowledge_id,
+                    )
+                ).all() if neighbor_ids else []
+
+        return cls._build_neighborhood(center, relations, neighbors)
+
+    @classmethod
+    def _get_full_graph(cls, knowledge_id: int) -> KnowledgeGraphDataResp:
+        """Whole-KB graph for the anonymous endpoint, capped at PUBLIC_GRAPH_NODE_LIMIT nodes.
+
+        Unlike :meth:`get_graph` this does not cap edges: callers asking for
+        the full graph expect every relation among the selected nodes.
+        """
+        with get_sync_db_session() as session:
+            total = session.scalar(
+                select(func.count(KnowledgeGraphEntity.id)).where(
+                    KnowledgeGraphEntity.knowledge_id == knowledge_id
+                )
+            ) or 0
+            entities = session.exec(
+                select(KnowledgeGraphEntity)
+                .where(KnowledgeGraphEntity.knowledge_id == knowledge_id)
+                .order_by(
+                    KnowledgeGraphEntity.mention_count.desc(),
+                    KnowledgeGraphEntity.id.asc(),
+                )
+                .limit(PUBLIC_GRAPH_NODE_LIMIT)
+            ).all()
+            if not entities:
+                return KnowledgeGraphDataResp(truncated=total > 0)
+
+            entity_ids = [entity.id for entity in entities]
+            relations = session.exec(
+                select(KnowledgeGraphRelation).where(
+                    KnowledgeGraphRelation.knowledge_id == knowledge_id,
+                    KnowledgeGraphRelation.source_entity_id.in_(entity_ids),
+                    KnowledgeGraphRelation.target_entity_id.in_(entity_ids),
+                )
+            ).all()
+
+        return cls._build_graph(entities, relations, truncated=total > len(entities))
+
+    @staticmethod
+    def _find_entity_by_name(session, knowledge_id: int, entity_name: str) -> KnowledgeGraphEntity | None:
+        """Resolve an entity id by exact name, then by normalised exact form.
+
+        Extraction stores the first-seen spelling in ``name`` and merges
+        full/half-width, case, whitespace and punctuation variants into the
+        same row via ``normalized_name``. Both lookups are exact — no LIKE or
+        fuzzy matching. A name can repeat across entity types, so the
+        most-mentioned row wins with ``id`` as a deterministic tie-breaker.
+        """
+        order_by = (
+            KnowledgeGraphEntity.mention_count.desc(),
+            KnowledgeGraphEntity.id.asc(),
+        )
+        entity = session.exec(
+            select(KnowledgeGraphEntity)
+            .where(
+                KnowledgeGraphEntity.knowledge_id == knowledge_id,
+                KnowledgeGraphEntity.name == entity_name,
+            )
+            .order_by(*order_by)
+        ).first()
+        if entity is not None:
+            return entity
+
+        normalized_name = normalize_entity_name(entity_name)
+        if not normalized_name:
+            return None
+        return session.exec(
+            select(KnowledgeGraphEntity)
+            .where(
+                KnowledgeGraphEntity.knowledge_id == knowledge_id,
+                KnowledgeGraphEntity.normalized_name == normalized_name,
+            )
+            .order_by(*order_by)
+        ).first()
+
+    @staticmethod
+    def _build_neighborhood(
+        center: KnowledgeGraphEntity,
+        relations: list[KnowledgeGraphRelation],
+        neighbors: list[KnowledgeGraphEntity],
+    ) -> KnowledgeGraphDataResp:
+        """Render a centre entity plus its incident relations as a drawable subgraph."""
         entity_map = {center.id: center, **{item.id: item for item in neighbors}}
-        degree: dict[int, int] = {entity_id: 0}
+        degree: dict[int, int] = {center.id: 0}
         edges: list[KnowledgeGraphEdge] = []
         for relation in relations:
             if relation.source_entity_id not in entity_map or relation.target_entity_id not in entity_map:
